@@ -1,22 +1,30 @@
 package org.thoughtcrime.securesms.components.settings.app.chats
 
+import android.content.Intent
 import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.Navigation
 import org.thoughtcrime.securesms.R
+import org.thoughtcrime.securesms.backup.v2.ui.subscription.MessageBackupsFlowActivity
 import org.thoughtcrime.securesms.components.settings.DSLConfiguration
-import org.thoughtcrime.securesms.components.settings.DSLSettingsAdapter
 import org.thoughtcrime.securesms.components.settings.DSLSettingsFragment
 import org.thoughtcrime.securesms.components.settings.DSLSettingsText
 import org.thoughtcrime.securesms.components.settings.configure
+import org.thoughtcrime.securesms.util.FeatureFlags
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingAdapter
+import org.thoughtcrime.securesms.util.navigation.safeNavigate
 
 class ChatsSettingsFragment : DSLSettingsFragment(R.string.preferences_chats__chats) {
 
   private lateinit var viewModel: ChatsSettingsViewModel
 
-  override fun bindAdapter(adapter: DSLSettingsAdapter) {
-    val repository = ChatsSettingsRepository()
-    val factory = ChatsSettingsViewModel.Factory(repository)
-    viewModel = ViewModelProvider(this, factory)[ChatsSettingsViewModel::class.java]
+  override fun onResume() {
+    super.onResume()
+    viewModel.refresh()
+  }
+
+  @Suppress("ReplaceGetOrSet")
+  override fun bindAdapter(adapter: MappingAdapter) {
+    viewModel = ViewModelProvider(this).get(ChatsSettingsViewModel::class.java)
 
     viewModel.state.observe(viewLifecycleOwner) {
       adapter.submitList(getConfiguration(it).toMappingModelList())
@@ -25,14 +33,6 @@ class ChatsSettingsFragment : DSLSettingsFragment(R.string.preferences_chats__ch
 
   private fun getConfiguration(state: ChatsSettingsState): DSLConfiguration {
     return configure {
-
-      clickPref(
-        title = DSLSettingsText.from(R.string.preferences__sms_mms),
-        onClick = {
-          Navigation.findNavController(requireView()).navigate(R.id.action_chatsSettingsFragment_to_smsSettingsFragment)
-        }
-      )
-
       switchPref(
         title = DSLSettingsText.from(R.string.preferences__generate_link_previews),
         summary = DSLSettingsText.from(R.string.preferences__retrieve_link_previews_from_websites_for_messages),
@@ -48,6 +48,15 @@ class ChatsSettingsFragment : DSLSettingsFragment(R.string.preferences_chats__ch
         isChecked = state.useAddressBook,
         onClick = {
           viewModel.setUseAddressBook(!state.useAddressBook)
+        }
+      )
+
+      switchPref(
+        title = DSLSettingsText.from(R.string.preferences__pref_keep_muted_chats_archived),
+        summary = DSLSettingsText.from(R.string.preferences__muted_chats_that_are_archived_will_remain_archived),
+        isChecked = state.keepMutedChatsArchived,
+        onClick = {
+          viewModel.setKeepMutedChatsArchived(!state.keepMutedChatsArchived)
         }
       )
 
@@ -75,11 +84,25 @@ class ChatsSettingsFragment : DSLSettingsFragment(R.string.preferences_chats__ch
 
       sectionHeaderPref(R.string.preferences_chats__backups)
 
+      if (FeatureFlags.messageBackups() || state.remoteBackupsEnabled) {
+        clickPref(
+          title = DSLSettingsText.from("Signal Backups"), // TODO [message-backups] -- Finalized copy
+          summary = DSLSettingsText.from(if (state.remoteBackupsEnabled) R.string.arrays__enabled else R.string.arrays__disabled),
+          onClick = {
+            if (state.remoteBackupsEnabled) {
+              Navigation.findNavController(requireView()).safeNavigate(R.id.action_chatsSettingsFragment_to_remoteBackupsSettingsFragment)
+            } else {
+              startActivity(Intent(requireContext(), MessageBackupsFlowActivity::class.java))
+            }
+          }
+        )
+      }
+
       clickPref(
         title = DSLSettingsText.from(R.string.preferences_chats__chat_backups),
-        summary = DSLSettingsText.from(if (state.chatBackupsEnabled) R.string.arrays__enabled else R.string.arrays__disabled),
+        summary = DSLSettingsText.from(if (state.localBackupsEnabled) R.string.arrays__enabled else R.string.arrays__disabled),
         onClick = {
-          Navigation.findNavController(requireView()).navigate(R.id.action_chatsSettingsFragment_to_backupsPreferenceFragment)
+          Navigation.findNavController(requireView()).safeNavigate(R.id.action_chatsSettingsFragment_to_backupsPreferenceFragment)
         }
       )
     }

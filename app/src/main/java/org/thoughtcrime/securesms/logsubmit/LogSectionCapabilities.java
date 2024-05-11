@@ -5,8 +5,10 @@ import android.content.Context;
 import androidx.annotation.NonNull;
 
 import org.thoughtcrime.securesms.AppCapabilities;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.database.model.RecipientRecord;
+import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.recipients.Recipient;
-import org.thoughtcrime.securesms.util.TextSecurePreferences;
 import org.whispersystems.signalservice.api.account.AccountAttributes;
 
 public final class LogSectionCapabilities implements LogSection {
@@ -18,30 +20,29 @@ public final class LogSectionCapabilities implements LogSection {
 
   @Override
   public @NonNull CharSequence getContent(@NonNull Context context) {
-    if (!TextSecurePreferences.isPushRegistered(context)) {
+    if (!SignalStore.account().isRegistered()) {
       return "Unregistered";
     }
 
-    if (TextSecurePreferences.getLocalNumber(context) == null || TextSecurePreferences.getLocalAci(context) == null) {
+    if (SignalStore.account().getE164() == null || SignalStore.account().getAci() == null) {
       return "Self not yet available!";
     }
 
     Recipient self = Recipient.self();
 
-    AccountAttributes.Capabilities capabilities = AppCapabilities.getCapabilities(false);
+    AccountAttributes.Capabilities localCapabilities  = AppCapabilities.getCapabilities(false);
+    RecipientRecord.Capabilities   globalCapabilities = SignalDatabase.recipients().getCapabilities(self.getId());
 
-    return new StringBuilder().append("-- Local").append("\n")
-                              .append("GV2                : ").append(capabilities.isGv2()).append("\n")
-                              .append("GV1 Migration      : ").append(capabilities.isGv1Migration()).append("\n")
-                              .append("Sender Key         : ").append(capabilities.isSenderKey()).append("\n")
-                              .append("Announcement Groups: ").append(capabilities.isAnnouncementGroup()).append("\n")
-                              .append("Change Number      : ").append(capabilities.isChangeNumber()).append("\n")
-                              .append("\n")
-                              .append("-- Global").append("\n")
-                              .append("GV2                : ").append(self.getGroupsV2Capability()).append("\n")
-                              .append("GV1 Migration      : ").append(self.getGroupsV1MigrationCapability()).append("\n")
-                              .append("Sender Key         : ").append(self.getSenderKeyCapability()).append("\n")
-                              .append("Announcement Groups: ").append(self.getAnnouncementGroupCapability()).append("\n")
-                              .append("Change Number      : ").append(self.getChangeNumberCapability()).append("\n");
+    StringBuilder builder = new StringBuilder().append("-- Local").append("\n")
+                                               .append("\n")
+                                               .append("-- Global").append("\n");
+
+    if (globalCapabilities != null) {
+      builder.append("\n");
+    } else {
+      builder.append("Self not found!");
+    }
+
+    return builder;
   }
 }

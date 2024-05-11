@@ -16,19 +16,31 @@
  */
 package org.thoughtcrime.securesms.mms;
 
+import java.io.Closeable;
+import java.io.IOException;
 import java.io.InputStream;
 
-public class MediaStream {
+public class MediaStream implements Closeable {
   private final InputStream stream;
   private final String      mimeType;
   private final int         width;
   private final int         height;
+  private final boolean     faststart;
 
   public MediaStream(InputStream stream, String mimeType, int width, int height) {
-    this.stream   = stream;
-    this.mimeType = mimeType;
-    this.width    = width;
-    this.height   = height;
+    this.stream    = stream;
+    this.mimeType  = mimeType;
+    this.width     = width;
+    this.height    = height;
+    this.faststart = false;
+  }
+
+  public MediaStream(InputStream stream, String mimeType, int width, int height, boolean faststart) {
+    this.stream    = stream;
+    this.mimeType  = mimeType;
+    this.width     = width;
+    this.height    = height;
+    this.faststart = faststart;
   }
 
   public InputStream getStream() {
@@ -45,5 +57,14 @@ public class MediaStream {
 
   public int getHeight() {
     return height;
+  }
+
+  public boolean getFaststart() {
+    return faststart;
+  }
+
+  @Override
+  public void close() throws IOException {
+    stream.close();
   }
 }

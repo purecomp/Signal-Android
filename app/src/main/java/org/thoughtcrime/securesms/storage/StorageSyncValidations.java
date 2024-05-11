@@ -7,9 +7,9 @@ import com.annimon.stream.Stream;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.recipients.Recipient;
-import org.thoughtcrime.securesms.util.Base64;
-import org.thoughtcrime.securesms.util.SetUtil;
-import org.whispersystems.signalservice.api.push.SignalServiceAddress;
+import org.signal.core.util.Base64;
+import org.signal.core.util.SetUtil;
+import org.whispersystems.signalservice.api.storage.SignalContactRecord;
 import org.whispersystems.signalservice.api.storage.SignalStorageManifest;
 import org.whispersystems.signalservice.api.storage.SignalStorageRecord;
 import org.whispersystems.signalservice.api.storage.StorageId;
@@ -34,10 +34,10 @@ public final class StorageSyncValidations {
     validateManifestAndInserts(result.getManifest(), result.getInserts(), self);
 
     if (result.getDeletes().size() > 0) {
-      Set<String> allSetEncoded = Stream.of(result.getManifest().getStorageIds()).map(StorageId::getRaw).map(Base64::encodeBytes).collect(Collectors.toSet());
+      Set<String> allSetEncoded = Stream.of(result.getManifest().getStorageIds()).map(StorageId::getRaw).map(Base64::encodeWithPadding).collect(Collectors.toSet());
 
       for (byte[] delete : result.getDeletes()) {
-        String encoded = Base64.encodeBytes(delete);
+        String encoded = Base64.encodeWithPadding(delete);
         if (allSetEncoded.contains(encoded)) {
           throw new DeletePresentInFullIdSetError();
         }
@@ -102,25 +102,9 @@ public final class StorageSyncValidations {
   }
 
   private static void validateManifestAndInserts(@NonNull SignalStorageManifest manifest, @NonNull List<SignalStorageRecord> inserts, @NonNull Recipient self) {
-    Set<StorageId>  allSet    = new HashSet<>(manifest.getStorageIds());
-    Set<StorageId>  insertSet = new HashSet<>(Stream.of(inserts).map(SignalStorageRecord::getId).toList());
-    Set<ByteBuffer> rawIdSet  = Stream.of(allSet).map(id -> ByteBuffer.wrap(id.getRaw())).collect(Collectors.toSet());
-
-    if (allSet.size() != manifest.getStorageIds().size()) {
-      throw new DuplicateStorageIdError();
-    }
-
-    if (rawIdSet.size() != allSet.size()) {
-      throw new DuplicateRawIdError();
-    }
-
-    if (inserts.size() > insertSet.size()) {
-      throw new DuplicateInsertInWriteError();
-    }
-
     int accountCount = 0;
     for (StorageId id : manifest.getStorageIds()) {
-      accountCount += id.getType() == ManifestRecord.Identifier.Type.ACCOUNT_VALUE ? 1 : 0;
+      accountCount += id.getType() == ManifestRecord.Identifier.Type.ACCOUNT.getValue() ? 1 : 0;
     }
 
     if (accountCount > 1) {
@@ -130,6 +114,43 @@ public final class StorageSyncValidations {
     if (accountCount == 0) {
       throw new MissingAccountError();
     }
+
+    Set<StorageId>  allSet    = new HashSet<>(manifest.getStorageIds());
+    Set<StorageId>  insertSet = new HashSet<>(Stream.of(inserts).map(SignalStorageRecord::getId).toList());
+    Set<ByteBuffer> rawIdSet  = Stream.of(allSet).map(id -> ByteBuffer.wrap(id.getRaw())).collect(Collectors.toSet());
+
+    if (allSet.size() != manifest.getStorageIds().size()) {
+      throw new DuplicateStorageIdError();
+    }
+
+    if (rawIdSet.size() != allSet.size()) {
+      List<StorageId> ids = manifest.getStorageIdsByType().get(ManifestRecord.Identifier.Type.CONTACT.getValue());
+      if (ids.size() != new HashSet<>(ids).size()) {
+        throw new DuplicateContactIdError();
+      }
+
+      ids = manifest.getStorageIdsByType().get(ManifestRecord.Identifier.Type.GROUPV1.getValue());
+      if (ids.size() != new HashSet<>(ids).size()) {
+        throw new DuplicateGroupV1IdError();
+      }
+
+      ids = manifest.getStorageIdsByType().get(ManifestRecord.Identifier.Type.GROUPV2.getValue());
+      if (ids.size() != new HashSet<>(ids).size()) {
+        throw new DuplicateGroupV2IdError();
+      }
+
+      ids = manifest.getStorageIdsByType().get(ManifestRecord.Identifier.Type.STORY_DISTRIBUTION_LIST.getValue());
+      if (ids.size() != new HashSet<>(ids).size()) {
+        throw new DuplicateDistributionListIdError();
+      }
+
+      throw new DuplicateRawIdAcrossTypesError();
+    }
+
+    if (inserts.size() > insertSet.size()) {
+      throw new DuplicateInsertInWriteError();
+    }
+
 
     for (SignalStorageRecord insert : inserts) {
       if (!allSet.contains(insert.getId())) {
@@ -141,10 +162,18 @@ public final class StorageSyncValidations {
       }
 
       if (insert.getContact().isPresent()) {
-        SignalServiceAddress address = insert.getContact().get().getAddress();
-        if (self.getE164().get().equals(address.getNumber().or("")) || self.requireAci().equals(address.getAci())) {
+        SignalContactRecord contact = insert.getContact().get();
+
+        if (self.requireAci().equals(contact.getAci().orElse(null)) ||
+            self.requirePni().equals(contact.getPni().orElse(null)) ||
+            self.requireE164().equals(contact.getNumber().orElse("")))
+        {
           throw new SelfAddedAsContactError();
         }
+      }
+
+      if (insert.getAccount().isPresent() && !insert.getAccount().get().getProfileKey().isPresent()) {
+        Log.w(TAG, "Uploading a null profile key in our AccountRecord!");
       }
     }
   }
@@ -152,7 +181,19 @@ public final class StorageSyncValidations {
   private static final class DuplicateStorageIdError extends Error {
   }
 
-  private static final class DuplicateRawIdError extends Error {
+  private static final class DuplicateRawIdAcrossTypesError extends Error {
+  }
+
+  private static final class DuplicateContactIdError extends Error {
+  }
+
+  private static final class DuplicateGroupV1IdError extends Error {
+  }
+
+  private static final class DuplicateGroupV2IdError extends Error {
+  }
+
+  private static final class DuplicateDistributionListIdError extends Error {
   }
 
   private static final class DuplicateInsertInWriteError extends Error {

@@ -89,11 +89,68 @@ public class ApplicationMigrations {
     static final int CHANGE_NUMBER_CAPABILITY      = 45;
     static final int CHANGE_NUMBER_CAPABILITY_2    = 46;
     static final int DEFAULT_REACTIONS_SYNC        = 47;
+    static final int DB_REACTIONS_MIGRATION        = 48;
+    //static final int CHANGE_NUMBER_CAPABILITY_3  = 49;
+    static final int PNI                           = 50;
+    static final int FIX_DEPRECATION               = 51; // Only used to trigger clearing the 'client deprecated' flag
+    static final int JUMBOMOJI_DOWNLOAD            = 52;
+    static final int FIX_EMOJI_QUALITY             = 53;
+    static final int CHANGE_NUMBER_CAPABILITY_4    = 54;
+    //static final int KBS_MIGRATION               = 55;
+    static final int PNI_IDENTITY                  = 56;
+    static final int PNI_IDENTITY_2                = 57;
+    static final int PNI_IDENTITY_3                = 58;
+    static final int STORY_DISTRIBUTION_LIST_SYNC  = 59;
+    static final int EMOJI_VERSION_7               = 60;
+    static final int MY_STORY_PRIVACY_MODE         = 61;
+    static final int REFRESH_EXPIRING_CREDENTIAL   = 62;
+    static final int EMOJI_SEARCH_INDEX_10         = 63;
+    static final int REFRESH_PNI_REGISTRATION_ID   = 64;
+    //static final int KBS_MIGRATION_2             = 65;
+    static final int PNI_2                         = 66;
+    static final int SYSTEM_NAME_SYNC              = 67;
+    static final int STORY_VIEWED_STATE            = 68;
+//    static final int STORY_READ_STATE              = 69;
+    static final int THREAD_MESSAGE_SCHEMA_CHANGE  = 70;
+    static final int SMS_MMS_MERGE                 = 71;
+    static final int REBUILD_MESSAGE_FTS_INDEX     = 72;
+    static final int UPDATE_SMS_JOBS               = 73;
+    static final int OPTIMIZE_MESSAGE_FTS_INDEX    = 74;
+    static final int REACTION_DATABASE_MIGRATION   = 75;
+    static final int REBUILD_MESSAGE_FTS_INDEX_2   = 76;
+    static final int GLIDE_CACHE_CLEAR             = 77;
+    static final int SYSTEM_NAME_RESYNC            = 78;
+    static final int RECOVERY_PASSWORD_SYNC        = 79;
+//    static final int DECRYPTIONS_DRAINED           = 80;
+    static final int REBUILD_MESSAGE_FTS_INDEX_3   = 81;
+    static final int TO_FROM_RECIPIENTS            = 82;
+    static final int REBUILD_MESSAGE_FTS_INDEX_4   = 83;
+    static final int INDEX_DATABASE_MIGRATION      = 84;
+    static final int ACCOUNT_CONSISTENCY_CHECK     = 85;
+    static final int BACKUP_JITTER                 = 86;
+    static final int PREKEY_SYNC                   = 87;
+    static final int DEDUPE_DB_MIGRATION           = 88;
+    static final int DEDUPE_DB_MIGRATION_2         = 89;
+    static final int EMOJI_VERSION_8               = 90;
+    static final int SVR2_MIRROR                   = 91;
+    static final int ATTACHMENT_CLEANUP_3          = 92;
+    static final int EMOJI_SEARCH_INDEX_CHECK      = 93;
+    static final int IDENTITY_FIX                  = 94;
+    static final int COPY_USERNAME_TO_SIGNAL_STORE = 95;
+    static final int RECHECK_PAYMENTS              = 96;
+    static final int THREAD_COUNT_DB_MIGRATION     = 97;
+    static final int SYNC_KEYS_MIGRATION           = 98;
+    static final int SELF_REGISTERTED_STATE        = 99;
+    static final int SVR2_ENCLAVE_UPDATE           = 100;
+    static final int STORAGE_LOCAL_UNKNOWNS_FIX    = 101;
+    static final int PNP_LAUNCH                    = 102;
+    static final int EMOJI_VERSION_10              = 103;
+    static final int ATTACHMENT_HASH_BACKFILL      = 104;
   }
 
-  public static final int CURRENT_VERSION = 47;
+  public static final int CURRENT_VERSION = 104;
 
-  /**
+ /**
    * This *must* be called after the {@link JobManager} has been instantiated, but *before* the call
    * to {@link JobManager#beginJobLoop()}. Otherwise, other non-migration jobs may have started
    * executing before we add the migration jobs.
@@ -110,7 +167,7 @@ public class ApplicationMigrations {
       return;
     } else {
       Log.d(TAG, "About to update. Clearing deprecation flag.");
-      SignalStore.misc().clearClientDeprecated();
+      SignalStore.misc().setClientDeprecated(false);
     }
 
     final int lastSeenVersion = TextSecurePreferences.getAppMigrationVersion(context);
@@ -387,6 +444,227 @@ public class ApplicationMigrations {
 
     if (lastSeenVersion < Version.DEFAULT_REACTIONS_SYNC) {
       jobs.put(Version.DEFAULT_REACTIONS_SYNC, new StorageServiceMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.DB_REACTIONS_MIGRATION) {
+      jobs.put(Version.DB_REACTIONS_MIGRATION, new DatabaseMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.PNI) {
+      jobs.put(Version.PNI, new PniMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.JUMBOMOJI_DOWNLOAD) {
+      jobs.put(Version.JUMBOMOJI_DOWNLOAD, new EmojiDownloadMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.FIX_EMOJI_QUALITY) {
+      jobs.put(Version.FIX_EMOJI_QUALITY, new EmojiDownloadMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.CHANGE_NUMBER_CAPABILITY_4) {
+      jobs.put(Version.CHANGE_NUMBER_CAPABILITY_4,new AttributesMigrationJob());
+    }
+
+    // if (lastSeenVersion < Version.KBS_MIGRATION) {
+    //   jobs.put(Version.KBS_MIGRATION, new KbsEnclaveMigrationJob());
+    // }
+
+    if (lastSeenVersion < Version.PNI_IDENTITY) {
+      jobs.put(Version.PNI_IDENTITY, new PniAccountInitializationMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.PNI_IDENTITY_2) {
+      jobs.put(Version.PNI_IDENTITY_2, new PniAccountInitializationMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.PNI_IDENTITY_3) {
+      jobs.put(Version.PNI_IDENTITY_3, new PniAccountInitializationMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.STORY_DISTRIBUTION_LIST_SYNC) {
+      jobs.put(Version.STORY_DISTRIBUTION_LIST_SYNC, new StorageServiceMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.EMOJI_VERSION_7) {
+      jobs.put(Version.EMOJI_VERSION_7, new EmojiDownloadMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.MY_STORY_PRIVACY_MODE) {
+      jobs.put(Version.MY_STORY_PRIVACY_MODE, new SyncDistributionListsMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.REFRESH_EXPIRING_CREDENTIAL) {
+      jobs.put(Version.REFRESH_EXPIRING_CREDENTIAL, new AttributesMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.EMOJI_SEARCH_INDEX_10) {
+      jobs.put(Version.EMOJI_SEARCH_INDEX_10, new EmojiDownloadMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.REFRESH_PNI_REGISTRATION_ID) {
+      jobs.put(Version.REFRESH_PNI_REGISTRATION_ID, new AttributesMigrationJob());
+    }
+
+    // if (lastSeenVersion < Version.KBS_MIGRATION_2) {
+    //   jobs.put(Version.KBS_MIGRATION_2, new KbsEnclaveMigrationJob());
+    // }
+
+    if (lastSeenVersion < Version.PNI_2) {
+      jobs.put(Version.PNI_2, new PniMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.SYSTEM_NAME_SYNC) {
+      jobs.put(Version.SYSTEM_NAME_SYNC, new StorageServiceSystemNameMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.STORY_VIEWED_STATE) {
+      jobs.put(Version.STORY_VIEWED_STATE, new StoryViewedReceiptsStateMigrationJob());
+    }
+
+//    if (lastSeenVersion < Version.STORY_READ_STATE) {
+//      jobs.put(Version.STORY_READ_STATE, new StoryReadStateMigrationJob());
+//    }
+
+    if (lastSeenVersion < Version.THREAD_MESSAGE_SCHEMA_CHANGE) {
+      jobs.put(Version.THREAD_MESSAGE_SCHEMA_CHANGE, new DatabaseMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.SMS_MMS_MERGE) {
+      jobs.put(Version.SMS_MMS_MERGE, new DatabaseMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.REBUILD_MESSAGE_FTS_INDEX) {
+      jobs.put(Version.REBUILD_MESSAGE_FTS_INDEX, new RebuildMessageSearchIndexMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.UPDATE_SMS_JOBS) {
+      jobs.put(Version.UPDATE_SMS_JOBS, new UpdateSmsJobsMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.OPTIMIZE_MESSAGE_FTS_INDEX) {
+      jobs.put(Version.OPTIMIZE_MESSAGE_FTS_INDEX, new OptimizeMessageSearchIndexMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.REACTION_DATABASE_MIGRATION) {
+      jobs.put(Version.REACTION_DATABASE_MIGRATION, new DatabaseMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.REBUILD_MESSAGE_FTS_INDEX_2) {
+      jobs.put(Version.REBUILD_MESSAGE_FTS_INDEX_2, new RebuildMessageSearchIndexMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.GLIDE_CACHE_CLEAR) {
+      jobs.put(Version.GLIDE_CACHE_CLEAR, new ClearGlideCacheMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.SYSTEM_NAME_RESYNC) {
+      jobs.put(Version.SYSTEM_NAME_RESYNC, new StorageServiceSystemNameMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.RECOVERY_PASSWORD_SYNC) {
+      jobs.put(Version.RECOVERY_PASSWORD_SYNC, new AttributesMigrationJob());
+    }
+
+    // Needed for the conversion to inline decryptions and is no longer necessary
+    // if (lastSeenVersion < Version.DECRYPTIONS_DRAINED) {
+    //   jobs.put(Version.DECRYPTIONS_DRAINED, new DecryptionsDrainedMigrationJob());
+    // }
+
+    if (lastSeenVersion < Version.REBUILD_MESSAGE_FTS_INDEX_3) {
+      jobs.put(Version.REBUILD_MESSAGE_FTS_INDEX_3, new RebuildMessageSearchIndexMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.TO_FROM_RECIPIENTS) {
+      jobs.put(Version.TO_FROM_RECIPIENTS, new DatabaseMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.REBUILD_MESSAGE_FTS_INDEX_4) {
+      jobs.put(Version.REBUILD_MESSAGE_FTS_INDEX_4, new RebuildMessageSearchIndexMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.INDEX_DATABASE_MIGRATION) {
+      jobs.put(Version.INDEX_DATABASE_MIGRATION, new DatabaseMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.ACCOUNT_CONSISTENCY_CHECK) {
+      jobs.put(Version.ACCOUNT_CONSISTENCY_CHECK, new AccountConsistencyMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.BACKUP_JITTER) {
+      jobs.put(Version.BACKUP_JITTER, new BackupJitterMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.PREKEY_SYNC) {
+      jobs.put(Version.PREKEY_SYNC, new PreKeysSyncMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.DEDUPE_DB_MIGRATION) {
+      jobs.put(Version.DEDUPE_DB_MIGRATION, new DatabaseMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.DEDUPE_DB_MIGRATION_2) {
+      jobs.put(Version.DEDUPE_DB_MIGRATION_2, new DatabaseMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.EMOJI_VERSION_8) {
+      jobs.put(Version.EMOJI_VERSION_8, new EmojiDownloadMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.SVR2_MIRROR) {
+      jobs.put(Version.SVR2_MIRROR, new Svr2MirrorMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.ATTACHMENT_CLEANUP_3) {
+      jobs.put(Version.ATTACHMENT_CLEANUP_3, new AttachmentCleanupMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.EMOJI_SEARCH_INDEX_CHECK) {
+      jobs.put(Version.EMOJI_SEARCH_INDEX_CHECK, new EmojiSearchIndexCheckMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.IDENTITY_FIX) {
+      jobs.put(Version.IDENTITY_FIX, new IdentityTableCleanupMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.COPY_USERNAME_TO_SIGNAL_STORE) {
+      jobs.put(Version.COPY_USERNAME_TO_SIGNAL_STORE, new CopyUsernameToSignalStoreMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.RECHECK_PAYMENTS) {
+      jobs.put(Version.RECHECK_PAYMENTS, new RecheckPaymentsMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.THREAD_COUNT_DB_MIGRATION) {
+      jobs.put(Version.THREAD_COUNT_DB_MIGRATION, new DatabaseMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.SYNC_KEYS_MIGRATION) {
+      jobs.put(Version.SYNC_KEYS_MIGRATION, new SyncKeysMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.SELF_REGISTERTED_STATE) {
+      jobs.put(Version.SELF_REGISTERTED_STATE,  new SelfRegisteredStateMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.SVR2_ENCLAVE_UPDATE) {
+      jobs.put(Version.SVR2_ENCLAVE_UPDATE,  new Svr2MirrorMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.STORAGE_LOCAL_UNKNOWNS_FIX) {
+      jobs.put(Version.STORAGE_LOCAL_UNKNOWNS_FIX, new StorageFixLocalUnknownMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.PNP_LAUNCH) {
+      jobs.put(Version.PNP_LAUNCH, new PnpLaunchMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.EMOJI_VERSION_10) {
+      jobs.put(Version.EMOJI_VERSION_10, new EmojiDownloadMigrationJob());
+    }
+
+    if (lastSeenVersion < Version.ATTACHMENT_HASH_BACKFILL) {
+      jobs.put(Version.ATTACHMENT_HASH_BACKFILL, new AttachmentHashBackfillMigrationJob());
     }
 
     return jobs;

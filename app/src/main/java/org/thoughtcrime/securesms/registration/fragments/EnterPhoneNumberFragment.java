@@ -1,11 +1,7 @@
 package org.thoughtcrime.securesms.registration.fragments;
 
-import static org.thoughtcrime.securesms.registration.fragments.RegistrationViewDelegate.setDebugLogSubmitMultiTapView;
-import static org.thoughtcrime.securesms.registration.fragments.RegistrationViewDelegate.showConfirmNumberDialogIfTranslated;
-import static org.thoughtcrime.securesms.util.CircularProgressButtonUtil.cancelSpinning;
-import static org.thoughtcrime.securesms.util.CircularProgressButtonUtil.setSpinning;
-
 import android.content.Context;
+import android.content.DialogInterface;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.view.LayoutInflater;
@@ -14,12 +10,12 @@ import android.view.MenuInflater;
 import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.EditText;
 import android.widget.ScrollView;
-import android.widget.Spinner;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.ActionBar;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.widget.Toolbar;
 import androidx.lifecycle.ViewModelProvider;
@@ -27,49 +23,59 @@ import androidx.navigation.NavController;
 import androidx.navigation.Navigation;
 import androidx.navigation.fragment.NavHostFragment;
 
-import com.dd.CircularProgressButton;
 import com.google.android.gms.auth.api.phone.SmsRetriever;
 import com.google.android.gms.auth.api.phone.SmsRetrieverClient;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.GoogleApiAvailability;
 import com.google.android.gms.tasks.Task;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.textfield.TextInputLayout;
 import com.google.i18n.phonenumbers.NumberParseException;
 import com.google.i18n.phonenumbers.PhoneNumberUtil;
 import com.google.i18n.phonenumbers.Phonenumber;
 
 import org.signal.core.util.ThreadUtil;
+import org.signal.core.util.concurrent.LifecycleDisposable;
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.LoggingFragment;
 import org.thoughtcrime.securesms.R;
-import org.thoughtcrime.securesms.components.LabeledEditText;
-import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
+import org.thoughtcrime.securesms.keyvalue.SignalStore;
+import org.thoughtcrime.securesms.registration.RegistrationSessionProcessor;
 import org.thoughtcrime.securesms.registration.VerifyAccountRepository.Mode;
 import org.thoughtcrime.securesms.registration.util.RegistrationNumberInputController;
 import org.thoughtcrime.securesms.registration.viewmodel.NumberViewState;
 import org.thoughtcrime.securesms.registration.viewmodel.RegistrationViewModel;
 import org.thoughtcrime.securesms.util.CommunicationActions;
+import org.thoughtcrime.securesms.util.Debouncer;
 import org.thoughtcrime.securesms.util.Dialogs;
-import org.thoughtcrime.securesms.util.LifecycleDisposable;
 import org.thoughtcrime.securesms.util.PlayServicesUtil;
 import org.thoughtcrime.securesms.util.SupportEmailUtil;
-import org.thoughtcrime.securesms.util.TextSecurePreferences;
 import org.thoughtcrime.securesms.util.ViewUtil;
+import org.thoughtcrime.securesms.util.dualsim.MccMncProducer;
+import org.thoughtcrime.securesms.util.navigation.SafeNavigation;
+import org.thoughtcrime.securesms.util.views.CircularProgressMaterialButton;
+
+import java.util.Locale;
+import java.util.Objects;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
 import io.reactivex.rxjava3.disposables.Disposable;
+
+import static org.thoughtcrime.securesms.registration.fragments.RegistrationViewDelegate.setDebugLogSubmitMultiTapView;
+import static org.thoughtcrime.securesms.registration.fragments.RegistrationViewDelegate.showConfirmNumberDialogIfTranslated;
 
 public final class EnterPhoneNumberFragment extends LoggingFragment implements RegistrationNumberInputController.Callbacks {
 
   private static final String TAG = Log.tag(EnterPhoneNumberFragment.class);
 
-  private LabeledEditText        countryCode;
-  private LabeledEditText        number;
-  private CircularProgressButton register;
-  private Spinner                countrySpinner;
-  private View                   cancel;
-  private ScrollView             scrollView;
-  private RegistrationViewModel  viewModel;
+  private TextInputLayout                countryCode;
+  private TextInputLayout                number;
+  private CircularProgressMaterialButton register;
+  private View                           cancel;
+  private ScrollView                     scrollView;
+  private RegistrationViewModel          viewModel;
 
   private final LifecycleDisposable disposables = new LifecycleDisposable();
 
@@ -90,20 +96,16 @@ public final class EnterPhoneNumberFragment extends LoggingFragment implements R
 
     setDebugLogSubmitMultiTapView(view.findViewById(R.id.verify_header));
 
-    countryCode    = view.findViewById(R.id.country_code);
-    number         = view.findViewById(R.id.number);
-    countrySpinner = view.findViewById(R.id.country_spinner);
-    cancel         = view.findViewById(R.id.cancel_button);
-    scrollView     = view.findViewById(R.id.scroll_view);
-    register       = view.findViewById(R.id.registerButton);
+    countryCode = view.findViewById(R.id.country_code);
+    number      = view.findViewById(R.id.number);
+    cancel      = view.findViewById(R.id.cancel_button);
+    scrollView  = view.findViewById(R.id.scroll_view);
+    register    = view.findViewById(R.id.registerButton);
 
     RegistrationNumberInputController controller = new RegistrationNumberInputController(requireContext(),
-                                                                                         countryCode,
-                                                                                         number,
-                                                                                         countrySpinner,
-                                                                                         true,
-                                                                                         this);
-
+                                                                                         this,
+                                                                                         Objects.requireNonNull(number.getEditText()),
+                                                                                         countryCode);
     register.setOnClickListener(v -> handleRegister(requireContext()));
 
     disposables.bindTo(getViewLifecycleOwner().getLifecycle());
@@ -111,12 +113,12 @@ public final class EnterPhoneNumberFragment extends LoggingFragment implements R
 
     if (viewModel.isReregister()) {
       cancel.setVisibility(View.VISIBLE);
-      cancel.setOnClickListener(v -> Navigation.findNavController(v).navigateUp());
+      cancel.setOnClickListener(v -> requireActivity().finish());
     } else {
       cancel.setVisibility(View.GONE);
     }
 
-    viewModel.getLiveNumber().observe(getViewLifecycleOwner(), controller::updateNumber);
+    viewModel.getLiveNumber().observe(getViewLifecycleOwner(), controller::updateNumberFormatter);
 
     if (viewModel.hasCaptchaToken()) {
       ThreadUtil.runOnMainDelayed(() -> handleRegister(requireContext()), 250);
@@ -124,7 +126,23 @@ public final class EnterPhoneNumberFragment extends LoggingFragment implements R
 
     Toolbar toolbar = view.findViewById(R.id.toolbar);
     ((AppCompatActivity) requireActivity()).setSupportActionBar(toolbar);
-    ((AppCompatActivity) requireActivity()).getSupportActionBar().setTitle(null);
+    final ActionBar supportActionBar = ((AppCompatActivity) requireActivity()).getSupportActionBar();
+    if (supportActionBar != null) {
+      supportActionBar.setTitle(null);
+    }
+
+    final NumberViewState viewModelNumber = viewModel.getNumber();
+    if (viewModelNumber.getCountryCode() == 0) {
+      controller.prepopulateCountryCode();
+    }
+    controller.setNumberAndCountryCode(viewModelNumber);
+
+    ViewUtil.focusAndShowKeyboard(number.getEditText());
+
+    if (viewModel.hasUserSkippedReRegisterFlow() && viewModel.shouldAutoShowSmsConfirmDialog()) {
+      viewModel.setAutoShowSmsConfirmDialog(false);
+      ThreadUtil.runOnMainDelayed(() -> handleRegister(requireContext()), 250);
+    }
   }
 
   @Override
@@ -135,7 +153,7 @@ public final class EnterPhoneNumberFragment extends LoggingFragment implements R
   @Override
   public boolean onOptionsItemSelected(@NonNull MenuItem item) {
     if (item.getItemId() == R.id.phone_menu_use_proxy) {
-      Navigation.findNavController(requireView()).navigate(EnterPhoneNumberFragmentDirections.actionEditProxy());
+      SafeNavigation.safeNavigate(Navigation.findNavController(requireView()), EnterPhoneNumberFragmentDirections.actionEditProxy());
       return true;
     } else {
       return false;
@@ -143,13 +161,13 @@ public final class EnterPhoneNumberFragment extends LoggingFragment implements R
   }
 
   private void handleRegister(@NonNull Context context) {
-    if (TextUtils.isEmpty(countryCode.getText())) {
-      Toast.makeText(context, getString(R.string.RegistrationActivity_you_must_specify_your_country_code), Toast.LENGTH_LONG).show();
+    if (viewModel.getNumber().getCountryCode() == 0) {
+      showErrorDialog(context, getString(R.string.RegistrationActivity_you_must_specify_your_country_code));
       return;
     }
 
-    if (TextUtils.isEmpty(this.number.getText())) {
-      Toast.makeText(context, getString(R.string.RegistrationActivity_you_must_specify_your_phone_number), Toast.LENGTH_LONG).show();
+    if (TextUtils.isEmpty(viewModel.getNumber().getNationalNumber())) {
+      showErrorDialog(context, getString(R.string.RegistrationActivity_please_enter_a_valid_phone_number_to_register));
       return;
     }
 
@@ -166,7 +184,7 @@ public final class EnterPhoneNumberFragment extends LoggingFragment implements R
     PlayServicesUtil.PlayServicesStatus fcmStatus = PlayServicesUtil.getPlayServicesStatus(context);
 
     if (fcmStatus == PlayServicesUtil.PlayServicesStatus.SUCCESS) {
-      confirmNumberPrompt(context, e164number, () -> handleRequestVerification(context, true));
+      confirmNumberPrompt(context, e164number, () -> onE164EnteredSuccessfully(context, true));
     } else if (fcmStatus == PlayServicesUtil.PlayServicesStatus.MISSING) {
       confirmNumberPrompt(context, e164number, () -> handlePromptForNoPlayServices(context));
     } else if (fcmStatus == PlayServicesUtil.PlayServicesStatus.NEEDS_UPDATE) {
@@ -178,80 +196,172 @@ public final class EnterPhoneNumberFragment extends LoggingFragment implements R
     }
   }
 
-  private void handleRequestVerification(@NonNull Context context, boolean fcmSupported) {
-    setSpinning(register);
-    disableAllEntries();
+  private void onE164EnteredSuccessfully(@NonNull Context context, boolean fcmSupported) {
+    enterInProgressUiState();
+    Log.d(TAG, "E164 entered successfully.");
+    Disposable disposable = viewModel.canEnterSkipSmsFlow()
+                                     .observeOn(AndroidSchedulers.mainThread())
+                                     .onErrorReturnItem(false)
+                                     .subscribe(canEnter -> {
+                                       if (canEnter) {
+                                         Log.i(TAG, "Entering skip flow.");
+                                         SafeNavigation.safeNavigate(NavHostFragment.findNavController(this), EnterPhoneNumberFragmentDirections.actionReRegisterWithPinFragment());
+                                       } else {
+                                         Log.i(TAG, "Unable to collect necessary data to enter skip flow, returning to normal");
+                                         handleRequestVerification(context, fcmSupported);
+                                       }
+                                     });
+    disposables.add(disposable);
+  }
 
+  private void handleRequestVerification(@NonNull Context context, boolean fcmSupported) {
     if (fcmSupported) {
-      SmsRetrieverClient client = SmsRetriever.getClient(context);
-      Task<Void>         task   = client.startSmsRetriever();
+      SmsRetrieverClient client  = SmsRetriever.getClient(context);
+      Task<Void>         task    = client.startSmsRetriever();
+      AtomicBoolean      handled = new AtomicBoolean(false);
+
+      Debouncer debouncer = new Debouncer(TimeUnit.SECONDS.toMillis(5));
+      debouncer.publish(() -> {
+        if (!handled.getAndSet(true)) {
+          Log.w(TAG, "Timed out waiting for SMS listener!");
+          requestVerificationCode(Mode.SMS_WITHOUT_LISTENER);
+        }
+      });
 
       task.addOnSuccessListener(none -> {
-        Log.i(TAG, "Successfully registered SMS listener.");
-        requestVerificationCode(Mode.SMS_WITH_LISTENER);
+        if (!handled.getAndSet(true)) {
+          Log.i(TAG, "Successfully registered SMS listener.");
+          requestVerificationCode(Mode.SMS_WITH_LISTENER);
+        } else {
+          Log.w(TAG, "Successfully registered listener after timeout.");
+        }
+        debouncer.clear();
       });
 
       task.addOnFailureListener(e -> {
-        Log.w(TAG, "Failed to register SMS listener.", e);
-        requestVerificationCode(Mode.SMS_WITHOUT_LISTENER);
+        if (!handled.getAndSet(true)) {
+          Log.w(TAG, "Failed to register SMS listener.", e);
+          requestVerificationCode(Mode.SMS_WITHOUT_LISTENER);
+        } else {
+          Log.w(TAG, "Failed to register listener after timeout.");
+        }
+        debouncer.clear();
       });
+
+      task.addOnCanceledListener(() -> {
+        if (!handled.getAndSet(true)) {
+          Log.w(TAG, "SMS listener registration canceled.");
+          requestVerificationCode(Mode.SMS_WITHOUT_LISTENER);
+        } else {
+          Log.w(TAG, "SMS listener registration canceled after timeout.");
+        }
+        debouncer.clear();
+      });
+
     } else {
       Log.i(TAG, "FCM is not supported, using no SMS listener");
       requestVerificationCode(Mode.SMS_WITHOUT_LISTENER);
     }
   }
 
-  private void disableAllEntries() {
+  private void enterInProgressUiState() {
+    register.setSpinning();
     countryCode.setEnabled(false);
     number.setEnabled(false);
-    countrySpinner.setEnabled(false);
     cancel.setVisibility(View.GONE);
   }
 
-  private void enableAllEntries() {
+  private void exitInProgressUiState() {
+    register.cancelSpinning();
     countryCode.setEnabled(true);
     number.setEnabled(true);
-    countrySpinner.setEnabled(true);
     if (viewModel.isReregister()) {
       cancel.setVisibility(View.VISIBLE);
     }
   }
 
   private void requestVerificationCode(@NonNull Mode mode) {
-    NavController navController = NavHostFragment.findNavController(this);
-
-    Disposable request = viewModel.requestVerificationCode(mode)
-                                  .doOnSubscribe(unused -> TextSecurePreferences.setPushRegistered(ApplicationDependencies.getApplication(), false))
+    NavController                         navController       = NavHostFragment.findNavController(this);
+    MccMncProducer                        mccMncProducer      = new MccMncProducer(requireContext());
+    final DialogInterface.OnClickListener proceedToNextScreen = (dialog, which) -> SafeNavigation.safeNavigate(navController, EnterPhoneNumberFragmentDirections.actionEnterVerificationCode());
+    Disposable request = viewModel.requestVerificationCode(mode, mccMncProducer.getMcc(), mccMncProducer.getMnc())
+                                  .doOnSubscribe(unused -> SignalStore.account().setRegistered(false))
                                   .observeOn(AndroidSchedulers.mainThread())
-                                  .subscribe(processor -> {
-                                    if (processor.hasResult()) {
-                                      navController.navigate(EnterPhoneNumberFragmentDirections.actionEnterVerificationCode());
-                                    } else if (processor.localRateLimit()) {
-                                      Log.i(TAG, "Unable to request sms code due to local rate limit");
-                                      navController.navigate(EnterPhoneNumberFragmentDirections.actionEnterVerificationCode());
-                                    } else if (processor.captchaRequired()) {
+                                  .subscribe((RegistrationSessionProcessor processor) -> {
+                                    Context context = getContext();
+                                    if (context == null) {
+                                      Log.w(TAG, "[requestVerificationCode] Invalid context! Skipping.");
+                                      return;
+                                    }
+
+                                    if (processor.verificationCodeRequestSuccess()) {
+                                      disposables.add(updateFcmTokenValue());
+                                      SafeNavigation.safeNavigate(navController, EnterPhoneNumberFragmentDirections.actionEnterVerificationCode());
+                                    } else if (processor.captchaRequired(viewModel.getExcludedChallenges())) {
                                       Log.i(TAG, "Unable to request sms code due to captcha required");
-                                      navController.navigate(EnterPhoneNumberFragmentDirections.actionRequestCaptcha());
+                                      SafeNavigation.safeNavigate(navController, EnterPhoneNumberFragmentDirections.actionRequestCaptcha());
+                                    } else if (processor.exhaustedVerificationCodeAttempts()) {
+                                      Log.i(TAG, "Unable to request sms code due to exhausting attempts");
+                                      showErrorDialog(context, context.getString(R.string.RegistrationActivity_rate_limited_to_service));
                                     } else if (processor.rateLimit()) {
                                       Log.i(TAG, "Unable to request sms code due to rate limit");
-                                      Toast.makeText(register.getContext(), R.string.RegistrationActivity_rate_limited_to_service, Toast.LENGTH_LONG).show();
+                                      showErrorDialog(context, context.getString(R.string.RegistrationActivity_rate_limited_to_try_again, formatMillisecondsToString(processor.getRateLimit())));
                                     } else if (processor.isImpossibleNumber()) {
                                       Log.w(TAG, "Impossible number", processor.getError());
                                       Dialogs.showAlertDialog(requireContext(),
-                                                              getString(R.string.RegistrationActivity_invalid_number),
-                                                              String.format(getString(R.string.RegistrationActivity_the_number_you_specified_s_is_invalid), viewModel.getNumber().getFullFormattedNumber()));
+                                                              context.getString(R.string.RegistrationActivity_invalid_number),
+                                                              String.format(context.getString(R.string.RegistrationActivity_the_number_you_specified_s_is_invalid), viewModel.getNumber().getFullFormattedNumber()));
                                     } else if (processor.isNonNormalizedNumber()) {
                                       handleNonNormalizedNumberError(processor.getOriginalNumber(), processor.getNormalizedNumber(), mode);
+                                    } else if (processor.isTokenRejected()) {
+                                      Log.i(TAG, "The server did not accept the information.", processor.getError());
+                                      showErrorDialog(context, context.getString(R.string.RegistrationActivity_we_need_to_verify_that_youre_human));
+                                    } else if (processor.externalServiceFailure()) {
+                                      Log.w(TAG, "The server reported a failure with an external service.", processor.getError());
+                                      showErrorDialog(context, context.getString(R.string.RegistrationActivity_unable_to_connect_to_service), proceedToNextScreen);
+                                    } else if (processor.invalidTransportModeFailure()) {
+                                      Log.w(TAG, "The server reported an invalid transport mode failure.", processor.getError());
+                                      new MaterialAlertDialogBuilder(context)
+                                          .setMessage(R.string.RegistrationActivity_we_couldnt_send_you_a_verification_code)
+                                          .setPositiveButton(R.string.RegistrationActivity_voice_call, (dialog, which) -> requestVerificationCode(Mode.PHONE_CALL))
+                                          .setNegativeButton(R.string.RegistrationActivity_cancel, null)
+                                          .show();
+                                    } else if ( processor.isMalformedRequest()){
+                                      Log.w(TAG, "The server reported a malformed request.", processor.getError());
+                                      showErrorDialog(context, context.getString(R.string.RegistrationActivity_unable_to_connect_to_service), proceedToNextScreen);
+
+                                    } else if (processor.isRetryException()) {
+                                      Log.w(TAG, "The server reported a failure that is retryable.", processor.getError());
+                                      showErrorDialog(context, context.getString(R.string.RegistrationActivity_unable_to_connect_to_service), proceedToNextScreen);
                                     } else {
                                       Log.i(TAG, "Unknown error during verification code request", processor.getError());
-                                      Toast.makeText(register.getContext(), R.string.RegistrationActivity_unable_to_connect_to_service, Toast.LENGTH_LONG).show();
+                                      showErrorDialog(context, context.getString(R.string.RegistrationActivity_unable_to_connect_to_service));
                                     }
 
-                                    cancelSpinning(register);
-                                    enableAllEntries();
+                                    exitInProgressUiState();
                                   });
 
     disposables.add(request);
+  }
+
+  private Disposable updateFcmTokenValue() {
+    return viewModel.updateFcmTokenValue().subscribe();
+  }
+
+  private String formatMillisecondsToString(long milliseconds) {
+    long totalSeconds = milliseconds / 1000;
+    long HH           = totalSeconds / 3600;
+    long MM           = (totalSeconds % 3600) / 60;
+    long SS           = totalSeconds % 60;
+    return String.format(Locale.getDefault(), "%02d:%02d:%02d", HH, MM, SS);
+  }
+
+  public void showErrorDialog(Context context, String msg) {
+    showErrorDialog(context, msg, null);
+  }
+
+  public void showErrorDialog(Context context, String msg, DialogInterface.OnClickListener positiveButtonListener) {
+    new MaterialAlertDialogBuilder(context).setMessage(msg).setPositiveButton(android.R.string.ok, positiveButtonListener).show();
   }
 
   @Override
@@ -260,19 +370,9 @@ public final class EnterPhoneNumberFragment extends LoggingFragment implements R
   }
 
   @Override
-  public void onNumberInputNext(@NonNull View view) {
-    // Intentionally left blank
-  }
-
-  @Override
   public void onNumberInputDone(@NonNull View view) {
     ViewUtil.hideKeyboard(requireContext(), view);
     handleRegister(requireContext());
-  }
-
-  @Override
-  public void onPickCountry(@NonNull View view) {
-    Navigation.findNavController(view).navigate(R.id.action_pickCountry);
   }
 
   @Override
@@ -283,6 +383,35 @@ public final class EnterPhoneNumberFragment extends LoggingFragment implements R
   @Override
   public void setCountry(int countryCode) {
     viewModel.onCountrySelected(null, countryCode);
+  }
+
+  @Override
+  public void onStart() {
+    super.onStart();
+    String sessionE164 = viewModel.getSessionE164();
+    if (sessionE164 != null && viewModel.getSessionId() != null && viewModel.getCaptchaToken() == null) {
+      checkIfSessionIsInProgressAndAdvance(sessionE164);
+    }
+  }
+
+  private void checkIfSessionIsInProgressAndAdvance(@NonNull String sessionE164) {
+    NavController navController = NavHostFragment.findNavController(this);
+    Disposable request = viewModel.validateSession(sessionE164)
+                                  .observeOn(AndroidSchedulers.mainThread())
+                                  .subscribe(processor -> {
+                                    if (processor.hasResult() && processor.canSubmitProofImmediately()) {
+                                      try {
+                                        viewModel.restorePhoneNumberStateFromE164(sessionE164);
+                                        SafeNavigation.safeNavigate(navController, EnterPhoneNumberFragmentDirections.actionEnterVerificationCode());
+                                      } catch (NumberParseException numberParseException) {
+                                        viewModel.resetSession();
+                                      }
+                                    } else {
+                                      viewModel.resetSession();
+                                    }
+                                  });
+
+    disposables.add(request);
   }
 
   private void handleNonNormalizedNumberError(@NonNull String originalNumber, @NonNull String normalizedNumber, @NonNull Mode mode) {
@@ -301,8 +430,8 @@ public final class EnterPhoneNumberFragment extends LoggingFragment implements R
             d.dismiss();
           })
           .setPositiveButton(R.string.yes, (d, i) -> {
-            countryCode.setText(String.valueOf(phoneNumber.getCountryCode()));
-            number.setText(String.valueOf(phoneNumber.getNationalNumber()));
+            countryCode.getEditText().setText(String.valueOf(phoneNumber.getCountryCode()));
+            number.getEditText().setText(String.valueOf(phoneNumber.getNationalNumber()));
             requestVerificationCode(mode);
             d.dismiss();
           })
@@ -317,25 +446,49 @@ public final class EnterPhoneNumberFragment extends LoggingFragment implements R
   }
 
   private void handlePromptForNoPlayServices(@NonNull Context context) {
+    Log.d(TAG, "Device does not have Play Services, showing consent dialog.");
     new MaterialAlertDialogBuilder(context)
         .setTitle(R.string.RegistrationActivity_missing_google_play_services)
         .setMessage(R.string.RegistrationActivity_this_device_is_missing_google_play_services)
-        .setPositiveButton(R.string.RegistrationActivity_i_understand, (dialog1, which) -> handleRequestVerification(context, false))
+        .setPositiveButton(R.string.RegistrationActivity_i_understand, (dialog1, which) -> onE164EnteredSuccessfully(context, false))
         .setNegativeButton(android.R.string.cancel, null)
         .show();
   }
 
-  protected final void confirmNumberPrompt(@NonNull Context context,
-                                           @NonNull String e164number,
-                                           @NonNull Runnable onConfirmed)
+  private void confirmNumberPrompt(@NonNull Context context,
+                                   @NonNull String e164number,
+                                   @NonNull Runnable onConfirmed)
   {
-    showConfirmNumberDialogIfTranslated(context,
-                                        R.string.RegistrationActivity_a_verification_code_will_be_sent_to,
-                                        e164number,
-                                        () -> {
-                                          ViewUtil.hideKeyboard(context, number.getInput());
-                                          onConfirmed.run();
-                                        },
-                                        () -> number.focusAndMoveCursorToEndAndOpenKeyboard());
+    enterInProgressUiState();
+
+    disposables.add(
+        viewModel.canEnterSkipSmsFlow()
+                 .observeOn(AndroidSchedulers.mainThread())
+                 .subscribe(canSkipSms -> {
+                   Log.d(TAG, "Showing confirm number dialog. canSkipSms = " + canSkipSms + " hasUserSkipped = " + viewModel.hasUserSkippedReRegisterFlow());
+                   final EditText editText = this.number.getEditText();
+                   showConfirmNumberDialogIfTranslated(context,
+                                                       viewModel.hasUserSkippedReRegisterFlow() ? R.string.RegistrationActivity_additional_verification_required
+                                                                                                : R.string.RegistrationActivity_phone_number_verification_dialog_title,
+                                                       canSkipSms ? null
+                                                                  : R.string.RegistrationActivity_a_verification_code_will_be_sent_to_this_number,
+                                                       e164number,
+                                                       () -> {
+                                                         Log.d(TAG, "User confirmed number.");
+                                                         if (editText != null) {
+                                                           ViewUtil.hideKeyboard(context, editText);
+                                                         }
+                                                         onConfirmed.run();
+                                                       },
+                                                       () -> {
+                                                         Log.d(TAG, "User canceled confirm number, returning to edit number.");
+                                                         exitInProgressUiState();
+                                                         if (editText != null) {
+                                                           ViewUtil.focusAndMoveCursorToEndAndOpenKeyboard(editText);
+                                                         }
+                                                       });
+                            }
+                 )
+    );
   }
 }

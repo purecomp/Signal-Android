@@ -2,18 +2,17 @@ package org.thoughtcrime.securesms.jobs;
 
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.crypto.UnidentifiedAccessUtil;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.jobmanager.Data;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.net.NotPushRegisteredException;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
-import org.whispersystems.libsignal.util.guava.Optional;
 import org.whispersystems.signalservice.api.SignalServiceMessageSender;
 import org.whispersystems.signalservice.api.crypto.UntrustedIdentityException;
 import org.whispersystems.signalservice.api.messages.multidevice.KeysMessage;
@@ -23,6 +22,7 @@ import org.whispersystems.signalservice.api.push.exceptions.ServerRejectedExcept
 import org.whispersystems.signalservice.api.storage.StorageKey;
 
 import java.io.IOException;
+import java.util.Optional;
 
 public class MultiDeviceKeysUpdateJob extends BaseJob {
 
@@ -45,8 +45,8 @@ public class MultiDeviceKeysUpdateJob extends BaseJob {
   }
 
   @Override
-  public @NonNull Data serialize() {
-    return Data.EMPTY;
+  public @Nullable byte[] serialize() {
+    return null;
   }
 
   @Override
@@ -65,10 +65,15 @@ public class MultiDeviceKeysUpdateJob extends BaseJob {
       return;
     }
 
+    if (SignalStore.account().isLinkedDevice()) {
+      Log.i(TAG, "Not primary device, aborting...");
+      return;
+    }
+
     SignalServiceMessageSender messageSender     = ApplicationDependencies.getSignalServiceMessageSender();
     StorageKey                 storageServiceKey = SignalStore.storageService().getOrCreateStorageKey();
 
-    messageSender.sendSyncMessage(SignalServiceSyncMessage.forKeys(new KeysMessage(Optional.fromNullable(storageServiceKey))),
+    messageSender.sendSyncMessage(SignalServiceSyncMessage.forKeys(new KeysMessage(Optional.ofNullable(storageServiceKey), Optional.of(SignalStore.svr().getOrCreateMasterKey()))),
                                   UnidentifiedAccessUtil.getAccessForSync(context));
   }
 
@@ -84,7 +89,7 @@ public class MultiDeviceKeysUpdateJob extends BaseJob {
 
   public static final class Factory implements Job.Factory<MultiDeviceKeysUpdateJob> {
     @Override
-    public @NonNull MultiDeviceKeysUpdateJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull MultiDeviceKeysUpdateJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
       return new MultiDeviceKeysUpdateJob(parameters);
     }
   }

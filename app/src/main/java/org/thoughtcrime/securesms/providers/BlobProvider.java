@@ -11,6 +11,7 @@ import androidx.annotation.IntRange;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
+import androidx.annotation.VisibleForTesting;
 import androidx.annotation.WorkerThread;
 
 import org.signal.core.util.StreamUtil;
@@ -22,8 +23,8 @@ import org.thoughtcrime.securesms.crypto.AttachmentSecret;
 import org.thoughtcrime.securesms.crypto.AttachmentSecretProvider;
 import org.thoughtcrime.securesms.crypto.ModernDecryptingPartInputStream;
 import org.thoughtcrime.securesms.crypto.ModernEncryptingPartOutputStream;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.DraftDatabase;
+import org.thoughtcrime.securesms.database.DraftTable;
+import org.thoughtcrime.securesms.database.SignalDatabase;
 import org.thoughtcrime.securesms.util.IOFunction;
 import org.thoughtcrime.securesms.util.Util;
 import org.thoughtcrime.securesms.video.ByteArrayMediaDataSource;
@@ -39,8 +40,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
-import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Future;
 import java.util.stream.Collectors;
 
 /**
@@ -94,8 +95,33 @@ public class BlobProvider {
     return new BlobBuilder(data, fileSize);
   }
 
+  public synchronized boolean hasStream(@NonNull Context context, @NonNull Uri uri) {
+    waitUntilInitialized();
+    try {
+      if (isAuthority(uri)) {
+        StorageType storageType = StorageType.decode(uri.getPathSegments().get(STORAGE_TYPE_PATH_SEGMENT));
+
+        if (storageType.isMemory()) {
+          byte[] data = memoryBlobs.get(uri);
+
+          return data != null;
+        } else {
+          String id        = uri.getPathSegments().get(ID_PATH_SEGMENT);
+          String directory = getDirectory(storageType);
+          File   file      = new File(getOrCreateDirectory(context, directory), buildFileName(id));
+
+          return file.exists();
+        }
+      }
+    } catch (IOException e) {
+      // Intentionally left blank
+    }
+    return false;
+  }
+
   /**
    * Retrieve a stream for the content with the specified URI.
+   *
    * @throws IOException If the stream fails to open or the spec of the URI doesn't match.
    */
   public synchronized @NonNull InputStream getStream(@NonNull Context context, @NonNull Uri uri) throws IOException {
@@ -105,6 +131,7 @@ public class BlobProvider {
 
   /**
    * Retrieve a stream for the content with the specified URI starting from the specified position.
+   *
    * @throws IOException If the stream fails to open or the spec of the URI doesn't match.
    */
   public synchronized @NonNull InputStream getStream(@NonNull Context context, @NonNull Uri uri, long position) throws IOException {
@@ -235,6 +262,11 @@ public class BlobProvider {
     });
   }
 
+  @VisibleForTesting
+  public synchronized byte[] getMemoryBlob(@NonNull Uri uri) {
+    return memoryBlobs.get(uri);
+  }
+
   private static void deleteOrphanedDraftFiles(@NonNull Context context) {
     File   directory = getOrCreateDirectory(context, DRAFT_ATTACHMENTS_DIRECTORY);
     File[] files     = directory.listFiles();
@@ -244,8 +276,8 @@ public class BlobProvider {
       return;
     }
 
-    DraftDatabase        draftDatabase   = DatabaseFactory.getDraftDatabase(context);
-    DraftDatabase.Drafts voiceNoteDrafts = draftDatabase.getAllVoiceNoteDrafts();
+    DraftTable        draftDatabase   = SignalDatabase.drafts();
+    DraftTable.Drafts voiceNoteDrafts = draftDatabase.getAllVoiceNoteDrafts();
 
     @SuppressWarnings("ConstantConditions")
     List<String> draftFileNames = voiceNoteDrafts.stream()
@@ -323,32 +355,22 @@ public class BlobProvider {
   {
     waitUntilInitialized();
 
-    CountDownLatch               latch     = new CountDownLatch(1);
-    AtomicReference<IOException> exception = new AtomicReference<>(null);
-    Uri                          uri       = writeBlobSpecToDiskAsync(context, blobSpec, latch::countDown, e -> {
-                                               exception.set(e);
-                                               latch.countDown();
-                                             });
-
+    Future<Uri> uriFuture = writeBlobSpecToDiskAsync(context, blobSpec);
     try {
-      latch.await();
-    } catch (InterruptedException e) {
-      throw new IOException(e);
+      return uriFuture.get();
+    } catch (ExecutionException | InterruptedException e) {
+      Log.e(TAG, "Error writing blob spec to disk", e);
+      if (e.getCause() instanceof IOException) {
+        throw (IOException) e.getCause();
+      } else {
+        throw new IOException(e);
+      }
     }
-
-    if (exception.get() != null) {
-      throw exception.get();
-    }
-
-    return uri;
   }
 
 
   @WorkerThread
-  private synchronized @NonNull Uri writeBlobSpecToDiskAsync(@NonNull Context context,
-                                                             @NonNull BlobSpec blobSpec,
-                                                             @Nullable SuccessListener successListener,
-                                                             @Nullable ErrorListener errorListener)
+  private synchronized @NonNull Future<Uri> writeBlobSpecToDiskAsync(@NonNull Context context, @NonNull BlobSpec blobSpec)
       throws IOException
   {
     AttachmentSecret attachmentSecret = AttachmentSecretProvider.getInstance(context).getOrCreateAttachmentSecret();
@@ -356,22 +378,18 @@ public class BlobProvider {
     File             outputFile       = new File(getOrCreateDirectory(context, directory), buildFileName(blobSpec.id));
     OutputStream     outputStream     = ModernEncryptingPartOutputStream.createFor(attachmentSecret, outputFile, true).second;
 
-    SignalExecutors.UNBOUNDED.execute(() -> {
+    final Uri uri = buildUri(blobSpec);
+
+    return SignalExecutors.BOUNDED.submit(() -> {
       try {
         StreamUtil.copy(blobSpec.getData(), outputStream);
-
-        if (successListener != null) {
-          successListener.onSuccess();
-        }
+        return uri;
       } catch (IOException e) {
+        delete(context, uri);
         Log.w(TAG, "Error during write!", e);
-        if (errorListener != null) {
-          errorListener.onError(e);
-        }
+        throw e;
       }
     });
-
-    return buildUri(blobSpec);
   }
 
   private synchronized @NonNull Uri writeBlobSpecToMemory(@NonNull BlobSpec blobSpec, @NonNull byte[] data) {
@@ -413,6 +431,19 @@ public class BlobProvider {
     return context.getDir(directory, Context.MODE_PRIVATE);
   }
 
+  /**
+   * Returns a {@link File} within the appropriate directory to be cleaned up as part of
+   * normal operations. Unlike other blobs, this is just a file reference and no
+   * automatic encryption occurs when reading or writing and must be done by the caller.
+   *
+   * @return file located in the appropriate directory to be delete on app session restarts
+   */
+  public File forNonAutoEncryptingSingleSessionOnDisk(@NonNull Context context) {
+    String directory = getDirectory(StorageType.SINGLE_SESSION_DISK);
+    String id        = UUID.randomUUID().toString();
+    return new File(getOrCreateDirectory(context, directory), buildFileName(id));
+  }
+
   public class BlobBuilder {
 
     private InputStream data;
@@ -451,25 +482,20 @@ public class BlobProvider {
     }
 
     /**
-     * Create a blob that will exist for a single app session. An app session is defined as the
+     * Create an async blob that will exist for a single app session. An app session is defined as the
      * period from one {@link Application#onCreate()} to the next. The file will be created on disk
      * synchronously, but the data will copied asynchronously. This is helpful when the copy is
      * long-running, such as in the case of recording a voice note.
      */
     @WorkerThread
-    public Uri createForSingleSessionOnDiskAsync(@NonNull Context context,
-                                                 @Nullable SuccessListener successListener,
-                                                 @Nullable ErrorListener errorListener)
-        throws IOException
-    {
-      return writeBlobSpecToDiskAsync(context, buildBlobSpec(StorageType.SINGLE_SESSION_DISK), successListener, errorListener);
+    public Future<Uri> createForSingleSessionOnDiskAsync(@NonNull Context context) throws IOException {
+      return writeBlobSpecToDiskAsync(context, buildBlobSpec(StorageType.SINGLE_SESSION_DISK));
     }
 
     /**
      * Create a blob that will exist for multiple app sessions. It is the caller's responsibility to
      * eventually call {@link BlobProvider#delete(Context, Uri)} when the blob is no longer in use.
      */
-    @Deprecated
     @WorkerThread
     public Uri createForMultipleSessionsOnDisk(@NonNull Context context) throws IOException {
       return writeBlobSpecToDisk(context, buildBlobSpec(StorageType.MULTI_SESSION_DISK));
@@ -479,17 +505,15 @@ public class BlobProvider {
      * Create a blob that will exist for multiple app sessions. The file will be created on disk
      * synchronously, but the data will copied asynchronously. This is helpful when the copy is
      * long-running, such as in the case of recording a voice note.
-     *
+     * <p>
      * It is the caller's responsibility to eventually call {@link BlobProvider#delete(Context, Uri)}
      * when the blob is no longer in use.
      */
     @WorkerThread
-    public Uri createForDraftAttachmentAsync(@NonNull Context context,
-                                             @Nullable SuccessListener successListener,
-                                             @Nullable ErrorListener errorListener)
+    public Future<Uri> createForDraftAttachmentAsync(@NonNull Context context)
         throws IOException
     {
-      return writeBlobSpecToDiskAsync(context, buildBlobSpec(StorageType.ATTACHMENT_DRAFT), successListener, errorListener);
+      return writeBlobSpecToDiskAsync(context, buildBlobSpec(StorageType.ATTACHMENT_DRAFT));
     }
   }
 
@@ -542,16 +566,6 @@ public class BlobProvider {
     public Uri createForSingleSessionInMemory() {
       return writeBlobSpecToMemory(buildBlobSpec(StorageType.SINGLE_SESSION_MEMORY), data);
     }
-  }
-
-  public interface SuccessListener {
-    @WorkerThread
-    void onSuccess();
-  }
-
-  public interface ErrorListener {
-    @WorkerThread
-    void onError(IOException e);
   }
 
   private static class BlobSpec {

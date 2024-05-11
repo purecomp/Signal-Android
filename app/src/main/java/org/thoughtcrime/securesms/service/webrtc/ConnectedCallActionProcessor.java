@@ -8,11 +8,16 @@ import androidx.annotation.Nullable;
 import org.signal.core.util.logging.Log;
 import org.signal.ringrtc.CallException;
 import org.signal.ringrtc.CallManager;
+import org.thoughtcrime.securesms.events.CallParticipant;
+import org.thoughtcrime.securesms.events.CallParticipantId;
+import org.thoughtcrime.securesms.events.WebRtcViewModel;
 import org.thoughtcrime.securesms.ringrtc.RemotePeer;
+import org.thoughtcrime.securesms.service.webrtc.state.WebRtcEphemeralState;
 import org.thoughtcrime.securesms.service.webrtc.state.WebRtcServiceState;
 import org.thoughtcrime.securesms.webrtc.locks.LockManager;
 
-import java.util.List;
+import java.util.Collections;
+import java.util.Optional;
 
 /**
  * Handles action for a connected/ongoing call. At this point it's mostly responding
@@ -77,6 +82,35 @@ public class ConnectedCallActionProcessor extends DeviceAwareActionProcessor {
   }
 
   @Override
+  protected @NonNull WebRtcEphemeralState handleAudioLevelsChanged(@NonNull WebRtcServiceState   currentState,
+                                                                   @NonNull WebRtcEphemeralState ephemeralState,
+                                                                            int                  localLevel,
+                                                                            int                  remoteLevel) {
+    Optional<CallParticipantId> callParticipantId = currentState.getCallInfoState()
+                                                                .getRemoteCallParticipantsMap()
+                                                                .keySet()
+                                                                .stream()
+                                                                .findFirst();
+
+    return ephemeralState.copy(
+        CallParticipant.AudioLevel.fromRawAudioLevel(localLevel),
+        callParticipantId.map(participantId -> Collections.singletonMap(participantId, CallParticipant.AudioLevel.fromRawAudioLevel(remoteLevel)))
+                         .orElse(Collections.emptyMap()),
+        ephemeralState.getUnexpiredReactions()
+    );
+  }
+
+  @Override
+  public @NonNull WebRtcServiceState handleCallReconnect(@NonNull WebRtcServiceState currentState, @NonNull CallManager.CallEvent event) {
+    Log.i(TAG, "handleCallReconnect(): event: " + event);
+
+    return currentState.builder()
+                       .changeCallInfoState()
+                       .callState(event == CallManager.CallEvent.RECONNECTING ? WebRtcViewModel.State.CALL_RECONNECTING : WebRtcViewModel.State.CALL_CONNECTED)
+                       .build();
+  }
+
+  @Override
   protected @NonNull WebRtcServiceState handleRemoteVideoEnable(@NonNull WebRtcServiceState currentState, boolean enable) {
     return activeCallDelegate.handleRemoteVideoEnable(currentState, enable);
   }
@@ -104,10 +138,5 @@ public class ConnectedCallActionProcessor extends DeviceAwareActionProcessor {
   @Override
   protected @NonNull WebRtcServiceState handleReceivedOfferWhileActive(@NonNull WebRtcServiceState currentState, @NonNull RemotePeer remotePeer) {
     return activeCallDelegate.handleReceivedOfferWhileActive(currentState, remotePeer);
-  }
-
-  @Override
-  protected @NonNull WebRtcServiceState handleCallConcluded(@NonNull WebRtcServiceState currentState, @Nullable RemotePeer remotePeer) {
-    return activeCallDelegate.handleCallConcluded(currentState, remotePeer);
   }
 }

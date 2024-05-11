@@ -1,26 +1,26 @@
 package org.thoughtcrime.securesms.jobs;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import org.signal.core.util.logging.Log;
+import org.signal.libsignal.protocol.InvalidMessageException;
+import org.signal.libsignal.protocol.InvalidKeyException;
+import org.signal.libsignal.protocol.message.DecryptionErrorMessage;
 import org.thoughtcrime.securesms.crypto.UnidentifiedAccessUtil;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.groups.GroupId;
-import org.thoughtcrime.securesms.jobmanager.Data;
+import org.thoughtcrime.securesms.jobmanager.JsonJobData;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.recipients.RecipientId;
 import org.thoughtcrime.securesms.recipients.RecipientUtil;
-import org.whispersystems.libsignal.InvalidMessageException;
-import org.whispersystems.libsignal.protocol.DecryptionErrorMessage;
-import org.whispersystems.libsignal.util.guava.Optional;
-import org.whispersystems.signalservice.api.crypto.ContentHint;
 import org.whispersystems.signalservice.api.crypto.UnidentifiedAccessPair;
-import org.whispersystems.signalservice.api.messages.SignalServiceEnvelope;
 import org.whispersystems.signalservice.api.push.SignalServiceAddress;
 import org.whispersystems.signalservice.api.push.exceptions.PushNetworkException;
 
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 public final class SendRetryReceiptJob extends BaseJob {
@@ -61,8 +61,8 @@ public final class SendRetryReceiptJob extends BaseJob {
   }
 
   @Override
-  public @NonNull Data serialize() {
-    Data.Builder builder = new Data.Builder()
+  public @Nullable byte[] serialize() {
+    JsonJobData.Builder builder = new JsonJobData.Builder()
                                    .putString(KEY_RECIPIENT_ID, recipientId.serialize())
                                    .putBlobAsString(KEY_ERROR_MESSAGE, errorMessage.serialize());
 
@@ -70,7 +70,7 @@ public final class SendRetryReceiptJob extends BaseJob {
       builder.putBlobAsString(KEY_GROUP_ID, groupId.get().getDecodedId());
     }
 
-    return builder.build();
+    return builder.serialize();
   }
 
   @Override
@@ -89,7 +89,7 @@ public final class SendRetryReceiptJob extends BaseJob {
 
     SignalServiceAddress             address   = RecipientUtil.toSignalServiceAddress(context, recipient);
     Optional<UnidentifiedAccessPair> access    = UnidentifiedAccessUtil.getAccessFor(context, recipient);
-    Optional<byte[]>                 group     = groupId.transform(GroupId::getDecodedId);
+    Optional<byte[]>                 group     = groupId.map(GroupId::getDecodedId);
 
     Log.i(TAG, "Sending retry receipt for " + errorMessage.getTimestamp() + " to " + recipientId + ", device: " + errorMessage.getDeviceId());
     ApplicationDependencies.getSignalServiceMessageSender().sendRetryReceipt(address, access, group, errorMessage);
@@ -102,22 +102,25 @@ public final class SendRetryReceiptJob extends BaseJob {
 
   @Override
   public void onFailure() {
+    ApplicationDependencies.getJobManager().add(new AutomaticSessionResetJob(recipientId, errorMessage.getDeviceId(), System.currentTimeMillis()));
   }
 
   public static final class Factory implements Job.Factory<SendRetryReceiptJob> {
     @Override
-    public @NonNull SendRetryReceiptJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull SendRetryReceiptJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
+      JsonJobData data = JsonJobData.deserialize(serializedData);
+
       try {
         RecipientId            recipientId  = RecipientId.from(data.getString(KEY_RECIPIENT_ID));
         DecryptionErrorMessage errorMessage = new DecryptionErrorMessage(data.getStringAsBlob(KEY_ERROR_MESSAGE));
-        Optional<GroupId>      groupId      = Optional.absent();
+        Optional<GroupId>      groupId      = Optional.empty();
 
         if (data.hasString(KEY_GROUP_ID)) {
           groupId = Optional.of(GroupId.pushOrThrow(data.getStringAsBlob(KEY_GROUP_ID)));
         }
 
         return new SendRetryReceiptJob(recipientId, groupId, errorMessage, parameters);
-     } catch (InvalidMessageException e) {
+     } catch (InvalidKeyException | InvalidMessageException e) {
         throw new AssertionError(e);
       }
     }

@@ -242,6 +242,8 @@ public class ParticipantCollectionTest {
         new BroadcastVideoSink(),
         false,
         false,
+        false,
+        CallParticipant.HAND_LOWERED,
         lastSpoke,
         false,
         added,

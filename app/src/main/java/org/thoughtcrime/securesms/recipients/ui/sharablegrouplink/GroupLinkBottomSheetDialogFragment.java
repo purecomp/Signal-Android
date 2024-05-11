@@ -1,7 +1,6 @@
 package org.thoughtcrime.securesms.recipients.ui.sharablegrouplink;
 
 import android.content.Context;
-import android.content.Intent;
 import android.os.Bundle;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -18,14 +17,18 @@ import androidx.fragment.app.FragmentManager;
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment;
 
 import org.thoughtcrime.securesms.R;
+import org.thoughtcrime.securesms.conversation.mutiselect.forward.MultiselectForwardFragment;
+import org.thoughtcrime.securesms.conversation.mutiselect.forward.MultiselectForwardFragmentArgs;
 import org.thoughtcrime.securesms.groups.GroupId;
 import org.thoughtcrime.securesms.groups.LiveGroup;
 import org.thoughtcrime.securesms.recipients.ui.sharablegrouplink.qr.GroupLinkShareQrDialogFragment;
-import org.thoughtcrime.securesms.sharing.ShareActivity;
+import org.thoughtcrime.securesms.sharing.MultiShareArgs;
 import org.thoughtcrime.securesms.util.BottomSheetUtil;
 import org.thoughtcrime.securesms.util.ThemeUtil;
 import org.thoughtcrime.securesms.util.Util;
+import org.thoughtcrime.securesms.util.WindowUtil;
 
+import java.util.Collections;
 import java.util.Objects;
 
 public final class GroupLinkBottomSheetDialogFragment extends BottomSheetDialogFragment {
@@ -77,10 +80,15 @@ public final class GroupLinkBottomSheetDialogFragment extends BottomSheetDialogF
       hint.setVisibility(View.VISIBLE);
 
       shareViaSignalButton.setOnClickListener(v -> {
-        Context context = requireContext();
-        Intent  intent  = new Intent(context, ShareActivity.class);
-        intent.putExtra(Intent.EXTRA_TEXT, groupLink.getUrl());
-        context.startActivity(intent);
+        MultiselectForwardFragment.showBottomSheet(
+            getParentFragmentManager(),
+            new MultiselectForwardFragmentArgs(
+                Collections.singletonList(new MultiShareArgs.Builder()
+                                              .withDraftText(groupLink.getUrl())
+                                              .build()),
+                R.string.MultiselectForwardFragment__share_with
+            )
+        );
 
         dismiss();
       });
@@ -108,6 +116,12 @@ public final class GroupLinkBottomSheetDialogFragment extends BottomSheetDialogF
     });
 
     return view;
+  }
+
+  @Override
+  public void onResume() {
+    super.onResume();
+    WindowUtil.initializeScreenshotSecurity(requireContext(), requireDialog().getWindow());
   }
 
   @Override

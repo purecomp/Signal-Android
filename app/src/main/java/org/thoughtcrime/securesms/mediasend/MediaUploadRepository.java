@@ -8,13 +8,14 @@ import androidx.annotation.WorkerThread;
 
 import com.annimon.stream.Stream;
 
+import org.signal.core.util.ThreadUtil;
 import org.signal.core.util.concurrent.SignalExecutors;
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.attachments.Attachment;
 import org.thoughtcrime.securesms.attachments.AttachmentId;
-import org.thoughtcrime.securesms.database.AttachmentDatabase;
-import org.thoughtcrime.securesms.database.AttachmentDatabase.TransformProperties;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
+import org.thoughtcrime.securesms.database.AttachmentTable;
+import org.thoughtcrime.securesms.database.AttachmentTable.TransformProperties;
+import org.thoughtcrime.securesms.database.SignalDatabase;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.jobmanager.JobManager;
 import org.thoughtcrime.securesms.mms.GifSlide;
@@ -56,7 +57,7 @@ public class MediaUploadRepository {
   public MediaUploadRepository(@NonNull Context context) {
     this.context       = context;
     this.uploadResults = new LinkedHashMap<>();
-    this.executor      = SignalExecutors.newCachedSingleThreadExecutor("signal-MediaUpload");
+    this.executor      = SignalExecutors.newCachedSingleThreadExecutor("signal-MediaUpload", ThreadUtil.PRIORITY_IMPORTANT_BACKGROUND_THREAD);
   }
 
   public void startUpload(@NonNull Media media, @Nullable Recipient recipient) {
@@ -92,14 +93,14 @@ public class MediaUploadRepository {
   }
 
   private boolean hasSameTransformProperties(@NonNull Media oldMedia, @NonNull Media newMedia) {
-    TransformProperties oldProperties = oldMedia.getTransformProperties().orNull();
-    TransformProperties newProperties = newMedia.getTransformProperties().orNull();
+    TransformProperties oldProperties = oldMedia.getTransformProperties().orElse(null);
+    TransformProperties newProperties = newMedia.getTransformProperties().orElse(null);
 
     if (oldProperties == null || newProperties == null) {
       return oldProperties == newProperties;
     }
 
-    return !newProperties.isVideoEdited() && oldProperties.getSentMediaQuality() == newProperties.getSentMediaQuality();
+    return !newProperties.getVideoEdited() && oldProperties.sentMediaQuality == newProperties.sentMediaQuality;
   }
 
   public void cancelUpload(@NonNull Media media) {
@@ -107,6 +108,7 @@ public class MediaUploadRepository {
   }
 
   public void cancelUpload(@NonNull Collection<Media> mediaItems) {
+    Log.d(TAG, "Canceling uploads.");
     executor.execute(() -> {
       for (Media media : mediaItems) {
         cancelUploadInternal(media);
@@ -115,6 +117,7 @@ public class MediaUploadRepository {
   }
 
   public void cancelAllUploads() {
+    Log.d(TAG, "Canceling all uploads.");
     executor.execute(() -> {
       for (Media media : new HashSet<>(uploadResults.keySet())) {
         cancelUploadInternal(media);
@@ -136,7 +139,7 @@ public class MediaUploadRepository {
 
   public void deleteAbandonedAttachments() {
     executor.execute(() -> {
-      int deleted = DatabaseFactory.getAttachmentDatabase(context).deleteAbandonedPreuploadedAttachments();
+      int deleted = SignalDatabase.attachments().deleteAbandonedPreuploadedAttachments();
       Log.i(TAG, "Deleted " + deleted + " abandoned attachments.");
     });
   }
@@ -144,7 +147,7 @@ public class MediaUploadRepository {
   @WorkerThread
   private void uploadMediaInternal(@NonNull Media media, @Nullable Recipient recipient) {
     Attachment      attachment = asAttachment(context, media);
-    PreUploadResult result     = MessageSender.preUploadPushAttachment(context, attachment, recipient);
+    PreUploadResult result     = MessageSender.preUploadPushAttachment(context, attachment, recipient, media);
 
     if (result != null) {
       uploadResults.put(media, result);
@@ -158,20 +161,22 @@ public class MediaUploadRepository {
     PreUploadResult result     = uploadResults.get(media);
 
     if (result != null) {
+      Log.d(TAG, "Canceling upload jobs for " + result.getJobIds().size() + " media items.");
       Stream.of(result.getJobIds()).forEach(jobManager::cancel);
       uploadResults.remove(media);
+      SignalDatabase.attachments().deleteAttachment(result.getAttachmentId());
     }
   }
 
   @WorkerThread
   private void updateCaptionsInternal(@NonNull List<Media> updatedMedia) {
-    AttachmentDatabase db = DatabaseFactory.getAttachmentDatabase(context);
+    AttachmentTable db = SignalDatabase.attachments();
 
     for (Media updated : updatedMedia) {
       PreUploadResult result = uploadResults.get(updated);
 
       if (result != null) {
-        db.updateAttachmentCaption(result.getAttachmentId(), updated.getCaption().orNull());
+        db.updateAttachmentCaption(result.getAttachmentId(), updated.getCaption().orElse(null));
       } else {
         Log.w(TAG,"When updating captions, no pre-upload result could be found for media with URI: " + updated.getUri());
       }
@@ -195,7 +200,7 @@ public class MediaUploadRepository {
       }
     }
 
-    DatabaseFactory.getAttachmentDatabase(context).updateDisplayOrder(orderMap);
+    SignalDatabase.attachments().updateDisplayOrder(orderMap);
 
     if (orderedUploadResults.size() == uploadResults.size()) {
       uploadResults.clear();
@@ -205,11 +210,11 @@ public class MediaUploadRepository {
 
   public static @NonNull Attachment asAttachment(@NonNull Context context, @NonNull Media media) {
     if (MediaUtil.isVideoType(media.getMimeType())) {
-      return new VideoSlide(context, media.getUri(), media.getSize(), media.isVideoGif(), media.getWidth(), media.getHeight(), media.getCaption().orNull(), media.getTransformProperties().orNull()).asAttachment();
+      return new VideoSlide(context, media.getUri(), media.getSize(), media.isVideoGif(), media.getWidth(), media.getHeight(), media.getCaption().orElse(null), media.getTransformProperties().orElse(null)).asAttachment();
     } else if (MediaUtil.isGif(media.getMimeType())) {
-      return new GifSlide(context, media.getUri(), media.getSize(), media.getWidth(), media.getHeight(), media.isBorderless(), media.getCaption().orNull()).asAttachment();
+      return new GifSlide(context, media.getUri(), media.getSize(), media.getWidth(), media.getHeight(), media.isBorderless(), media.getCaption().orElse(null)).asAttachment();
     } else if (MediaUtil.isImageType(media.getMimeType())) {
-      return new ImageSlide(context, media.getUri(), media.getMimeType(), media.getSize(), media.getWidth(), media.getHeight(), media.isBorderless(), media.getCaption().orNull(), null, media.getTransformProperties().orNull()).asAttachment();
+      return new ImageSlide(context, media.getUri(), media.getMimeType(), media.getSize(), media.getWidth(), media.getHeight(), media.isBorderless(), media.getCaption().orElse(null), null, media.getTransformProperties().orElse(null)).asAttachment();
     } else if (MediaUtil.isTextType(media.getMimeType())) {
       return new TextSlide(context, media.getUri(), null, media.getSize()).asAttachment();
     } else {

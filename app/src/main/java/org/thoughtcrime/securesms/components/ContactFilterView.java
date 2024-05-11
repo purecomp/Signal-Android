@@ -20,7 +20,9 @@ import androidx.annotation.StringRes;
 import androidx.core.widget.TextViewCompat;
 
 import org.thoughtcrime.securesms.R;
+import org.thoughtcrime.securesms.util.EditTextExtensionsKt;
 import org.thoughtcrime.securesms.util.ServiceUtil;
+import org.thoughtcrime.securesms.util.TextSecurePreferences;
 import org.thoughtcrime.securesms.util.ViewUtil;
 
 public final class ContactFilterView extends FrameLayout {
@@ -51,6 +53,8 @@ public final class ContactFilterView extends FrameLayout {
     this.dialpadToggle   = findViewById(R.id.search_dialpad);
     this.clearToggle     = findViewById(R.id.search_clear);
     this.toggleContainer = findViewById(R.id.toggle_container);
+
+    EditTextExtensionsKt.setIncognitoKeyboardEnabled(searchText, TextSecurePreferences.isIncognitoKeyboardEnabled(context));
 
     this.keyboardToggle.setOnClickListener(new View.OnClickListener() {
       @Override
@@ -110,23 +114,23 @@ public final class ContactFilterView extends FrameLayout {
                                int defStyle)
   {
     final TypedArray attributes = context.obtainStyledAttributes(attrs,
-                                                                 R.styleable.ContactFilterToolbar,
+                                                                 R.styleable.ContactFilterView,
                                                                  defStyle,
                                                                  0);
 
-    int styleResource = attributes.getResourceId(R.styleable.ContactFilterToolbar_searchTextStyle, -1);
+    int styleResource = attributes.getResourceId(R.styleable.ContactFilterView_searchTextStyle, -1);
     if (styleResource != -1) {
       TextViewCompat.setTextAppearance(searchText, styleResource);
     }
-    if (!attributes.getBoolean(R.styleable.ContactFilterToolbar_showDialpad, true)) {
+    if (!attributes.getBoolean(R.styleable.ContactFilterView_showDialpad, true)) {
       dialpadToggle.setVisibility(GONE);
     }
 
-    if (attributes.getBoolean(R.styleable.ContactFilterToolbar_cfv_autoFocus, true)) {
+    if (attributes.getBoolean(R.styleable.ContactFilterView_cfv_autoFocus, true)) {
       searchText.requestFocus();
     }
 
-    int backgroundRes = attributes.getResourceId(R.styleable.ContactFilterToolbar_cfv_background, -1);
+    int backgroundRes = attributes.getResourceId(R.styleable.ContactFilterView_cfv_background, -1);
     if (backgroundRes != -1) {
       findViewById(R.id.background_holder).setBackgroundResource(backgroundRes);
     }

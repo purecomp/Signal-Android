@@ -17,7 +17,6 @@
 package org.thoughtcrime.securesms.util;
 
 import android.annotation.SuppressLint;
-import android.annotation.TargetApi;
 import android.app.ActivityManager;
 import android.content.ClipData;
 import android.content.ClipboardManager;
@@ -25,9 +24,6 @@ import android.content.Context;
 import android.content.pm.PackageManager;
 import android.graphics.Typeface;
 import android.net.Uri;
-import android.os.Build.VERSION;
-import android.os.Build.VERSION_CODES;
-import android.provider.Telephony;
 import android.telephony.TelephonyManager;
 import android.text.Spannable;
 import android.text.SpannableString;
@@ -39,23 +35,20 @@ import androidx.annotation.Nullable;
 import androidx.annotation.RequiresPermission;
 
 import com.annimon.stream.Stream;
-import com.google.android.mms.pdu_alt.CharacterSets;
-import com.google.android.mms.pdu_alt.EncodedStringValue;
 import com.google.i18n.phonenumbers.NumberParseException;
 import com.google.i18n.phonenumbers.PhoneNumberUtil;
 import com.google.i18n.phonenumbers.Phonenumber;
 
+import org.signal.core.util.Base64;
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.BuildConfig;
+import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.components.ComposeText;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
-import org.thoughtcrime.securesms.mms.OutgoingLegacyMmsConnection;
-import org.whispersystems.libsignal.util.guava.Optional;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.PrintStream;
-import java.io.UnsupportedEncodingException;
+import java.nio.charset.StandardCharsets;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -64,12 +57,15 @@ import java.util.Collections;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 public class Util {
   private static final String TAG = Log.tag(Util.class);
 
   private static final long BUILD_LIFESPAN = TimeUnit.DAYS.toMillis(90);
+
+  public static final String COPY_LABEL = "text\u00AD";
 
   public static <T> List<T> asList(T... elements) {
     List<T> result = new LinkedList<>();
@@ -141,10 +137,6 @@ public class Util {
     return out.toString();
   }
 
-  public static boolean isEmpty(EncodedStringValue[] value) {
-    return value == null || value.length == 0;
-  }
-
   public static boolean isEmpty(ComposeText value) {
     return value == null || value.getText() == null || TextUtils.isEmpty(value.getTextTrimmed());
   }
@@ -153,12 +145,16 @@ public class Util {
     return collection == null || collection.isEmpty();
   }
 
-  public static boolean isEmpty(@Nullable String value) {
-    return value == null || value.length() == 0;
+  public static boolean isEmpty(@Nullable CharSequence charSequence) {
+    return charSequence == null || charSequence.length() == 0;
   }
 
   public static boolean hasItems(@Nullable Collection<?> collection) {
     return collection != null && !collection.isEmpty();
+  }
+
+  public static <K, V> boolean hasItems(@Nullable Map<K, V> map) {
+    return map != null && !map.isEmpty();
   }
 
   public static <K, V> V getOrDefault(@NonNull Map<K, V> map, K key, V defaultValue) {
@@ -182,17 +178,6 @@ public class Util {
     return value != null ? value : "";
   }
 
-  public static <E> List<List<E>> chunk(@NonNull List<E> list, int chunkSize) {
-    List<List<E>> chunks = new ArrayList<>(list.size() / chunkSize);
-
-    for (int i = 0; i < list.size(); i += chunkSize) {
-      List<E> chunk = list.subList(i, Math.min(list.size(), i + chunkSize));
-      chunks.add(chunk);
-    }
-
-    return chunks;
-  }
-
   public static CharSequence getBoldedString(String value) {
     SpannableString spanned = new SpannableString(value);
     spanned.setSpan(new StyleSpan(Typeface.BOLD), 0,
@@ -203,27 +188,15 @@ public class Util {
   }
 
   public static @NonNull String toIsoString(byte[] bytes) {
-    try {
-      return new String(bytes, CharacterSets.MIMENAME_ISO_8859_1);
-    } catch (UnsupportedEncodingException e) {
-      throw new AssertionError("ISO_8859_1 must be supported!");
-    }
+    return new String(bytes, StandardCharsets.ISO_8859_1);
   }
 
   public static byte[] toIsoBytes(String isoString) {
-    try {
-      return isoString.getBytes(CharacterSets.MIMENAME_ISO_8859_1);
-    } catch (UnsupportedEncodingException e) {
-      throw new AssertionError("ISO_8859_1 must be supported!");
-    }
+    return isoString.getBytes(StandardCharsets.ISO_8859_1);
   }
 
   public static byte[] toUtf8Bytes(String utf8String) {
-    try {
-      return utf8String.getBytes(CharacterSets.MIMENAME_UTF_8);
-    } catch (UnsupportedEncodingException e) {
-      throw new AssertionError("UTF_8 must be supported!");
-    }
+    return utf8String.getBytes(StandardCharsets.UTF_8);
   }
 
   public static void wait(Object lock, long timeout) {
@@ -236,7 +209,6 @@ public class Util {
 
   @RequiresPermission(anyOf = {
       android.Manifest.permission.READ_PHONE_STATE,
-      android.Manifest.permission.READ_SMS,
       android.Manifest.permission.READ_PHONE_NUMBERS
   })
   @SuppressLint("MissingPermission")
@@ -245,19 +217,19 @@ public class Util {
       final String           localNumber = ((TelephonyManager)context.getSystemService(Context.TELEPHONY_SERVICE)).getLine1Number();
       final Optional<String> countryIso  = getSimCountryIso(context);
 
-      if (TextUtils.isEmpty(localNumber)) return Optional.absent();
-      if (!countryIso.isPresent())        return Optional.absent();
+      if (TextUtils.isEmpty(localNumber)) return Optional.empty();
+      if (!countryIso.isPresent())        return Optional.empty();
 
-      return Optional.fromNullable(PhoneNumberUtil.getInstance().parse(localNumber, countryIso.get()));
+      return Optional.ofNullable(PhoneNumberUtil.getInstance().parse(localNumber, countryIso.get()));
     } catch (NumberParseException e) {
       Log.w(TAG, e);
-      return Optional.absent();
+      return Optional.empty();
     }
   }
 
   public static Optional<String> getSimCountryIso(Context context) {
     String simCountryIso = ((TelephonyManager)context.getSystemService(Context.TELEPHONY_SERVICE)).getSimCountryIso();
-    return Optional.fromNullable(simCountryIso != null ? simCountryIso.toUpperCase() : null);
+    return Optional.ofNullable(simCountryIso != null ? simCountryIso.toUpperCase() : null);
   }
 
   public static @NonNull <T> T firstNonNull(@Nullable T optional, @NonNull T fallback) {
@@ -333,11 +305,6 @@ public class Util {
     return result;
   }
 
-  @SuppressLint("NewApi")
-  public static boolean isDefaultSmsProvider(Context context){
-    return context.getPackageName().equals(Telephony.Sms.getDefaultSmsPackage(context));
-  }
-
   /**
    * The app version.
    * <p>
@@ -365,7 +332,7 @@ public class Util {
 
   public static String getSecret(int size) {
     byte[] secret = getSecretBytes(size);
-    return Base64.encodeBytes(secret);
+    return Base64.encodeWithPadding(secret);
   }
 
   public static byte[] getSecretBytes(int size) {
@@ -399,11 +366,6 @@ public class Util {
     }
   }
 
-  @TargetApi(VERSION_CODES.LOLLIPOP)
-  public static boolean isMmsCapable(Context context) {
-    return (VERSION.SDK_INT >= VERSION_CODES.LOLLIPOP) || OutgoingLegacyMmsConnection.isConnectionPossible(context);
-  }
-
   public static <T> T getRandomElement(T[] elements) {
     return elements[new SecureRandom().nextInt(elements.length)];
   }
@@ -425,12 +387,10 @@ public class Util {
     else             return Uri.parse(uri);
   }
 
-  @TargetApi(VERSION_CODES.KITKAT)
   public static boolean isLowMemory(Context context) {
     ActivityManager activityManager = (ActivityManager) context.getSystemService(Context.ACTIVITY_SERVICE);
 
-    return (VERSION.SDK_INT >= VERSION_CODES.KITKAT && activityManager.isLowRamDevice()) ||
-           activityManager.getLargeMemoryClass() <= 64;
+    return activityManager.isLowRamDevice() || activityManager.getLargeMemoryClass() <= 64;
   }
 
   public static int clamp(int value, int min, int max) {
@@ -443,6 +403,15 @@ public class Util {
 
   public static float clamp(float value, float min, float max) {
     return Math.min(Math.max(value, min), max);
+  }
+
+  /**
+   * Returns half of the difference between the given length, and the length when scaled by the
+   * given scale.
+   */
+  public static float halfOffsetFromScale(int length, float scale) {
+    float scaledLength = length * scale;
+    return (length - scaledLength) / 2;
   }
 
   public static @Nullable String readTextFromClipboard(@NonNull Context context) {
@@ -458,10 +427,13 @@ public class Util {
   }
 
   public static void writeTextToClipboard(@NonNull Context context, @NonNull String text) {
-    {
-      ClipboardManager clipboardManager = (ClipboardManager)context.getSystemService(Context.CLIPBOARD_SERVICE);
-      clipboardManager.setPrimaryClip(ClipData.newPlainText("Safety numbers", text));
-    }
+    writeTextToClipboard(context, context.getString(R.string.app_name), text);
+  }
+
+  public static void writeTextToClipboard(@NonNull Context context, @NonNull String label, @NonNull String text) {
+    android.content.ClipboardManager clipboard = (android.content.ClipboardManager) context.getSystemService(Context.CLIPBOARD_SERVICE);
+    ClipData clip = ClipData.newPlainText(label, text);
+    clipboard.setPrimaryClip(clip);
   }
 
   public static int toIntExact(long value) {
@@ -469,11 +441,6 @@ public class Util {
       throw new ArithmeticException("integer overflow");
     }
     return (int)value;
-  }
-
-  public static boolean isStringEquals(String first, String second) {
-    if (first == null) return second == null;
-    return first.equals(second);
   }
 
   public static boolean isEquals(@Nullable Long first, long second) {
@@ -485,7 +452,7 @@ public class Util {
   }
 
   public static void copyToClipboard(@NonNull Context context, @NonNull CharSequence text) {
-    ServiceUtil.getClipboardManager(context).setPrimaryClip(ClipData.newPlainText("text", text));
+    ServiceUtil.getClipboardManager(context).setPrimaryClip(ClipData.newPlainText(COPY_LABEL, text));
   }
 
   @SafeVarargs

@@ -1,14 +1,15 @@
 package org.thoughtcrime.securesms.components.settings.app.account
 
 import android.content.Context
+import android.content.DialogInterface
 import android.content.Intent
-import android.graphics.Color
 import android.graphics.Typeface
 import android.text.InputType
 import android.util.DisplayMetrics
 import android.view.ViewGroup
 import android.widget.EditText
 import android.widget.TextView
+import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.autofill.HintConstants
 import androidx.core.app.DialogCompat
@@ -16,32 +17,36 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.ViewCompat
 import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.Navigation
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
 import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.components.settings.DSLConfiguration
-import org.thoughtcrime.securesms.components.settings.DSLSettingsAdapter
 import org.thoughtcrime.securesms.components.settings.DSLSettingsFragment
 import org.thoughtcrime.securesms.components.settings.DSLSettingsText
 import org.thoughtcrime.securesms.components.settings.configure
 import org.thoughtcrime.securesms.contactshare.SimpleTextWatcher
+import org.thoughtcrime.securesms.dependencies.ApplicationDependencies
 import org.thoughtcrime.securesms.keyvalue.SignalStore
-import org.thoughtcrime.securesms.lock.PinHashing
-import org.thoughtcrime.securesms.lock.v2.CreateKbsPinActivity
-import org.thoughtcrime.securesms.lock.v2.KbsConstants
+import org.thoughtcrime.securesms.lock.v2.CreateSvrPinActivity
 import org.thoughtcrime.securesms.lock.v2.PinKeyboardType
+import org.thoughtcrime.securesms.lock.v2.SvrConstants
 import org.thoughtcrime.securesms.pin.RegistrationLockV2Dialog
-import org.thoughtcrime.securesms.recipients.Recipient
-import org.thoughtcrime.securesms.util.FeatureFlags
+import org.thoughtcrime.securesms.registration.RegistrationNavigationActivity
+import org.thoughtcrime.securesms.util.PlayStoreUtil
 import org.thoughtcrime.securesms.util.ServiceUtil
-import org.thoughtcrime.securesms.util.ThemeUtil
+import org.thoughtcrime.securesms.util.ViewUtil
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingAdapter
+import org.thoughtcrime.securesms.util.navigation.safeNavigate
+import org.whispersystems.signalservice.api.kbs.PinHashUtil
 
 class AccountSettingsFragment : DSLSettingsFragment(R.string.AccountSettingsFragment__account) {
 
   lateinit var viewModel: AccountSettingsViewModel
 
   override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
-    if (requestCode == CreateKbsPinActivity.REQUEST_NEW_PIN && resultCode == CreateKbsPinActivity.RESULT_OK) {
-      Snackbar.make(requireView(), R.string.ConfirmKbsPinFragment__pin_created, Snackbar.LENGTH_LONG).setTextColor(Color.WHITE).show()
+    if (requestCode == CreateSvrPinActivity.REQUEST_NEW_PIN && resultCode == CreateSvrPinActivity.RESULT_OK) {
+      Snackbar.make(requireView(), R.string.ConfirmKbsPinFragment__pin_created, Snackbar.LENGTH_LONG).show()
     }
   }
 
@@ -50,7 +55,7 @@ class AccountSettingsFragment : DSLSettingsFragment(R.string.AccountSettingsFrag
     viewModel.refreshState()
   }
 
-  override fun bindAdapter(adapter: DSLSettingsAdapter) {
+  override fun bindAdapter(adapter: MappingAdapter) {
     viewModel = ViewModelProvider(this)[AccountSettingsViewModel::class.java]
 
     viewModel.state.observe(viewLifecycleOwner) { state ->
@@ -60,17 +65,17 @@ class AccountSettingsFragment : DSLSettingsFragment(R.string.AccountSettingsFrag
 
   private fun getConfiguration(state: AccountSettingsState): DSLConfiguration {
     return configure {
-
       sectionHeaderPref(R.string.preferences_app_protection__signal_pin)
 
       @Suppress("DEPRECATION")
       clickPref(
         title = DSLSettingsText.from(if (state.hasPin) R.string.preferences_app_protection__change_your_pin else R.string.preferences_app_protection__create_a_pin),
+        isEnabled = state.isDeprecatedOrUnregistered(),
         onClick = {
           if (state.hasPin) {
-            startActivityForResult(CreateKbsPinActivity.getIntentForPinChangeFromSettings(requireContext()), CreateKbsPinActivity.REQUEST_NEW_PIN)
+            startActivityForResult(CreateSvrPinActivity.getIntentForPinChangeFromSettings(requireContext()), CreateSvrPinActivity.REQUEST_NEW_PIN)
           } else {
-            startActivityForResult(CreateKbsPinActivity.getIntentForPinCreate(requireContext()), CreateKbsPinActivity.REQUEST_NEW_PIN)
+            startActivityForResult(CreateSvrPinActivity.getIntentForPinCreate(requireContext()), CreateSvrPinActivity.REQUEST_NEW_PIN)
           }
         }
       )
@@ -79,7 +84,7 @@ class AccountSettingsFragment : DSLSettingsFragment(R.string.AccountSettingsFrag
         title = DSLSettingsText.from(R.string.preferences_app_protection__pin_reminders),
         summary = DSLSettingsText.from(R.string.AccountSettingsFragment__youll_be_asked_less_frequently),
         isChecked = state.hasPin && state.pinRemindersEnabled,
-        isEnabled = state.hasPin,
+        isEnabled = state.hasPin && state.isDeprecatedOrUnregistered(),
         onClick = {
           setPinRemindersEnabled(!state.pinRemindersEnabled)
         }
@@ -89,7 +94,7 @@ class AccountSettingsFragment : DSLSettingsFragment(R.string.AccountSettingsFrag
         title = DSLSettingsText.from(R.string.preferences_app_protection__registration_lock),
         summary = DSLSettingsText.from(R.string.AccountSettingsFragment__require_your_signal_pin),
         isChecked = state.registrationLockEnabled,
-        isEnabled = state.hasPin,
+        isEnabled = state.hasPin && state.isDeprecatedOrUnregistered(),
         onClick = {
           setRegistrationLockEnabled(!state.registrationLockEnabled)
         }
@@ -97,8 +102,9 @@ class AccountSettingsFragment : DSLSettingsFragment(R.string.AccountSettingsFrag
 
       clickPref(
         title = DSLSettingsText.from(R.string.preferences__advanced_pin_settings),
+        isEnabled = state.isDeprecatedOrUnregistered(),
         onClick = {
-          Navigation.findNavController(requireView()).navigate(R.id.action_accountSettingsFragment_to_advancedPinSettingsActivity)
+          Navigation.findNavController(requireView()).safeNavigate(R.id.action_accountSettingsFragment_to_advancedPinSettingsActivity)
         }
       )
 
@@ -106,11 +112,12 @@ class AccountSettingsFragment : DSLSettingsFragment(R.string.AccountSettingsFrag
 
       sectionHeaderPref(R.string.AccountSettingsFragment__account)
 
-      if (FeatureFlags.changeNumber() && Recipient.self().changeNumberCapability == Recipient.Capability.SUPPORTED) {
+      if (SignalStore.account().isRegistered) {
         clickPref(
           title = DSLSettingsText.from(R.string.AccountSettingsFragment__change_phone_number),
+          isEnabled = state.isDeprecatedOrUnregistered(),
           onClick = {
-            Navigation.findNavController(requireView()).navigate(R.id.action_accountSettingsFragment_to_changePhoneNumberFragment)
+            Navigation.findNavController(requireView()).safeNavigate(R.id.action_accountSettingsFragment_to_changePhoneNumberFragment)
           }
         )
       }
@@ -118,15 +125,59 @@ class AccountSettingsFragment : DSLSettingsFragment(R.string.AccountSettingsFrag
       clickPref(
         title = DSLSettingsText.from(R.string.preferences_chats__transfer_account),
         summary = DSLSettingsText.from(R.string.preferences_chats__transfer_account_to_a_new_android_device),
+        isEnabled = state.isDeprecatedOrUnregistered(),
         onClick = {
-          Navigation.findNavController(requireView()).navigate(R.id.action_accountSettingsFragment_to_oldDeviceTransferActivity)
+          Navigation.findNavController(requireView()).safeNavigate(R.id.action_accountSettingsFragment_to_oldDeviceTransferActivity)
         }
       )
 
       clickPref(
-        title = DSLSettingsText.from(R.string.preferences__delete_account, ContextCompat.getColor(requireContext(), R.color.signal_alert_primary)),
+        title = DSLSettingsText.from(R.string.AccountSettingsFragment__request_account_data),
+        isEnabled = state.isDeprecatedOrUnregistered(),
         onClick = {
-          Navigation.findNavController(requireView()).navigate(R.id.action_accountSettingsFragment_to_deleteAccountFragment)
+          Navigation.findNavController(requireView()).safeNavigate(R.id.action_accountSettingsFragment_to_exportAccountFragment)
+        }
+      )
+
+      if (!state.isDeprecatedOrUnregistered()) {
+        if (state.clientDeprecated) {
+          clickPref(
+            title = DSLSettingsText.from(R.string.preferences_account_update_signal),
+            onClick = {
+              PlayStoreUtil.openPlayStoreOrOurApkDownloadPage(requireContext())
+            }
+          )
+        } else if (state.userUnregistered) {
+          clickPref(
+            title = DSLSettingsText.from(R.string.preferences_account_reregister),
+            onClick = {
+              startActivity(RegistrationNavigationActivity.newIntentForReRegistration(requireContext()))
+            }
+          )
+        }
+
+        clickPref(
+          title = DSLSettingsText.from(R.string.preferences_account_delete_all_data, ContextCompat.getColor(requireContext(), R.color.signal_alert_primary)),
+          onClick = {
+            MaterialAlertDialogBuilder(requireContext())
+              .setTitle(R.string.preferences_account_delete_all_data_confirmation_title)
+              .setMessage(R.string.preferences_account_delete_all_data_confirmation_message)
+              .setPositiveButton(R.string.preferences_account_delete_all_data_confirmation_proceed) { _: DialogInterface, _: Int ->
+                if (!ServiceUtil.getActivityManager(ApplicationDependencies.getApplication()).clearApplicationUserData()) {
+                  Toast.makeText(requireContext(), R.string.preferences_account_delete_all_data_failed, Toast.LENGTH_LONG).show()
+                }
+              }
+              .setNegativeButton(R.string.preferences_account_delete_all_data_confirmation_cancel, null)
+              .show()
+          }
+        )
+      }
+
+      clickPref(
+        title = DSLSettingsText.from(R.string.preferences__delete_account, ContextCompat.getColor(requireContext(), if (state.isDeprecatedOrUnregistered()) R.color.signal_alert_primary else R.color.signal_alert_primary_50)),
+        isEnabled = state.isDeprecatedOrUnregistered(),
+        onClick = {
+          Navigation.findNavController(requireView()).safeNavigate(R.id.action_accountSettingsFragment_to_deleteAccountFragment)
         }
       )
     }
@@ -145,8 +196,9 @@ class AccountSettingsFragment : DSLSettingsFragment(R.string.AccountSettingsFrag
       val context: Context = requireContext()
       val metrics: DisplayMetrics = resources.displayMetrics
 
-      val dialog: AlertDialog = AlertDialog.Builder(context, if (ThemeUtil.isDarkTheme(context)) R.style.Theme_Signal_AlertDialog_Dark_Cornered_ColoredAccent else R.style.Theme_Signal_AlertDialog_Light_Cornered_ColoredAccent)
+      val dialog: AlertDialog = MaterialAlertDialogBuilder(context)
         .setView(R.layout.pin_disable_reminders_dialog)
+        .setOnDismissListener { viewModel.refreshState() }
         .create()
 
       dialog.show()
@@ -156,30 +208,46 @@ class AccountSettingsFragment : DSLSettingsFragment(R.string.AccountSettingsFrag
       val statusText = DialogCompat.requireViewById(dialog, R.id.reminder_disable_status) as TextView
       val cancelButton = DialogCompat.requireViewById(dialog, R.id.reminder_disable_cancel)
       val turnOffButton = DialogCompat.requireViewById(dialog, R.id.reminder_disable_turn_off)
+      val changeKeyboard = DialogCompat.requireViewById(dialog, R.id.reminder_change_keyboard) as MaterialButton
+
+      changeKeyboard.setOnClickListener {
+        if (pinEditText.inputType and InputType.TYPE_CLASS_NUMBER == 0) {
+          pinEditText.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+          changeKeyboard.setIconResource(PinKeyboardType.ALPHA_NUMERIC.iconResource)
+        } else {
+          pinEditText.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+          changeKeyboard.setIconResource(PinKeyboardType.NUMERIC.iconResource)
+        }
+        pinEditText.typeface = Typeface.DEFAULT
+      }
 
       pinEditText.post {
-        if (pinEditText.requestFocus()) {
-          ServiceUtil.getInputMethodManager(pinEditText.context).showSoftInput(pinEditText, 0)
-        }
+        ViewUtil.focusAndShowKeyboard(pinEditText)
       }
 
       ViewCompat.setAutofillHints(pinEditText, HintConstants.AUTOFILL_HINT_PASSWORD)
 
       when (SignalStore.pinValues().keyboardType) {
-        PinKeyboardType.NUMERIC -> pinEditText.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
-        PinKeyboardType.ALPHA_NUMERIC -> pinEditText.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+        PinKeyboardType.NUMERIC -> {
+          pinEditText.inputType = InputType.TYPE_CLASS_NUMBER or InputType.TYPE_NUMBER_VARIATION_PASSWORD
+          changeKeyboard.setIconResource(PinKeyboardType.ALPHA_NUMERIC.iconResource)
+        }
+        PinKeyboardType.ALPHA_NUMERIC -> {
+          pinEditText.inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
+          changeKeyboard.setIconResource(PinKeyboardType.NUMERIC.iconResource)
+        }
       }
 
       pinEditText.addTextChangedListener(object : SimpleTextWatcher() {
         override fun onTextChanged(text: String) {
-          turnOffButton.isEnabled = text.length >= KbsConstants.MINIMUM_PIN_LENGTH
+          turnOffButton.isEnabled = text.length >= SvrConstants.MINIMUM_PIN_LENGTH
         }
       })
 
       pinEditText.typeface = Typeface.DEFAULT
       turnOffButton.setOnClickListener {
         val pin = pinEditText.text.toString()
-        val correct = PinHashing.verifyLocalPinHash(SignalStore.kbsValues().localPinHash!!, pin)
+        val correct = PinHashUtil.verifyLocalPinHash(SignalStore.svr().localPinHash!!, pin)
         if (correct) {
           SignalStore.pinValues().setPinRemindersEnabled(false)
           viewModel.refreshState()

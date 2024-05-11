@@ -10,7 +10,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.widget.Toolbar;
 import androidx.fragment.app.Fragment;
-import androidx.lifecycle.ViewModelProviders;
+import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.Navigation;
 
 import com.google.android.material.textfield.MaterialAutoCompleteTextView;
@@ -19,6 +19,7 @@ import com.google.android.material.textfield.TextInputLayout;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.payments.Mnemonic;
 import org.thoughtcrime.securesms.util.Util;
+import org.thoughtcrime.securesms.util.navigation.SafeNavigation;
 import org.thoughtcrime.securesms.util.text.AfterTextChanged;
 
 public class PaymentsRecoveryEntryFragment extends Fragment {
@@ -34,7 +35,7 @@ public class PaymentsRecoveryEntryFragment extends Fragment {
     TextInputLayout                wrapper   = view.findViewById(R.id.payments_recovery_entry_fragment_word_wrapper);
     MaterialAutoCompleteTextView   word      = view.findViewById(R.id.payments_recovery_entry_fragment_word);
     View                           next      = view.findViewById(R.id.payments_recovery_entry_fragment_next);
-    PaymentsRecoveryEntryViewModel viewModel = ViewModelProviders.of(this).get(PaymentsRecoveryEntryViewModel.class);
+    PaymentsRecoveryEntryViewModel viewModel = new ViewModelProvider(this).get(PaymentsRecoveryEntryViewModel.class);
 
     toolbar.setNavigationOnClickListener(t -> Navigation.findNavController(view).popBackStack(R.id.paymentsHome, false));
 
@@ -54,8 +55,8 @@ public class PaymentsRecoveryEntryFragment extends Fragment {
 
     viewModel.getEvents().observe(getViewLifecycleOwner(), event -> {
       if (event == PaymentsRecoveryEntryViewModel.Events.GO_TO_CONFIRM) {
-        Navigation.findNavController(view).navigate(PaymentsRecoveryEntryFragmentDirections.actionPaymentsRecoveryEntryToPaymentsRecoveryPhrase(false)
-                                                                                           .setWords(viewModel.getWords()));
+        SafeNavigation.safeNavigate(Navigation.findNavController(view), PaymentsRecoveryEntryFragmentDirections.actionPaymentsRecoveryEntryToPaymentsRecoveryPhrase(false)
+                                                                                                               .setWords(viewModel.getWords()));
       }
     });
 

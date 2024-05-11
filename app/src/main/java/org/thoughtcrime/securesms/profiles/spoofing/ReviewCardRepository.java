@@ -8,8 +8,8 @@ import androidx.annotation.WorkerThread;
 import com.annimon.stream.Stream;
 
 import org.signal.core.util.concurrent.SignalExecutors;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.ThreadDatabase;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.database.ThreadTable;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.groups.GroupChangeException;
 import org.thoughtcrime.securesms.groups.GroupId;
@@ -21,6 +21,7 @@ import org.thoughtcrime.securesms.recipients.RecipientUtil;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
 
 import java.io.IOException;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
 
@@ -50,7 +51,7 @@ class ReviewCardRepository {
     if (groupId != null) {
       loadRecipientsForGroup(groupId, onRecipientsLoadedListener);
     } else if (recipientId != null) {
-      loadSimilarRecipients(context, recipientId, onRecipientsLoadedListener);
+      loadSimilarRecipients(recipientId, onRecipientsLoadedListener);
     } else {
       throw new AssertionError();
     }
@@ -86,10 +87,10 @@ class ReviewCardRepository {
         ApplicationDependencies.getJobManager().add(MultiDeviceMessageRequestResponseJob.forDelete(recipientId));
       }
 
-      ThreadDatabase threadDatabase = DatabaseFactory.getThreadDatabase(context);
-      long           threadId       = Objects.requireNonNull(threadDatabase.getThreadIdFor(recipientId));
+      ThreadTable threadTable = SignalDatabase.threads();
+      long        threadId    = Objects.requireNonNull(threadTable.getThreadIdFor(recipientId));
 
-      threadDatabase.deleteConversation(threadId);
+      threadTable.deleteConversation(threadId);
       onActionCompleteListener.run();
     });
   }
@@ -101,7 +102,7 @@ class ReviewCardRepository {
 
     SignalExecutors.BOUNDED.execute(() -> {
       try {
-        GroupManager.ejectFromGroup(context, groupId, reviewCard.getReviewRecipient());
+        GroupManager.ejectAndBanFromGroup(context, groupId, reviewCard.getReviewRecipient());
         onRemoveFromGroupListener.onActionCompleted();
       } catch (GroupChangeException | IOException e) {
         onRemoveFromGroupListener.onActionFailed();
@@ -112,31 +113,21 @@ class ReviewCardRepository {
   private static void loadRecipientsForGroup(@NonNull GroupId.V2 groupId,
                                              @NonNull OnRecipientsLoadedListener onRecipientsLoadedListener)
   {
-    SignalExecutors.BOUNDED.execute(() -> onRecipientsLoadedListener.onRecipientsLoaded(ReviewUtil.getDuplicatedRecipients(groupId)));
+    SignalExecutors.BOUNDED.execute(() -> {
+      RecipientId groupRecipientId = SignalDatabase.recipients().getByGroupId(groupId).orElse(null);
+      if (groupRecipientId != null) {
+        onRecipientsLoadedListener.onRecipientsLoaded(SignalDatabase.nameCollisions().getCollisionsForThreadRecipientId(groupRecipientId));
+      } else {
+        onRecipientsLoadedListener.onRecipientsLoadFailed();
+      }
+    });
   }
 
-  private static void loadSimilarRecipients(@NonNull Context context,
-                                            @NonNull RecipientId recipientId,
+  private static void loadSimilarRecipients(@NonNull RecipientId recipientId,
                                             @NonNull OnRecipientsLoadedListener onRecipientsLoadedListener)
   {
     SignalExecutors.BOUNDED.execute(() -> {
-      Recipient resolved = Recipient.resolved(recipientId);
-
-      List<RecipientId> recipientIds = DatabaseFactory.getRecipientDatabase(context)
-          .getSimilarRecipientIds(resolved);
-
-      if (recipientIds.isEmpty()) {
-        onRecipientsLoadedListener.onRecipientsLoadFailed();
-        return;
-      }
-
-      List<ReviewRecipient> recipients = Stream.of(recipientIds)
-          .map(Recipient::resolved)
-          .map(ReviewRecipient::new)
-          .sorted(new ReviewRecipient.Comparator(context, recipientId))
-          .toList();
-
-      onRecipientsLoadedListener.onRecipientsLoaded(recipients);
+      onRecipientsLoadedListener.onRecipientsLoaded(SignalDatabase.nameCollisions().getCollisionsForThreadRecipientId(recipientId));
     });
   }
 

@@ -5,7 +5,7 @@ import android.view.ViewGroup;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import com.google.android.exoplayer2.MediaItem;
+import androidx.media3.common.MediaItem;
 
 import org.thoughtcrime.securesms.util.Projection;
 
@@ -51,4 +51,10 @@ public interface GiphyMp4Playable {
    * Specifies whether the content can start playing.
    */
   boolean canPlayContent();
+
+  /**
+   * Specifies whether the projection from {@link #getGiphyMp4PlayableProjection(ViewGroup)} should
+   * be used to project into a view.
+   */
+  boolean shouldProjectContent();
 }

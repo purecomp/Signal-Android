@@ -1,18 +1,16 @@
 package org.thoughtcrime.securesms.megaphone;
 
-import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
-import org.thoughtcrime.securesms.util.TextSecurePreferences;
 
 final class SignalPinReminderSchedule implements MegaphoneSchedule {
 
   @Override
   public boolean shouldDisplay(int seenCount, long lastSeen, long firstVisible, long currentTime) {
-    if (SignalStore.kbsValues().hasOptedOut()) {
+    if (SignalStore.svr().hasOptedOut()) {
       return false;
     }
 
-    if (!SignalStore.kbsValues().hasPin()) {
+    if (!SignalStore.svr().hasPin()) {
       return false;
     }
 
@@ -20,7 +18,7 @@ final class SignalPinReminderSchedule implements MegaphoneSchedule {
       return false;
     }
 
-    if (!TextSecurePreferences.isPushRegistered(ApplicationDependencies.getApplication())) {
+    if (!SignalStore.account().isRegistered()) {
       return false;
     }
 

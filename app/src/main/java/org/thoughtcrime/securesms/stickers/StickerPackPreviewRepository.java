@@ -10,31 +10,31 @@ import com.annimon.stream.Stream;
 
 import org.signal.core.util.concurrent.SignalExecutors;
 import org.signal.core.util.logging.Log;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.StickerDatabase;
+import org.signal.libsignal.protocol.InvalidMessageException;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.database.StickerTable;
 import org.thoughtcrime.securesms.database.model.StickerPackRecord;
 import org.thoughtcrime.securesms.database.model.StickerRecord;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.util.Hex;
-import org.whispersystems.libsignal.InvalidMessageException;
-import org.whispersystems.libsignal.util.guava.Optional;
+import org.signal.core.util.Hex;
 import org.whispersystems.signalservice.api.SignalServiceMessageReceiver;
 import org.whispersystems.signalservice.api.messages.SignalServiceStickerManifest;
 
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 public final class StickerPackPreviewRepository {
 
   private static final String TAG = Log.tag(StickerPackPreviewRepository.class);
 
-  private final StickerDatabase              stickerDatabase;
+  private final StickerTable                 stickerDatabase;
   private final SignalServiceMessageReceiver receiver;
 
   public StickerPackPreviewRepository(@NonNull Context context) {
     this.receiver        = ApplicationDependencies.getSignalServiceMessageReceiver();
-    this.stickerDatabase = DatabaseFactory.getStickerDatabase(context);
+    this.stickerDatabase = SignalDatabase.stickers();
   }
 
   public void getStickerManifest(@NonNull String packId,
@@ -72,7 +72,7 @@ public final class StickerPackPreviewRepository {
       return Optional.of(new StickerManifestResult(manifest, record.isInstalled()));
     }
 
-    return Optional.absent();
+    return Optional.empty();
   }
 
   @WorkerThread
@@ -95,7 +95,7 @@ public final class StickerPackPreviewRepository {
       Log.w(TAG, "Failed to retrieve pack manifest.", e);
     }
 
-    return Optional.absent();
+    return Optional.empty();
   }
 
   @WorkerThread
@@ -103,7 +103,7 @@ public final class StickerPackPreviewRepository {
     List<StickerManifest.Sticker> stickers = new ArrayList<>();
 
     try (Cursor cursor = stickerDatabase.getStickersForPack(packId)) {
-      StickerDatabase.StickerRecordReader reader = new StickerDatabase.StickerRecordReader(cursor);
+      StickerTable.StickerRecordReader reader = new StickerTable.StickerRecordReader(cursor);
 
       StickerRecord record;
       while ((record = reader.getNext()) != null) {
@@ -120,7 +120,7 @@ public final class StickerPackPreviewRepository {
                                                               @NonNull Optional<SignalServiceStickerManifest.StickerInfo> remoteSticker)
   {
     return remoteSticker.isPresent() ? Optional.of(toSticker(packId, packKey, remoteSticker.get()))
-                                     : Optional.absent();
+                                     : Optional.empty();
   }
 
   private StickerManifest.Sticker toSticker(@NonNull String packId,

@@ -4,21 +4,18 @@ import android.app.Application;
 
 import androidx.annotation.NonNull;
 
-import org.greenrobot.eventbus.EventBus;
 import org.signal.core.util.logging.Log;
-import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.events.ReminderUpdateEvent;
-import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
-import org.whispersystems.libsignal.util.guava.Preconditions;
 import org.whispersystems.signalservice.api.SignalWebSocket;
+import org.whispersystems.signalservice.api.util.Preconditions;
 import org.whispersystems.signalservice.api.util.SleepTimer;
 import org.whispersystems.signalservice.api.websocket.HealthMonitor;
 import org.whispersystems.signalservice.api.websocket.WebSocketConnectionState;
-import org.whispersystems.signalservice.internal.websocket.WebSocketConnection;
+import org.whispersystems.signalservice.internal.websocket.OkHttpWebSocketConnection;
 
+import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.reactivex.rxjava3.schedulers.Schedulers;
 
@@ -33,14 +30,24 @@ public final class SignalWebSocketHealthMonitor implements HealthMonitor {
 
   private static final String TAG = Log.tag(SignalWebSocketHealthMonitor.class);
 
-  private static final long KEEP_ALIVE_SEND_CADENCE              = TimeUnit.SECONDS.toMillis(WebSocketConnection.KEEPALIVE_TIMEOUT_SECONDS);
-  private static final long MAX_TIME_SINCE_SUCCESSFUL_KEEP_ALIVE = KEEP_ALIVE_SEND_CADENCE * 3;
+  /**
+   * This is the amount of time in between sent keep alives. Must be greater than {@link SignalWebSocketHealthMonitor#KEEP_ALIVE_TIMEOUT}
+   */
+  private static final long KEEP_ALIVE_SEND_CADENCE = TimeUnit.SECONDS.toMillis(OkHttpWebSocketConnection.KEEPALIVE_FREQUENCY_SECONDS);
+
+  /**
+   * This is the amount of time we will wait for a response to the keep alive before we consider the websockets dead.
+   * It is required that this value be less than {@link SignalWebSocketHealthMonitor#KEEP_ALIVE_SEND_CADENCE}
+   */
+  private static final long KEEP_ALIVE_TIMEOUT = TimeUnit.SECONDS.toMillis(20);
+
+  private final Executor executor = Executors.newSingleThreadExecutor();
 
   private final Application     context;
   private       SignalWebSocket signalWebSocket;
   private final SleepTimer      sleepTimer;
 
-  private volatile KeepAliveSender keepAliveSender;
+  private KeepAliveSender keepAliveSender;
 
   private final HealthState identified   = new HealthState();
   private final HealthState unidentified = new HealthState();
@@ -51,72 +58,80 @@ public final class SignalWebSocketHealthMonitor implements HealthMonitor {
   }
 
   public void monitor(@NonNull SignalWebSocket signalWebSocket) {
-    Preconditions.checkNotNull(signalWebSocket);
-    Preconditions.checkArgument(this.signalWebSocket == null, "monitor can only be called once");
+    executor.execute(() -> {
+      Preconditions.checkNotNull(signalWebSocket);
+      Preconditions.checkArgument(this.signalWebSocket == null, "monitor can only be called once");
 
-    this.signalWebSocket = signalWebSocket;
+      this.signalWebSocket = signalWebSocket;
 
-    //noinspection ResultOfMethodCallIgnored
-    signalWebSocket.getWebSocketState()
-                   .subscribeOn(Schedulers.computation())
-                   .observeOn(Schedulers.computation())
-                   .distinctUntilChanged()
-                   .subscribe(s -> onStateChange(s, identified));
+      //noinspection ResultOfMethodCallIgnored
+      signalWebSocket.getWebSocketState()
+                     .subscribeOn(Schedulers.computation())
+                     .observeOn(Schedulers.computation())
+                     .distinctUntilChanged()
+                     .subscribe(s -> onStateChange(s, identified, true));
 
-    //noinspection ResultOfMethodCallIgnored
-    signalWebSocket.getUnidentifiedWebSocketState()
-                   .subscribeOn(Schedulers.computation())
-                   .observeOn(Schedulers.computation())
-                   .distinctUntilChanged()
-                   .subscribe(s -> onStateChange(s, unidentified));
+      //noinspection ResultOfMethodCallIgnored
+      signalWebSocket.getUnidentifiedWebSocketState()
+                     .subscribeOn(Schedulers.computation())
+                     .observeOn(Schedulers.computation())
+                     .distinctUntilChanged()
+                     .subscribe(s -> onStateChange(s, unidentified, false));
+    });
   }
 
-  private synchronized void onStateChange(WebSocketConnectionState connectionState, HealthState healthState) {
-    switch (connectionState) {
-      case CONNECTED:
-        TextSecurePreferences.setUnauthorizedReceived(context, false);
-        break;
-      case AUTHENTICATION_FAILED:
-        TextSecurePreferences.setUnauthorizedReceived(context, true);
-        EventBus.getDefault().post(new ReminderUpdateEvent());
-        break;
-      case FAILED:
-        if (SignalStore.proxy().isProxyEnabled()) {
-          Log.w(TAG, "Encountered an error while we had a proxy set! Terminating the connection to prevent retry spam.");
-          ApplicationDependencies.closeConnections();
-        }
-        break;
-    }
+  private void onStateChange(WebSocketConnectionState connectionState, HealthState healthState, boolean isIdentified) {
+    executor.execute(() -> {
+      switch (connectionState) {
+        case CONNECTED:
+          if (isIdentified) {
+            TextSecurePreferences.setUnauthorizedReceived(context, false);
+            break;
+          }
+        case AUTHENTICATION_FAILED:
+          if (isIdentified) {
+            TextSecurePreferences.setUnauthorizedReceived(context, true);
+            break;
+          }
+        case FAILED:
+          break;
+      }
 
-    healthState.needsKeepAlive = connectionState == WebSocketConnectionState.CONNECTED;
+      healthState.needsKeepAlive = connectionState == WebSocketConnectionState.CONNECTED;
 
-    if (keepAliveSender == null && isKeepAliveNecessary()) {
-      keepAliveSender = new KeepAliveSender();
-      keepAliveSender.start();
-    } else if (keepAliveSender != null && !isKeepAliveNecessary()) {
-      keepAliveSender.shutdown();
-      keepAliveSender = null;
-    }
+      if (keepAliveSender == null && isKeepAliveNecessary()) {
+        keepAliveSender = new KeepAliveSender();
+        keepAliveSender.start();
+      } else if (keepAliveSender != null && !isKeepAliveNecessary()) {
+        keepAliveSender.shutdown();
+        keepAliveSender = null;
+      }
+    });
   }
 
   @Override
   public void onKeepAliveResponse(long sentTimestamp, boolean isIdentifiedWebSocket) {
-    if (isIdentifiedWebSocket) {
-      identified.lastKeepAliveReceived = System.currentTimeMillis();
-    } else {
-      unidentified.lastKeepAliveReceived = System.currentTimeMillis();
-    }
+    final long keepAliveTime = System.currentTimeMillis();
+    executor.execute(() -> {
+      if (isIdentifiedWebSocket) {
+        identified.lastKeepAliveReceived = keepAliveTime;
+      } else {
+        unidentified.lastKeepAliveReceived = keepAliveTime;
+      }
+    });
   }
 
   @Override
   public void onMessageError(int status, boolean isIdentifiedWebSocket) {
-    if (status == 409) {
-      HealthState healthState = (isIdentifiedWebSocket ? identified : unidentified);
-      if (healthState.mismatchErrorTracker.addSample(System.currentTimeMillis())) {
-        Log.w(TAG, "Received too many mismatch device errors, forcing new websockets.");
-        signalWebSocket.forceNewWebSockets();
+    executor.execute(() -> {
+      if (status == 409) {
+        HealthState healthState = (isIdentifiedWebSocket ? identified : unidentified);
+        if (healthState.mismatchErrorTracker.addSample(System.currentTimeMillis())) {
+          Log.w(TAG, "Received too many mismatch device errors, forcing new websockets.");
+          signalWebSocket.forceNewWebSockets();
+        }
       }
-    }
+    });
   }
 
   private boolean isKeepAliveNecessary() {
@@ -132,7 +147,7 @@ public final class SignalWebSocketHealthMonitor implements HealthMonitor {
 
   /**
    * Sends periodic heartbeats/keep-alives over both WebSockets to prevent connection timeouts. If
-   * either WebSocket fails 3 times to get a return heartbeat both are forced to be recreated.
+   * either WebSocket fails to get a return heartbeat after {@link SignalWebSocketHealthMonitor#KEEP_ALIVE_TIMEOUT} seconds, both are forced to be recreated.
    */
   private class KeepAliveSender extends Thread {
 
@@ -142,24 +157,43 @@ public final class SignalWebSocketHealthMonitor implements HealthMonitor {
       identified.lastKeepAliveReceived   = System.currentTimeMillis();
       unidentified.lastKeepAliveReceived = System.currentTimeMillis();
 
+      long keepAliveSendTime = System.currentTimeMillis();
       while (shouldKeepRunning && isKeepAliveNecessary()) {
         try {
-          sleepTimer.sleep(KEEP_ALIVE_SEND_CADENCE);
+          long nextKeepAliveSendTime = (keepAliveSendTime + KEEP_ALIVE_SEND_CADENCE);
+          sleepUntil(nextKeepAliveSendTime);
 
           if (shouldKeepRunning && isKeepAliveNecessary()) {
-            long keepAliveRequiredSinceTime = System.currentTimeMillis() - MAX_TIME_SINCE_SUCCESSFUL_KEEP_ALIVE;
+            keepAliveSendTime = System.currentTimeMillis();
+            signalWebSocket.sendKeepAlive();
+          }
 
-            if (identified.lastKeepAliveReceived < keepAliveRequiredSinceTime || unidentified.lastKeepAliveReceived < keepAliveRequiredSinceTime) {
+          final long responseRequiredTime = keepAliveSendTime + KEEP_ALIVE_TIMEOUT;
+          sleepUntil(responseRequiredTime);
+
+          if (shouldKeepRunning && isKeepAliveNecessary()) {
+            if (identified.lastKeepAliveReceived < keepAliveSendTime || unidentified.lastKeepAliveReceived < keepAliveSendTime) {
               Log.w(TAG, "Missed keep alives, identified last: " + identified.lastKeepAliveReceived +
                          " unidentified last: " + unidentified.lastKeepAliveReceived +
-                         " needed by: " + keepAliveRequiredSinceTime);
+                         " needed by: " + responseRequiredTime);
               signalWebSocket.forceNewWebSockets();
-            } else {
-              signalWebSocket.sendKeepAlive();
             }
           }
         } catch (Throwable e) {
           Log.w(TAG, e);
+        }
+      }
+    }
+
+    private void sleepUntil(long timeMs) {
+      while (System.currentTimeMillis() < timeMs) {
+        long waitTime = timeMs - System.currentTimeMillis();
+        if (waitTime > 0) {
+          try {
+            sleepTimer.sleep(waitTime);
+          } catch (InterruptedException e) {
+            Log.w(TAG, e);
+          }
         }
       }
     }

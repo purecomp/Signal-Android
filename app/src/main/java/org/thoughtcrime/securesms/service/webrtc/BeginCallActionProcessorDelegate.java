@@ -9,6 +9,7 @@ import org.thoughtcrime.securesms.components.webrtc.BroadcastVideoSink;
 import org.thoughtcrime.securesms.events.CallParticipant;
 import org.thoughtcrime.securesms.events.CallParticipantId;
 import org.thoughtcrime.securesms.events.WebRtcViewModel;
+import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.ringrtc.RemotePeer;
 import org.thoughtcrime.securesms.service.webrtc.state.WebRtcServiceState;
 import org.whispersystems.signalservice.api.messages.calls.OfferMessage;
@@ -43,11 +44,13 @@ public class BeginCallActionProcessorDelegate extends WebRtcActionProcessor {
                                                                             remotePeer.getRecipient(),
                                                                             null,
                                                                             new BroadcastVideoSink(currentState.getVideoState().getLockableEglBase(),
-                                                                                                   false,
+                                                                                                   true,
                                                                                                    true,
                                                                                                    currentState.getLocalDeviceState().getOrientation().getDegrees()),
                                                                             true,
+                                                                            true,
                                                                             false,
+                                                                            CallParticipant.HAND_LOWERED,
                                                                             0,
                                                                             true,
                                                                             0,
@@ -59,7 +62,7 @@ public class BeginCallActionProcessorDelegate extends WebRtcActionProcessor {
     CallManager.CallMediaType callMediaType = WebRtcUtil.getCallMediaTypeFromOfferType(offerType);
 
     try {
-      webRtcInteractor.getCallManager().call(remotePeer, callMediaType, 1);
+      webRtcInteractor.getCallManager().call(remotePeer, callMediaType, SignalStore.account().getDeviceId());
     } catch (CallException e) {
       return callFailure(currentState, "Unable to create outgoing call: ", e);
     }
@@ -68,16 +71,29 @@ public class BeginCallActionProcessorDelegate extends WebRtcActionProcessor {
   }
 
   @Override
-  protected @NonNull WebRtcServiceState handleStartIncomingCall(@NonNull WebRtcServiceState currentState, @NonNull RemotePeer remotePeer) {
+  protected @NonNull WebRtcServiceState handleStartIncomingCall(@NonNull WebRtcServiceState currentState, @NonNull RemotePeer remotePeer, @NonNull OfferMessage.Type offerType) {
     remotePeer.answering();
 
     Log.i(tag, "assign activePeer callId: " + remotePeer.getCallId() + " key: " + remotePeer.hashCode());
 
-    webRtcInteractor.setCallInProgressNotification(TYPE_INCOMING_CONNECTING, remotePeer);
+
+    boolean    isRemoteVideoOffer = currentState.getCallSetupState(remotePeer).isRemoteVideoOffer();
+
+    webRtcInteractor.setCallInProgressNotification(TYPE_INCOMING_CONNECTING, remotePeer, isRemoteVideoOffer);
     webRtcInteractor.retrieveTurnServers(remotePeer);
+    webRtcInteractor.initializeAudioForCall();
+
+    if (!webRtcInteractor.addNewIncomingCall(remotePeer.getId(), remotePeer.getCallId().longValue(), offerType == OfferMessage.Type.VIDEO_CALL)) {
+      Log.i(tag, "Unable to add new incoming call");
+      return handleDropCall(currentState, remotePeer.getCallId().longValue());
+    }
 
     return currentState.builder()
                        .actionProcessor(new IncomingCallActionProcessor(webRtcInteractor))
+                       .changeCallSetupState(remotePeer.getCallId())
+                       .waitForTelecom(AndroidTelecomUtil.getTelecomSupported())
+                       .telecomApproved(false)
+                       .commit()
                        .changeCallInfoState()
                        .callRecipient(remotePeer.getRecipient())
                        .activePeer(remotePeer)
@@ -87,11 +103,13 @@ public class BeginCallActionProcessorDelegate extends WebRtcActionProcessor {
                                                                     remotePeer.getRecipient(),
                                                                     null,
                                                                     new BroadcastVideoSink(currentState.getVideoState().getLockableEglBase(),
-                                                                                           false,
+                                                                                           true,
                                                                                            true,
                                                                                            currentState.getLocalDeviceState().getOrientation().getDegrees()),
                                                                     true,
+                                                                    true,
                                                                     false,
+                                                                    CallParticipant.HAND_LOWERED,
                                                                     0,
                                                                     true,
                                                                     0,

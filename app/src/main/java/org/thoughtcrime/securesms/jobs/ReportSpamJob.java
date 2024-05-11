@@ -1,23 +1,29 @@
 package org.thoughtcrime.securesms.jobs;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import org.signal.core.util.logging.Log;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.MessageDatabase.ReportSpamData;
+import org.thoughtcrime.securesms.database.MessageTable.ReportSpamData;
+import org.thoughtcrime.securesms.database.SignalDatabase;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.jobmanager.Data;
+import org.thoughtcrime.securesms.jobmanager.JsonJobData;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint;
+import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.recipients.Recipient;
-import org.thoughtcrime.securesms.util.TextSecurePreferences;
-import org.whispersystems.libsignal.util.guava.Optional;
+import org.thoughtcrime.securesms.recipients.RecipientId;
+import org.signal.core.util.Base64;
 import org.whispersystems.signalservice.api.SignalServiceAccountManager;
+import org.whispersystems.signalservice.api.push.ServiceId;
 import org.whispersystems.signalservice.api.push.exceptions.NonSuccessfulResponseCodeException;
 import org.whispersystems.signalservice.api.push.exceptions.ServerRejectedException;
 
 import java.io.IOException;
+import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 /**
  * Report 1 to {@link #MAX_MESSAGE_COUNT} message guids received prior to {@link #timestamp} in {@link #threadId} to the server as spam.
@@ -36,7 +42,7 @@ public class ReportSpamJob extends BaseJob {
 
   public ReportSpamJob(long threadId, long timestamp) {
     this(new Parameters.Builder().addConstraint(NetworkConstraint.KEY)
-                                 .setMaxAttempts(5)
+                                 .setLifespan(TimeUnit.DAYS.toMillis(1))
                                  .setQueue("ReportSpamJob")
                                  .build(),
          threadId,
@@ -50,10 +56,10 @@ public class ReportSpamJob extends BaseJob {
   }
 
   @Override
-  public @NonNull Data serialize() {
-    return new Data.Builder().putLong(KEY_THREAD_ID, threadId)
-                             .putLong(KEY_TIMESTAMP, timestamp)
-                             .build();
+  public @Nullable byte[] serialize() {
+    return new JsonJobData.Builder().putLong(KEY_THREAD_ID, threadId)
+                                    .putLong(KEY_TIMESTAMP, timestamp)
+                                    .serialize();
   }
 
   @Override
@@ -63,20 +69,50 @@ public class ReportSpamJob extends BaseJob {
 
   @Override
   public void onRun() throws IOException {
-    if (!TextSecurePreferences.isPushRegistered(context)) {
+    if (!SignalStore.account().isRegistered()) {
       return;
     }
 
+    Recipient threadRecipient = SignalDatabase.threads().getRecipientForThreadId(threadId);
+    if (threadRecipient == null) {
+      Log.w(TAG, "No recipient for thread");
+      return;
+    }
+
+    List<ReportSpamData> reportSpamData;
+
+    if (threadRecipient.isGroup()) {
+      Recipient inviter = SignalDatabase.groups().getGroupInviter(threadRecipient.requireGroupId());
+      if (inviter == null) {
+        Log.w(TAG, "Unable to determine inviter to report");
+        return;
+      }
+
+      reportSpamData = SignalDatabase.messages().getGroupReportSpamMessageServerData(threadId, inviter.getId(), timestamp, MAX_MESSAGE_COUNT);
+    } else {
+      reportSpamData = SignalDatabase.messages().getReportSpamMessageServerData(threadId, timestamp, MAX_MESSAGE_COUNT);
+    }
+
     int                         count                       = 0;
-    List<ReportSpamData>        reportSpamData              = DatabaseFactory.getMmsSmsDatabase(context).getReportSpamMessageServerData(threadId, timestamp, MAX_MESSAGE_COUNT);
     SignalServiceAccountManager signalServiceAccountManager = ApplicationDependencies.getSignalServiceAccountManager();
+
     for (ReportSpamData data : reportSpamData) {
-      Optional<String> e164 = Recipient.resolved(data.getRecipientId()).getE164();
-      if (e164.isPresent()) {
-        signalServiceAccountManager.reportSpam(e164.get(), data.getServerGuid());
+      RecipientId         recipientId = data.getRecipientId();
+      Recipient           recipient   = Recipient.resolved(recipientId);
+      Optional<ServiceId> serviceId   = recipient.getServiceId();
+
+      if (serviceId.isPresent() && !serviceId.get().isUnknown()) {
+        String reportingTokenEncoded = null;
+
+        byte[] reportingTokenBytes = SignalDatabase.recipients().getReportingToken(recipientId);
+        if (reportingTokenBytes != null) {
+          reportingTokenEncoded = Base64.encodeWithPadding(reportingTokenBytes);
+        }
+
+        signalServiceAccountManager.reportSpam(serviceId.get(), data.getServerGuid(), reportingTokenEncoded);
         count++;
       } else {
-        Log.w(TAG, "Unable to report spam without an e164 for " + data.getRecipientId());
+        Log.w(TAG, "Unable to report spam without an ACI for " + recipientId);
       }
     }
     Log.i(TAG, "Reported " + count + " out of " + reportSpamData.size() + " messages in thread " + threadId + " as spam");
@@ -100,7 +136,8 @@ public class ReportSpamJob extends BaseJob {
 
   public static final class Factory implements Job.Factory<ReportSpamJob> {
     @Override
-    public @NonNull ReportSpamJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull ReportSpamJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
+      JsonJobData data = JsonJobData.deserialize(serializedData);
       return new ReportSpamJob(parameters, data.getLong(KEY_THREAD_ID), data.getLong(KEY_TIMESTAMP));
     }
   }

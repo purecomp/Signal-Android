@@ -5,6 +5,7 @@ import android.app.PendingIntent;
 import android.content.Intent;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 import androidx.core.app.NotificationManagerCompat;
 import androidx.core.app.TaskStackBuilder;
@@ -13,15 +14,15 @@ import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.MainActivity;
 import org.thoughtcrime.securesms.NewConversationActivity;
 import org.thoughtcrime.securesms.R;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.ThreadDatabase;
-import org.thoughtcrime.securesms.jobmanager.Data;
+import org.thoughtcrime.securesms.conversationlist.model.ConversationFilter;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.database.ThreadTable;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.notifications.NotificationChannels;
 import org.thoughtcrime.securesms.notifications.NotificationIds;
 import org.thoughtcrime.securesms.recipients.RecipientId;
-import org.thoughtcrime.securesms.util.SetUtil;
+import org.signal.core.util.SetUtil;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
 
 import java.util.List;
@@ -56,9 +57,9 @@ public class UserNotificationMigrationJob extends MigrationJob {
 
   @Override
   void performMigration() {
-    if (!TextSecurePreferences.isPushRegistered(context)      ||
-        TextSecurePreferences.getLocalNumber(context) == null ||
-        TextSecurePreferences.getLocalAci(context) == null)
+    if (!SignalStore.account().isRegistered()   ||
+        SignalStore.account().getE164() == null ||
+        SignalStore.account().getAci() == null)
     {
       Log.w(TAG, "Not registered! Skipping.");
       return;
@@ -74,20 +75,20 @@ public class UserNotificationMigrationJob extends MigrationJob {
       return;
     }
 
-    ThreadDatabase threadDatabase = DatabaseFactory.getThreadDatabase(context);
+    ThreadTable threadTable = SignalDatabase.threads();
 
-    int threadCount = threadDatabase.getUnarchivedConversationListCount() +
-                      threadDatabase.getArchivedConversationListCount();
+    int threadCount = threadTable.getUnarchivedConversationListCount(ConversationFilter.OFF) +
+                      threadTable.getArchivedConversationListCount(ConversationFilter.OFF);
 
     if (threadCount >= 3) {
       Log.w(TAG, "Already have 3 or more threads. Skipping.");
       return;
     }
 
-    List<RecipientId> registered               = DatabaseFactory.getRecipientDatabase(context).getRegistered();
-    List<RecipientId> systemContacts           = DatabaseFactory.getRecipientDatabase(context).getSystemContacts();
+    Set<RecipientId>  registered               = SignalDatabase.recipients().getRegistered();
+    List<RecipientId> systemContacts           = SignalDatabase.recipients().getSystemContacts();
     Set<RecipientId>  registeredSystemContacts = SetUtil.intersection(registered, systemContacts);
-    Set<RecipientId>  threadRecipients         = threadDatabase.getAllThreadRecipients();
+    Set<RecipientId>  threadRecipients         = threadTable.getAllThreadRecipients();
 
     if (threadRecipients.containsAll(registeredSystemContacts)) {
       Log.w(TAG, "Threads already exist for all relevant contacts. Skipping.");
@@ -105,7 +106,7 @@ public class UserNotificationMigrationJob extends MigrationJob {
                                                           .addNextIntent(newConversationIntent)
                                                           .getPendingIntent(0, 0);
 
-    Notification notification = new NotificationCompat.Builder(context, NotificationChannels.getMessagesChannel(context))
+    Notification notification = new NotificationCompat.Builder(context, NotificationChannels.getInstance().getMessagesChannel())
                                                       .setSmallIcon(R.drawable.ic_notification)
                                                       .setContentText(message)
                                                       .setContentIntent(pendingIntent)
@@ -127,7 +128,7 @@ public class UserNotificationMigrationJob extends MigrationJob {
   public static final class Factory implements Job.Factory<UserNotificationMigrationJob> {
 
     @Override
-    public @NonNull UserNotificationMigrationJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull UserNotificationMigrationJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
       return new UserNotificationMigrationJob(parameters);
     }
   }

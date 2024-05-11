@@ -6,11 +6,14 @@ import android.widget.FrameLayout;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
+import androidx.lifecycle.LifecycleOwner;
+
+import com.bumptech.glide.RequestManager;
 
 import org.thoughtcrime.securesms.BindableConversationListItem;
 import org.thoughtcrime.securesms.R;
+import org.thoughtcrime.securesms.conversationlist.model.ConversationSet;
 import org.thoughtcrime.securesms.database.model.ThreadRecord;
-import org.thoughtcrime.securesms.mms.GlideRequests;
 
 import java.util.Locale;
 import java.util.Set;
@@ -38,12 +41,12 @@ public class ConversationListItemAction extends FrameLayout implements BindableC
   }
 
   @Override
-  public void bind(@NonNull ThreadRecord thread,
-                   @NonNull GlideRequests glideRequests,
+  public void bind(@NonNull LifecycleOwner lifecycleOwner,
+                   @NonNull ThreadRecord thread,
+                   @NonNull RequestManager requestManager,
                    @NonNull Locale locale,
                    @NonNull Set<Long> typingThreads,
-                   @NonNull Set<Long> selectedThreads,
-                   boolean batchMode)
+                   @NonNull ConversationSet selectedConversations)
   {
     this.description.setText(getContext().getString(R.string.ConversationListItemAction_archived_conversations_d, thread.getUnreadCount()));
   }
@@ -54,12 +57,17 @@ public class ConversationListItemAction extends FrameLayout implements BindableC
   }
 
   @Override
-  public void setBatchMode(boolean batchMode) {
+  public void setSelectedConversations(@NonNull ConversationSet conversations) {
 
   }
 
   @Override
   public void updateTypingIndicator(@NonNull Set<Long> typingThreads) {
 
+  }
+
+  @Override
+  public void updateTimestamp() {
+    // Intentionally left blank.
   }
 }

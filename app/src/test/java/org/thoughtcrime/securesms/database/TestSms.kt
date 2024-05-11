@@ -1,11 +1,11 @@
 package org.thoughtcrime.securesms.database
 
 import android.content.ContentValues
-import android.text.TextUtils
+import org.signal.core.util.orNull
 import org.thoughtcrime.securesms.groups.GroupId
+import org.thoughtcrime.securesms.mms.IncomingMessage
 import org.thoughtcrime.securesms.recipients.RecipientId
-import org.thoughtcrime.securesms.sms.IncomingTextMessage
-import org.whispersystems.libsignal.util.guava.Optional
+import java.util.Optional
 import java.util.UUID
 import android.database.sqlite.SQLiteDatabase as AndroidSQLiteDatabase
 
@@ -22,25 +22,25 @@ object TestSms {
     serverTimestampMillis: Long = System.currentTimeMillis(),
     receivedTimestampMillis: Long = System.currentTimeMillis(),
     encodedBody: String = "encodedBody",
-    groupId: Optional<GroupId> = Optional.absent(),
+    groupId: Optional<GroupId> = Optional.empty(),
     expiresInMillis: Long = 0,
     unidentified: Boolean = false,
     serverGuid: String = UUID.randomUUID().toString(),
-    type: Long = MmsSmsColumns.Types.BASE_INBOX_TYPE,
+    type: Long = MessageTypes.BASE_INBOX_TYPE,
     unread: Boolean = false,
     threadId: Long = 1
   ): Long {
-    val message = IncomingTextMessage(
-      sender,
-      senderDeviceId,
-      sentTimestampMillis,
-      serverTimestampMillis,
-      receivedTimestampMillis,
-      encodedBody,
-      groupId,
-      expiresInMillis,
-      unidentified,
-      serverGuid
+    val message = IncomingMessage(
+      type = MessageType.NORMAL,
+      from = sender,
+      sentTimeMillis = sentTimestampMillis,
+      serverTimeMillis = serverTimestampMillis,
+      receivedTimeMillis = receivedTimestampMillis,
+      body = encodedBody,
+      groupId = groupId.orNull(),
+      expiresIn = expiresInMillis,
+      isUnidentified = unidentified,
+      serverGuid = serverGuid
     )
 
     return insert(
@@ -54,35 +54,27 @@ object TestSms {
 
   fun insert(
     db: AndroidSQLiteDatabase,
-    message: IncomingTextMessage,
-    type: Long = MmsSmsColumns.Types.BASE_INBOX_TYPE,
+    message: IncomingMessage,
+    type: Long = MessageTypes.BASE_INBOX_TYPE,
     unread: Boolean = false,
     threadId: Long = 1
   ): Long {
     val values = ContentValues().apply {
-      put(MmsSmsColumns.RECIPIENT_ID, message.sender.serialize())
-      put(MmsSmsColumns.ADDRESS_DEVICE_ID, message.senderDeviceId)
-      put(SmsDatabase.DATE_RECEIVED, message.receivedTimestampMillis)
-      put(SmsDatabase.DATE_SENT, message.sentTimestampMillis)
-      put(MmsSmsColumns.DATE_SERVER, message.serverTimestampMillis)
-      put(SmsDatabase.PROTOCOL, message.protocol)
-      put(MmsSmsColumns.READ, if (unread) 0 else 1)
-      put(MmsSmsColumns.SUBSCRIPTION_ID, message.subscriptionId)
-      put(MmsSmsColumns.EXPIRES_IN, message.expiresIn)
-      put(MmsSmsColumns.UNIDENTIFIED, message.isUnidentified)
-
-      if (!TextUtils.isEmpty(message.pseudoSubject)) {
-        put(SmsDatabase.SUBJECT, message.pseudoSubject)
-      }
-
-      put(SmsDatabase.REPLY_PATH_PRESENT, message.isReplyPathPresent)
-      put(SmsDatabase.SERVICE_CENTER, message.serviceCenterAddress)
-      put(MmsSmsColumns.BODY, message.messageBody)
-      put(SmsDatabase.TYPE, type)
-      put(MmsSmsColumns.THREAD_ID, threadId)
-      put(MmsSmsColumns.SERVER_GUID, message.serverGuid)
+      put(MessageTable.FROM_RECIPIENT_ID, message.from.serialize())
+      put(MessageTable.TO_RECIPIENT_ID, message.from.serialize())
+      put(MessageTable.DATE_RECEIVED, message.receivedTimeMillis)
+      put(MessageTable.DATE_SENT, message.sentTimeMillis)
+      put(MessageTable.DATE_SERVER, message.serverTimeMillis)
+      put(MessageTable.READ, if (unread) 0 else 1)
+      put(MessageTable.SMS_SUBSCRIPTION_ID, message.subscriptionId)
+      put(MessageTable.EXPIRES_IN, message.expiresIn)
+      put(MessageTable.UNIDENTIFIED, message.isUnidentified)
+      put(MessageTable.BODY, message.body)
+      put(MessageTable.TYPE, type)
+      put(MessageTable.THREAD_ID, threadId)
+      put(MessageTable.SERVER_GUID, message.serverGuid)
     }
 
-    return db.insert(SmsDatabase.TABLE_NAME, null, values)
+    return db.insert(MessageTable.TABLE_NAME, null, values)
   }
 }

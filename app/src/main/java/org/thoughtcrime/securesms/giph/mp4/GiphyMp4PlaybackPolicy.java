@@ -2,7 +2,6 @@ package org.thoughtcrime.securesms.giph.mp4;
 
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.util.DeviceProperties;
-import org.thoughtcrime.securesms.util.FeatureFlags;
 
 import java.util.concurrent.TimeUnit;
 
@@ -26,10 +25,10 @@ public final class GiphyMp4PlaybackPolicy {
   }
 
   public static int maxSimultaneousPlaybackInSearchResults() {
-    return 12;
+    return ApplicationDependencies.getExoPlayerPool().getPoolStats().getMaxUnreserved();
   }
 
   public static int maxSimultaneousPlaybackInConversation() {
-    return 4;
+    return ApplicationDependencies.getExoPlayerPool().getPoolStats().getMaxUnreserved() / 3;
   }
 }

@@ -1,6 +1,7 @@
 package org.signal.imageeditor.core;
 
 import android.content.Context;
+import android.content.res.TypedArray;
 import android.graphics.Canvas;
 import android.graphics.Matrix;
 import android.graphics.Paint;
@@ -17,12 +18,16 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.view.GestureDetectorCompat;
 
+import org.signal.imageeditor.R;
 import org.signal.imageeditor.core.model.EditorElement;
 import org.signal.imageeditor.core.model.EditorModel;
 import org.signal.imageeditor.core.model.ThumbRenderer;
 import org.signal.imageeditor.core.renderers.BezierDrawingRenderer;
 import org.signal.imageeditor.core.renderers.MultiLineTextRenderer;
 import org.signal.imageeditor.core.renderers.TrashRenderer;
+
+import java.util.LinkedList;
+import java.util.List;
 
 /**
  * ImageEditorView
@@ -41,6 +46,11 @@ import org.signal.imageeditor.core.renderers.TrashRenderer;
  * which centers the new item in the current crop area.
  */
 public final class ImageEditorView extends FrameLayout {
+
+  private static final int DEFAULT_BLACKOUT_COLOR = 0xFF000000;
+
+  /** Maximum distance squared a user can move the pointer before we consider a drag starting */
+  private static final int MAX_MOVE_SQUARED_BEFORE_DRAG = 10;
 
   private HiddenEditText editText;
 
@@ -71,36 +81,52 @@ public final class ImageEditorView extends FrameLayout {
   @Nullable
   private DragListener dragListener;
 
+  private final List<HiddenEditText.TextFilter> textFilters = new LinkedList<>();
+
   private final Matrix viewMatrix      = new Matrix();
   private final RectF  viewPort        = Bounds.newFullBounds();
   private final RectF  visibleViewPort = Bounds.newFullBounds();
   private final RectF  screen          = new RectF();
 
-  private TapListener     tapListener;
-  private RendererContext rendererContext;
+  private TapListener                      tapListener;
+  private RendererContext                  rendererContext;
+  private RendererContext.TypefaceProvider typefaceProvider;
 
   @Nullable
   private EditSession editSession;
   private boolean     moreThanOnePointerUsedInSession;
+  private PointF      touchDownStart;
+
+  private boolean inDrag;
 
   public ImageEditorView(Context context) {
     super(context);
-    init();
+    init(null);
   }
 
   public ImageEditorView(Context context, @Nullable AttributeSet attrs) {
     super(context, attrs);
-    init();
+    init(attrs);
   }
 
   public ImageEditorView(Context context, @Nullable AttributeSet attrs, int defStyleAttr) {
     super(context, attrs, defStyleAttr);
-    init();
+    init(attrs);
   }
 
-  private void init() {
+  private void init(@Nullable AttributeSet attributeSet) {
     setWillNotDraw(false);
-    setModel(EditorModel.create());
+
+    final int blackoutColor;
+    if (attributeSet != null) {
+      TypedArray typedArray = getContext().obtainStyledAttributes(attributeSet, R.styleable.ImageEditorView);
+      blackoutColor = typedArray.getColor(R.styleable.ImageEditorView_imageEditorView_blackoutColor, DEFAULT_BLACKOUT_COLOR);
+      typedArray.recycle();
+    } else {
+      blackoutColor = DEFAULT_BLACKOUT_COLOR;
+    }
+
+    setModel(EditorModel.create(blackoutColor));
 
     editText = createAHiddenTextEntryField();
 
@@ -115,6 +141,8 @@ public final class ImageEditorView extends FrameLayout {
     editText.clearFocus();
     editText.setOnEndEdit(this::doneTextEditing);
     editText.setOnEditOrSelectionChange(this::zoomToFitText);
+    editText.addTextFilters(textFilters);
+
     return editText;
   }
 
@@ -145,10 +173,24 @@ public final class ImageEditorView extends FrameLayout {
     }
   }
 
+  public void setTypefaceProvider(@NonNull RendererContext.TypefaceProvider typefaceProvider) {
+    this.typefaceProvider = typefaceProvider;
+  }
+
+  public void addTextInputFilter(@NonNull HiddenEditText.TextFilter inputFilter) {
+    textFilters.add(inputFilter);
+    editText = createAHiddenTextEntryField();
+  }
+
+  public void removeTextInputFilter(@NonNull HiddenEditText.TextFilter inputFilter) {
+    textFilters.remove(inputFilter);
+    editText = createAHiddenTextEntryField();
+  }
+
   @Override
   protected void onDraw(Canvas canvas) {
-    if (rendererContext == null || rendererContext.canvas != canvas) {
-      rendererContext = new RendererContext(getContext(), canvas, rendererReady, rendererInvalidate);
+    if (rendererContext == null || rendererContext.canvas != canvas || rendererContext.typefaceProvider != typefaceProvider) {
+      rendererContext = new RendererContext(getContext(), canvas, rendererReady, rendererInvalidate, typefaceProvider);
     }
     rendererContext.save();
     try {
@@ -230,13 +272,14 @@ public final class ImageEditorView extends FrameLayout {
         PointF        point    = getPoint(event);
         EditorElement selected = model.findElementAtPoint(point, viewMatrix, inverse);
 
+        inDrag = false;
         moreThanOnePointerUsedInSession = false;
+        touchDownStart = point;
         model.pushUndoPoint();
         editSession = startEdit(inverse, point, selected);
 
         if (editSession != null) {
           checkTrashIntersect(point);
-          notifyDragStart(editSession.getSelected());
         }
 
         if (tapListener != null && allowTaps()) {
@@ -265,7 +308,11 @@ public final class ImageEditorView extends FrameLayout {
           }
           model.moving(editSession.getSelected());
           invalidate();
-          notifyDragMove(editSession.getSelected(), checkTrashIntersect(getPoint(event)));
+          if (inDrag) {
+            notifyDragMove(editSession.getSelected(), checkTrashIntersect(getPoint(event)));
+          } else if (pointerCount == 1) {
+            checkDragStart(event);
+          }
           return true;
         }
         break;
@@ -315,7 +362,10 @@ public final class ImageEditorView extends FrameLayout {
                                  checkTrashIntersect(point)   &&
                                  model.findElementAtPoint(point, viewMatrix, new Matrix()) == editSession.getSelected();
 
-          notifyDragEnd(editSession.getSelected(), hittingTrash);
+          if (inDrag) {
+            notifyDragEnd(editSession.getSelected(), hittingTrash);
+            inDrag = false;
+          }
 
           editSession = null;
           model.postEdit(moreThanOnePointerUsedInSession);
@@ -346,6 +396,20 @@ public final class ImageEditorView extends FrameLayout {
         ((TrashRenderer) model.getTrash().getRenderer()).shrink();
       }
       return false;
+    }
+  }
+
+  private void checkDragStart(MotionEvent moveEvent) {
+    if (inDrag || editSession == null) {
+      return;
+    }
+    float dX = touchDownStart.x - moveEvent.getX();
+    float dY = touchDownStart.y - moveEvent.getY();
+
+    float distSquared = dX * dX + dY * dY;
+    if (distSquared > MAX_MOVE_SQUARED_BEFORE_DRAG) {
+      inDrag = true;
+      notifyDragStart(editSession.getSelected());
     }
   }
 

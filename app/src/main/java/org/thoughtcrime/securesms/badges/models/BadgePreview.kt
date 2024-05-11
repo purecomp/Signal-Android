@@ -4,47 +4,56 @@ import android.view.View
 import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.badges.BadgeImageView
 import org.thoughtcrime.securesms.components.AvatarImageView
-import org.thoughtcrime.securesms.components.settings.PreferenceModel
 import org.thoughtcrime.securesms.recipients.Recipient
-import org.thoughtcrime.securesms.util.MappingAdapter
-import org.thoughtcrime.securesms.util.MappingViewHolder
+import org.thoughtcrime.securesms.util.adapter.mapping.LayoutFactory
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingAdapter
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingModel
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingViewHolder
 
+/**
+ * "Hero Image" for displaying an Avatar and badge. Allows the user to see what their profile will look like with a particular badge applied.
+ */
 object BadgePreview {
 
   fun register(mappingAdapter: MappingAdapter) {
-    mappingAdapter.registerFactory(Model::class.java, MappingAdapter.LayoutFactory({ ViewHolder(it) }, R.layout.featured_badge_preview_preference))
-    mappingAdapter.registerFactory(SubscriptionModel::class.java, MappingAdapter.LayoutFactory({ ViewHolder(it) }, R.layout.subscription_flow_badge_preview_preference))
+    mappingAdapter.registerFactory(BadgeModel.FeaturedModel::class.java, LayoutFactory({ ViewHolder(it) }, R.layout.featured_badge_preview_preference))
+    mappingAdapter.registerFactory(BadgeModel.SubscriptionModel::class.java, LayoutFactory({ ViewHolder(it) }, R.layout.subscription_flow_badge_preview_preference))
+    mappingAdapter.registerFactory(BadgeModel.GiftedBadgeModel::class.java, LayoutFactory({ ViewHolder(it) }, R.layout.gift_badge_preview_preference))
   }
 
-  abstract class BadgeModel<T : BadgeModel<T>> : PreferenceModel<T>() {
+  sealed class BadgeModel<T : BadgeModel<T>> : MappingModel<T> {
+
+    companion object {
+      const val PAYLOAD_BADGE = "badge"
+    }
+
     abstract val badge: Badge?
-  }
+    abstract val recipient: Recipient
 
-  data class Model(override val badge: Badge?) : BadgeModel<Model>() {
-    override fun areItemsTheSame(newItem: Model): Boolean {
-      return true
+    data class FeaturedModel(override val badge: Badge?) : BadgeModel<FeaturedModel>() {
+      override val recipient: Recipient = Recipient.self()
     }
 
-    override fun areContentsTheSame(newItem: Model): Boolean {
-      return super.areContentsTheSame(newItem) && badge == newItem.badge
+    data class SubscriptionModel(override val badge: Badge?) : BadgeModel<SubscriptionModel>() {
+      override val recipient: Recipient = Recipient.self()
     }
 
-    override fun getChangePayload(newItem: Model): Any? {
-      return Unit
-    }
-  }
+    data class GiftedBadgeModel(override val badge: Badge?, override val recipient: Recipient) : BadgeModel<GiftedBadgeModel>()
 
-  data class SubscriptionModel(override val badge: Badge?) : BadgeModel<SubscriptionModel>() {
-    override fun areItemsTheSame(newItem: SubscriptionModel): Boolean {
-      return true
+    override fun areItemsTheSame(newItem: T): Boolean {
+      return recipient.id == newItem.recipient.id
     }
 
-    override fun areContentsTheSame(newItem: SubscriptionModel): Boolean {
-      return super.areContentsTheSame(newItem) && badge == newItem.badge
+    override fun areContentsTheSame(newItem: T): Boolean {
+      return badge == newItem.badge && recipient.hasSameContent(newItem.recipient)
     }
 
-    override fun getChangePayload(newItem: SubscriptionModel): Any? {
-      return Unit
+    override fun getChangePayload(newItem: T): Any? {
+      return if (recipient.hasSameContent(newItem.recipient) && badge != newItem.badge) {
+        PAYLOAD_BADGE
+      } else {
+        null
+      }
     }
   }
 
@@ -55,7 +64,7 @@ object BadgePreview {
 
     override fun bind(model: T) {
       if (payload.isEmpty()) {
-        avatar.setRecipient(Recipient.self())
+        avatar.setRecipient(model.recipient)
         avatar.disableQuickContact()
       }
 

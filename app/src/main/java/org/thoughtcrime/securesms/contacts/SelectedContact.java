@@ -5,6 +5,8 @@ import android.content.Context;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import org.thoughtcrime.securesms.contacts.paged.ContactSearchConfiguration;
+import org.thoughtcrime.securesms.contacts.paged.ContactSearchKey;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.recipients.RecipientId;
 
@@ -26,6 +28,10 @@ public final class SelectedContact {
     return new SelectedContact(recipientId, null, username);
   }
 
+  public static @NonNull SelectedContact forRecipientId(@NonNull RecipientId recipientId) {
+    return new SelectedContact(recipientId, null, null);
+  }
+
   private SelectedContact(@Nullable RecipientId recipientId, @Nullable String number, @Nullable String username) {
     this.recipientId = recipientId;
     this.number      = number;
@@ -39,6 +45,30 @@ public final class SelectedContact {
       return Recipient.external(context, number).getId();
     } else {
       throw new AssertionError();
+    }
+  }
+
+  public @Nullable RecipientId getRecipientId() {
+    return recipientId;
+  }
+
+  public @Nullable String getNumber() {
+    return number;
+  }
+
+  public boolean hasUsername() {
+    return username != null;
+  }
+
+  public @NonNull ContactSearchKey toContactSearchKey() {
+    if (recipientId != null) {
+      return new ContactSearchKey.RecipientSearchKey(recipientId, false);
+    } else if (number != null) {
+      return new ContactSearchKey.UnknownRecipientKey(ContactSearchConfiguration.SectionKey.PHONE_NUMBER, number);
+    } else if (username != null) {
+      return new ContactSearchKey.UnknownRecipientKey(ContactSearchConfiguration.SectionKey.USERNAME, username);
+    } else {
+      throw new IllegalStateException("Nothing to map!");
     }
   }
 

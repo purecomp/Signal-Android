@@ -3,8 +3,8 @@ package org.thoughtcrime.securesms.reactions.edit
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.ViewModel
 import org.signal.core.util.concurrent.SignalExecutors
-import org.thoughtcrime.securesms.database.DatabaseFactory
-import org.thoughtcrime.securesms.dependencies.ApplicationDependencies
+import org.thoughtcrime.securesms.components.emoji.EmojiUtil
+import org.thoughtcrime.securesms.database.SignalDatabase
 import org.thoughtcrime.securesms.keyvalue.EmojiValues
 import org.thoughtcrime.securesms.keyvalue.SignalStore
 import org.thoughtcrime.securesms.recipients.Recipient
@@ -27,6 +27,9 @@ class EditReactionsViewModel : ViewModel() {
   fun onEmojiSelected(emoji: String) {
     store.update { state ->
       if (state.selection != NO_SELECTION && state.selection in state.reactions.indices) {
+        if (emoji != EmojiUtil.getCanonicalRepresentation(emoji)) {
+          emojiValues.setPreferredVariation(emoji)
+        }
         val preferredEmoji: String = emojiValues.getPreferredVariation(emoji)
         val newReactions: List<String> = state.reactions.toMutableList().apply { set(state.selection, preferredEmoji) }
         state.copy(reactions = newReactions)
@@ -44,7 +47,7 @@ class EditReactionsViewModel : ViewModel() {
     emojiValues.reactions = store.state.reactions
 
     SignalExecutors.BOUNDED.execute {
-      DatabaseFactory.getRecipientDatabase(ApplicationDependencies.getApplication()).markNeedsSync(Recipient.self().id)
+      SignalDatabase.recipients.markNeedsSync(Recipient.self().id)
       StorageSyncHelper.scheduleSyncForDataChange()
     }
   }

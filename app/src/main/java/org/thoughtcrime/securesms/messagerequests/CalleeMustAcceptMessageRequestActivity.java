@@ -12,14 +12,15 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.lifecycle.ViewModelProviders;
+import androidx.lifecycle.ViewModelProvider;
+
+import com.bumptech.glide.Glide;
 
 import org.thoughtcrime.securesms.BaseActivity;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.components.AvatarImageView;
 import org.thoughtcrime.securesms.contacts.avatars.FallbackContactPhoto;
 import org.thoughtcrime.securesms.contacts.avatars.ResourceContactPhoto;
-import org.thoughtcrime.securesms.mms.GlideApp;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.recipients.RecipientId;
 
@@ -66,11 +67,11 @@ public class CalleeMustAcceptMessageRequestActivity extends BaseActivity {
 
     RecipientId                                     recipientId = getIntent().getParcelableExtra(RECIPIENT_ID_EXTRA);
     CalleeMustAcceptMessageRequestViewModel.Factory factory     = new CalleeMustAcceptMessageRequestViewModel.Factory(recipientId);
-    CalleeMustAcceptMessageRequestViewModel         viewModel   = ViewModelProviders.of(this, factory).get(CalleeMustAcceptMessageRequestViewModel.class);
+    CalleeMustAcceptMessageRequestViewModel         viewModel   = new ViewModelProvider(this, factory).get(CalleeMustAcceptMessageRequestViewModel.class);
 
     viewModel.getRecipient().observe(this, recipient -> {
       description.setText(getString(R.string.CalleeMustAcceptMessageRequestDialogFragment__s_will_get_a_message_request_from_you, recipient.getDisplayName(this)));
-      avatar.setAvatar(GlideApp.with(this), recipient, false);
+      avatar.setAvatar(Glide.with(this), recipient, false);
     });
   }
 

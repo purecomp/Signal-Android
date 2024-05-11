@@ -1,7 +1,6 @@
 package org.thoughtcrime.securesms.mediasend.camerax;
 
 import android.annotation.SuppressLint;
-import android.annotation.TargetApi;
 import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
@@ -26,10 +25,10 @@ import androidx.camera.core.CameraSelector;
 import androidx.camera.core.ImageCapture;
 import androidx.camera.core.ImageProxy;
 
+import org.signal.core.util.Stopwatch;
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.util.BitmapDecodingException;
 import org.thoughtcrime.securesms.util.BitmapUtil;
-import org.thoughtcrime.securesms.util.Stopwatch;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -41,7 +40,6 @@ public class CameraXUtil {
 
   private static final String TAG = Log.tag(CameraXUtil.class);
 
-  @RequiresApi(21)
   private static final int[] CAMERA_HARDWARE_LEVEL_ORDERING = new int[]{CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY,
                                                                         CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED,
                                                                         CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_FULL};
@@ -60,7 +58,6 @@ public class CameraXUtil {
                                                                            CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_3};
 
   @SuppressWarnings("SuspiciousNameCombination")
-  @RequiresApi(21)
   public static ImageResult toJpeg(@NonNull ImageProxy image, boolean flip) throws IOException {
     ImageProxy.PlaneProxy[] planes   = image.getPlanes();
     ByteBuffer              buffer   = planes[0].getBuffer();
@@ -106,26 +103,26 @@ public class CameraXUtil {
   }
 
   public static boolean isSupported() {
-    return Build.VERSION.SDK_INT >= 21 && !CameraXModelBlacklist.isBlacklisted();
+    return !CameraXModelBlocklist.isBlocklisted();
   }
 
-  public static int toCameraDirectionInt(int facing) {
-    if (facing == CameraSelector.LENS_FACING_FRONT) {
+  public static int toCameraDirectionInt(CameraSelector cameraSelector) {
+    if (cameraSelector == CameraSelector.DEFAULT_FRONT_CAMERA) {
       return Camera.CameraInfo.CAMERA_FACING_FRONT;
     } else {
       return Camera.CameraInfo.CAMERA_FACING_BACK;
     }
   }
 
-  public static int toLensFacing(@CameraSelector.LensFacing int cameraDirectionInt) {
+  public static CameraSelector toCameraSelector(@CameraSelector.LensFacing int cameraDirectionInt) {
     if (cameraDirectionInt == Camera.CameraInfo.CAMERA_FACING_FRONT) {
-      return CameraSelector.LENS_FACING_FRONT;
+      return CameraSelector.DEFAULT_FRONT_CAMERA;
     } else {
-      return CameraSelector.LENS_FACING_BACK;
+      return CameraSelector.DEFAULT_BACK_CAMERA;
     }
   }
 
-  public static @NonNull @ImageCapture.CaptureMode int getOptimalCaptureMode() {
+  public static @ImageCapture.CaptureMode int getOptimalCaptureMode() {
     return FastCameraModels.contains(Build.MODEL) ? ImageCapture.CAPTURE_MODE_MAXIMIZE_QUALITY
                                                   : ImageCapture.CAPTURE_MODE_MINIMIZE_LATENCY;
   }
@@ -135,7 +132,6 @@ public class CameraXUtil {
     return Math.max(maxDisplay, 1920);
   }
 
-  @TargetApi(21)
   public static @NonNull Size buildResolutionForRatio(int longDimension, @NonNull Rational ratio, boolean isPortrait) {
     int shortDimension = longDimension * ratio.getDenominator() / ratio.getNumerator();
 
@@ -184,7 +180,6 @@ public class CameraXUtil {
     return transformedData;
   }
 
-  @RequiresApi(21)
   private static boolean shouldCropImage(@NonNull ImageProxy image) {
     Size sourceSize = new Size(image.getWidth(), image.getHeight());
     Size targetSize = new Size(image.getCropRect().width(), image.getCropRect().height());
@@ -202,12 +197,10 @@ public class CameraXUtil {
     return out.toByteArray();
   }
 
-  @RequiresApi(21)
   public static boolean isMixedModeSupported(@NonNull Context context) {
     return getLowestSupportedHardwareLevel(context) != CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY;
   }
 
-  @RequiresApi(21)
   public static int getLowestSupportedHardwareLevel(@NonNull Context context) {
     @SuppressLint("RestrictedApi") CameraManager cameraManager = CameraManagerCompat.from(context).unwrap();
 
@@ -215,8 +208,13 @@ public class CameraXUtil {
       int supported = maxHardwareLevel();
 
       for (String cameraId : cameraManager.getCameraIdList()) {
-        CameraCharacteristics characteristics = cameraManager.getCameraCharacteristics(cameraId);
-        Integer               hwLevel         = characteristics.get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL);
+        Integer hwLevel = null;
+
+        try {
+          hwLevel = cameraManager.getCameraCharacteristics(cameraId).get(CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL);
+        } catch (NullPointerException e) {
+          // redmi device crash, assume lowest
+        }
 
         if (hwLevel == null || hwLevel == CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY) {
           return CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY;
@@ -233,13 +231,11 @@ public class CameraXUtil {
     }
   }
 
-  @RequiresApi(21)
   private static int maxHardwareLevel() {
     if (Build.VERSION.SDK_INT >= 24) return CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_3;
     else                             return CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_FULL;
   }
 
-  @RequiresApi(21)
   private static int smallerHardwareLevel(int levelA, int levelB) {
 
     int[] hardwareInfoOrdering = getHardwareInfoOrdering();
@@ -250,7 +246,6 @@ public class CameraXUtil {
     return CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY;
   }
 
-  @RequiresApi(21)
   private static int[] getHardwareInfoOrdering() {
     if      (Build.VERSION.SDK_INT >= 28) return CAMERA_HARDWARE_LEVEL_ORDERING_28;
     else if (Build.VERSION.SDK_INT >= 24) return CAMERA_HARDWARE_LEVEL_ORDERING_24;

@@ -3,18 +3,22 @@ package org.thoughtcrime.securesms.groups;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import org.signal.zkgroup.InvalidInputException;
-import org.signal.zkgroup.groups.GroupIdentifier;
-import org.signal.zkgroup.groups.GroupMasterKey;
-import org.signal.zkgroup.groups.GroupSecretParams;
-import org.thoughtcrime.securesms.util.Hex;
+import org.signal.core.util.DatabaseId;
+import org.signal.core.util.Hex;
+import org.signal.libsignal.protocol.kdf.HKDFv3;
+import org.signal.libsignal.zkgroup.InvalidInputException;
+import org.signal.libsignal.zkgroup.groups.GroupIdentifier;
+import org.signal.libsignal.zkgroup.groups.GroupMasterKey;
+import org.signal.libsignal.zkgroup.groups.GroupSecretParams;
+import org.thoughtcrime.securesms.util.LRUCache;
 import org.thoughtcrime.securesms.util.Util;
-import org.whispersystems.libsignal.kdf.HKDFv3;
 
 import java.io.IOException;
 import java.security.SecureRandom;
 
-public abstract class GroupId {
+import okio.ByteString;
+
+public abstract class GroupId implements DatabaseId {
 
   private static final String ENCODED_SIGNAL_GROUP_V1_PREFIX = "__textsecure_group__!";
   private static final String ENCODED_SIGNAL_GROUP_V2_PREFIX = "__signal_group__v2__!";
@@ -25,6 +29,8 @@ public abstract class GroupId {
   private static final int    V2_BYTE_LENGTH                 = GroupIdentifier.SIZE;
 
   private final String encodedId;
+
+  private static final LRUCache<GroupMasterKey, GroupIdentifier> groupIdentifierCache = new LRUCache<>(1000);
 
   private GroupId(@NonNull String prefix, @NonNull byte[] bytes) {
     this.encodedId = prefix + Hex.toStringCondensed(bytes);
@@ -77,9 +83,27 @@ public abstract class GroupId {
   }
 
   public static GroupId.V2 v2(@NonNull GroupMasterKey masterKey) {
-    return v2(GroupSecretParams.deriveFromMasterKey(masterKey)
-                               .getPublicParams()
-                               .getGroupIdentifier());
+    return v2(getIdentifierForMasterKey(masterKey));
+  }
+
+  public static GroupIdentifier getIdentifierForMasterKey(@NonNull GroupMasterKey masterKey) {
+    GroupIdentifier cachedIdentifier;
+    synchronized (groupIdentifierCache) {
+      cachedIdentifier = groupIdentifierCache.get(masterKey);
+    }
+    if (cachedIdentifier == null) {
+      cachedIdentifier = GroupSecretParams.deriveFromMasterKey(masterKey)
+                                          .getPublicParams()
+                                          .getGroupIdentifier();
+      synchronized (groupIdentifierCache) {
+        groupIdentifierCache.put(masterKey, cachedIdentifier);
+      }
+    }
+    return cachedIdentifier;
+  }
+
+  public static GroupId.Push push(ByteString bytes) throws BadGroupIdException {
+    return push(bytes.toByteArray());
   }
 
   public static GroupId.Push push(byte[] bytes) throws BadGroupIdException {
@@ -91,6 +115,14 @@ public abstract class GroupId {
       return push(bytes);
     } catch (BadGroupIdException e) {
       throw new AssertionError(e);
+    }
+  }
+
+  public static GroupId.Push pushOrNull(byte[] bytes) {
+    try {
+      return GroupId.push(bytes);
+    } catch (BadGroupIdException e) {
+      return null;
     }
   }
 
@@ -170,6 +202,11 @@ public abstract class GroupId {
 
   @Override
   public @NonNull String toString() {
+    return encodedId;
+  }
+
+  @Override
+  public @NonNull String serialize() {
     return encodedId;
   }
 

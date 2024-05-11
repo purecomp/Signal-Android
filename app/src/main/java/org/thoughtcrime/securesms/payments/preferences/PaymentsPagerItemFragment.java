@@ -6,7 +6,7 @@ import android.view.View;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
-import androidx.lifecycle.ViewModelProviders;
+import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.fragment.NavHostFragment;
 import androidx.recyclerview.widget.RecyclerView;
 
@@ -14,6 +14,7 @@ import org.thoughtcrime.securesms.LoggingFragment;
 import org.thoughtcrime.securesms.PaymentPreferencesDirections;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.payments.preferences.model.PaymentItem;
+import org.thoughtcrime.securesms.util.navigation.SafeNavigation;
 
 public class PaymentsPagerItemFragment extends LoggingFragment {
 
@@ -49,7 +50,7 @@ public class PaymentsPagerItemFragment extends LoggingFragment {
   @Override
   public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
     PaymentsPagerItemViewModel.Factory factory = new PaymentsPagerItemViewModel.Factory(PaymentCategory.forCode(requireArguments().getString(PAYMENT_CATEGORY)));
-    viewModel = ViewModelProviders.of(this, factory).get(PaymentsPagerItemViewModel.class);
+    viewModel = new ViewModelProvider(this, factory).get(PaymentsPagerItemViewModel.class);
 
     RecyclerView        recycler = view.findViewById(R.id.payments_activity_pager_item_fragment_recycler);
     PaymentsHomeAdapter adapter  = new PaymentsHomeAdapter(new Callbacks());
@@ -62,8 +63,8 @@ public class PaymentsPagerItemFragment extends LoggingFragment {
   private class Callbacks implements PaymentsHomeAdapter.Callbacks {
     @Override
     public void onPaymentItem(@NonNull PaymentItem model) {
-      NavHostFragment.findNavController(PaymentsPagerItemFragment.this)
-                     .navigate(PaymentPreferencesDirections.actionDirectlyToPaymentDetails(model.getPaymentDetailsParcelable()));
+      SafeNavigation.safeNavigate(NavHostFragment.findNavController(PaymentsPagerItemFragment.this),
+                                  PaymentPreferencesDirections.actionDirectlyToPaymentDetails(model.getPaymentDetailsParcelable()));
     }
   }
 }

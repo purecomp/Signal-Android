@@ -10,11 +10,11 @@ import com.bumptech.glide.load.model.ModelLoaderFactory;
 import com.bumptech.glide.load.model.MultiModelLoaderFactory;
 
 import org.thoughtcrime.securesms.mms.AttachmentStreamUriLoader.AttachmentModel;
-import org.whispersystems.libsignal.util.guava.Optional;
 
 import java.io.File;
 import java.io.InputStream;
 import java.security.MessageDigest;
+import java.util.Optional;
 
 public class AttachmentStreamUriLoader implements ModelLoader<AttachmentModel, InputStream> {
 
@@ -45,15 +45,23 @@ public class AttachmentStreamUriLoader implements ModelLoader<AttachmentModel, I
     public @NonNull File             attachment;
     public @NonNull byte[]           key;
     public @NonNull Optional<byte[]> digest;
+    public @NonNull Optional<byte[]> incrementalDigest;
+    public          int              incrementalMacChunkSize;
     public          long             plaintextLength;
 
-    public AttachmentModel(@NonNull File attachment, @NonNull byte[] key,
-                           long plaintextLength, @NonNull Optional<byte[]> digest)
+    public AttachmentModel(@NonNull File attachment,
+                           @NonNull byte[] key,
+                           long plaintextLength,
+                           @NonNull Optional<byte[]> digest,
+                           @NonNull Optional<byte[]> incrementalDigest,
+                           int incrementalMacChunkSize)
     {
-      this.attachment      = attachment;
-      this.key             = key;
-      this.digest          = digest;
-      this.plaintextLength = plaintextLength;
+      this.attachment              = attachment;
+      this.key                     = key;
+      this.digest                  = digest;
+      this.incrementalDigest       = incrementalDigest;
+      this.incrementalMacChunkSize = incrementalMacChunkSize;
+      this.plaintextLength         = plaintextLength;
     }
 
     @Override

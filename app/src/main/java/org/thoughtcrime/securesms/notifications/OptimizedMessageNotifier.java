@@ -6,35 +6,44 @@ import android.os.Handler;
 
 import androidx.annotation.MainThread;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import org.signal.core.util.ExceptionUtil;
+import org.signal.core.util.ThreadUtil;
 import org.signal.core.util.concurrent.SignalExecutors;
-import org.thoughtcrime.securesms.notifications.v2.MessageNotifierV2;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.notifications.v2.DefaultMessageNotifier;
+import org.thoughtcrime.securesms.notifications.v2.ConversationId;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.util.BubbleUtil;
 import org.thoughtcrime.securesms.util.LeakyBucketLimiter;
+
+import java.util.Optional;
 
 /**
  * Uses a leaky-bucket strategy to limiting notification updates.
  */
 public class OptimizedMessageNotifier implements MessageNotifier {
 
-  private final LeakyBucketLimiter limiter;
-  private final MessageNotifierV2  messageNotifierV2;
+  private final LeakyBucketLimiter     limiter;
+  private final DefaultMessageNotifier defaultMessageNotifier;
+
+  private static final String DEDUPE_KEY_GENERAL        = "MESSAGE_NOTIFIER_DEFAULT";
+  private static final String DEDUPE_KEY_CHAT           = "MESSAGE_NOTIFIER_CHAT_";
 
   @MainThread
   public OptimizedMessageNotifier(@NonNull Application context) {
-    this.limiter           = new LeakyBucketLimiter(5, 1000, new Handler(SignalExecutors.getAndStartHandlerThread("signal-notifier").getLooper()));
-    this.messageNotifierV2 = new MessageNotifierV2(context);
+    this.limiter                = new LeakyBucketLimiter(3, 1000, new Handler(SignalExecutors.getAndStartHandlerThread("signal-notifier", ThreadUtil.PRIORITY_IMPORTANT_BACKGROUND_THREAD).getLooper()));
+    this.defaultMessageNotifier = new DefaultMessageNotifier(context);
   }
 
   @Override
-  public void setVisibleThread(long threadId) {
-    getNotifier().setVisibleThread(threadId);
+  public void setVisibleThread(@Nullable ConversationId conversationId) {
+    getNotifier().setVisibleThread(conversationId);
   }
 
   @Override
-  public long getVisibleThread() {
+  public @NonNull Optional<ConversationId> getVisibleThread() {
     return getNotifier().getVisibleThread();
   }
 
@@ -49,13 +58,24 @@ public class OptimizedMessageNotifier implements MessageNotifier {
   }
 
   @Override
-  public void notifyMessageDeliveryFailed(@NonNull Context context, @NonNull Recipient recipient, long threadId) {
-    getNotifier().notifyMessageDeliveryFailed(context, recipient, threadId);
+  public void notifyMessageDeliveryFailed(@NonNull Context context, @NonNull Recipient recipient, @NonNull ConversationId conversationId) {
+    SignalDatabase.runPostSuccessfulTransaction(() -> {
+      getNotifier().notifyMessageDeliveryFailed(context, recipient, conversationId);
+    });
   }
 
   @Override
-  public void notifyProofRequired(@NonNull Context context, @NonNull Recipient recipient, long threadId) {
-    getNotifier().notifyProofRequired(context, recipient, threadId);
+  public void notifyStoryDeliveryFailed(@NonNull Context context, @NonNull Recipient recipient, @NonNull ConversationId conversationId) {
+    SignalDatabase.runPostSuccessfulTransaction(() -> {
+      getNotifier().notifyStoryDeliveryFailed(context, recipient, conversationId);
+    });
+  }
+
+  @Override
+  public void notifyProofRequired(@NonNull Context context, @NonNull Recipient recipient, @NonNull ConversationId conversationId) {
+    SignalDatabase.runPostSuccessfulTransaction(() -> {
+      getNotifier().notifyProofRequired(context, recipient, conversationId);
+    });
   }
 
   @Override
@@ -65,42 +85,37 @@ public class OptimizedMessageNotifier implements MessageNotifier {
 
   @Override
   public void updateNotification(@NonNull Context context) {
-    runOnLimiter(() -> getNotifier().updateNotification(context));
+    SignalDatabase.runPostSuccessfulTransaction(DEDUPE_KEY_GENERAL, () -> {
+      runOnLimiter(() -> getNotifier().updateNotification(context));
+    });
   }
 
   @Override
-  public void updateNotification(@NonNull Context context, long threadId) {
-    runOnLimiter(() -> getNotifier().updateNotification(context, threadId));
+  public void updateNotification(@NonNull Context context, @NonNull ConversationId conversationId) {
+    SignalDatabase.runPostSuccessfulTransaction(DEDUPE_KEY_CHAT + conversationId.getThreadId(), () -> {
+      runOnLimiter(() -> getNotifier().updateNotification(context, conversationId));
+    });
   }
 
   @Override
-  public void updateNotification(@NonNull Context context, long threadId, @NonNull BubbleUtil.BubbleState defaultBubbleState) {
-    runOnLimiter(() -> getNotifier().updateNotification(context, threadId, defaultBubbleState));
+  public void forceBubbleNotification(@NonNull Context context, @NonNull ConversationId conversationId) {
+    SignalDatabase.runPostSuccessfulTransaction(() -> {
+      runOnLimiter(() -> getNotifier().forceBubbleNotification(context, conversationId));
+    });
   }
 
   @Override
-  public void updateNotification(@NonNull Context context, long threadId, boolean signal) {
-    runOnLimiter(() -> getNotifier().updateNotification(context, threadId, signal));
+  public void addStickyThread(@NonNull ConversationId conversationId, long earliestTimestamp) {
+    SignalDatabase.runPostSuccessfulTransaction(() -> {
+      getNotifier().addStickyThread(conversationId, earliestTimestamp);
+    });
   }
 
   @Override
-  public void updateNotification(@NonNull Context context, long threadId, boolean signal, int reminderCount, @NonNull BubbleUtil.BubbleState defaultBubbleState) {
-    runOnLimiter(() -> getNotifier().updateNotification(context, threadId, signal, reminderCount, defaultBubbleState));
-  }
-
-  @Override
-  public void clearReminder(@NonNull Context context) {
-    getNotifier().clearReminder(context);
-  }
-
-  @Override
-  public void addStickyThread(long threadId, long earliestTimestamp) {
-    getNotifier().addStickyThread(threadId, earliestTimestamp);
-  }
-
-  @Override
-  public void removeStickyThread(long threadId) {
-    getNotifier().removeStickyThread(threadId);
+  public void removeStickyThread(@NonNull ConversationId conversationId) {
+    SignalDatabase.runPostSuccessfulTransaction(() -> {
+      getNotifier().removeStickyThread(conversationId);
+    });
   }
 
   private void runOnLimiter(@NonNull Runnable runnable) {
@@ -115,6 +130,6 @@ public class OptimizedMessageNotifier implements MessageNotifier {
   }
 
   private MessageNotifier getNotifier() {
-    return messageNotifierV2;
+    return defaultMessageNotifier;
   }
 }

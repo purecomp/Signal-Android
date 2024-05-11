@@ -4,12 +4,14 @@ import android.content.Context;
 
 import androidx.annotation.NonNull;
 
-import org.thoughtcrime.securesms.database.DatabaseFactory;
+import org.signal.libsignal.protocol.SignalProtocolAddress;
+import org.signal.libsignal.protocol.groups.state.SenderKeyRecord;
+import org.thoughtcrime.securesms.crypto.ReentrantSessionLock;
+import org.thoughtcrime.securesms.database.SenderKeyTable;
+import org.thoughtcrime.securesms.database.SignalDatabase;
 import org.whispersystems.signalservice.api.SignalServiceSenderKeyStore;
+import org.whispersystems.signalservice.api.SignalSessionLock;
 import org.whispersystems.signalservice.api.push.DistributionId;
-import org.thoughtcrime.securesms.recipients.RecipientId;
-import org.whispersystems.libsignal.SignalProtocolAddress;
-import org.whispersystems.libsignal.groups.state.SenderKeyRecord;
 
 import java.util.Collection;
 import java.util.Set;
@@ -19,11 +21,9 @@ import javax.annotation.Nullable;
 
 /**
  * An implementation of the storage interface used by the protocol layer to store sender keys. For
- * more details around sender keys, see {@link org.thoughtcrime.securesms.database.SenderKeyDatabase}.
+ * more details around sender keys, see {@link SenderKeyTable}.
  */
 public final class SignalSenderKeyStore implements SignalServiceSenderKeyStore {
-
-  private static final Object LOCK = new Object();
 
   private final Context context;
 
@@ -33,36 +33,36 @@ public final class SignalSenderKeyStore implements SignalServiceSenderKeyStore {
 
   @Override
   public void storeSenderKey(@NonNull SignalProtocolAddress sender, @NonNull UUID distributionId, @NonNull SenderKeyRecord record) {
-    synchronized (LOCK) {
-      DatabaseFactory.getSenderKeyDatabase(context).store(sender, DistributionId.from(distributionId), record);
+    try (SignalSessionLock.Lock unused = ReentrantSessionLock.INSTANCE.acquire()) {
+      SignalDatabase.senderKeys().store(sender, DistributionId.from(distributionId), record);
     }
   }
 
   @Override
   public @Nullable SenderKeyRecord loadSenderKey(@NonNull SignalProtocolAddress sender, @NonNull UUID distributionId) {
-    synchronized (LOCK) {
-      return DatabaseFactory.getSenderKeyDatabase(context).load(sender, DistributionId.from(distributionId));
+    try (SignalSessionLock.Lock unused = ReentrantSessionLock.INSTANCE.acquire()) {
+      return SignalDatabase.senderKeys().load(sender, DistributionId.from(distributionId));
     }
   }
 
   @Override
   public Set<SignalProtocolAddress> getSenderKeySharedWith(DistributionId distributionId) {
-    synchronized (LOCK) {
-      return DatabaseFactory.getSenderKeySharedDatabase(context).getSharedWith(distributionId);
+    try (SignalSessionLock.Lock unused = ReentrantSessionLock.INSTANCE.acquire()) {
+      return SignalDatabase.senderKeyShared().getSharedWith(distributionId);
     }
   }
 
   @Override
   public void markSenderKeySharedWith(DistributionId distributionId, Collection<SignalProtocolAddress> addresses) {
-    synchronized (LOCK) {
-      DatabaseFactory.getSenderKeySharedDatabase(context).markAsShared(distributionId, addresses);
+    try (SignalSessionLock.Lock unused = ReentrantSessionLock.INSTANCE.acquire()) {
+      SignalDatabase.senderKeyShared().markAsShared(distributionId, addresses);
     }
   }
 
   @Override
   public void clearSenderKeySharedWith(Collection<SignalProtocolAddress> addresses) {
-    synchronized (LOCK) {
-      DatabaseFactory.getSenderKeySharedDatabase(context).deleteAllFor(addresses);
+    try (SignalSessionLock.Lock unused = ReentrantSessionLock.INSTANCE.acquire()) {
+      SignalDatabase.senderKeyShared().deleteAllFor(addresses);
     }
   }
 
@@ -70,8 +70,8 @@ public final class SignalSenderKeyStore implements SignalServiceSenderKeyStore {
    * Removes all sender key session state for all devices for the provided recipient-distributionId pair.
    */
   public void deleteAllFor(@NonNull String addressName, @NonNull DistributionId distributionId) {
-    synchronized (LOCK) {
-      DatabaseFactory.getSenderKeyDatabase(context).deleteAllFor(addressName, distributionId);
+    try (SignalSessionLock.Lock unused = ReentrantSessionLock.INSTANCE.acquire()) {
+      SignalDatabase.senderKeys().deleteAllFor(addressName, distributionId);
     }
   }
 
@@ -79,8 +79,8 @@ public final class SignalSenderKeyStore implements SignalServiceSenderKeyStore {
    * Deletes all sender key session state.
    */
   public void deleteAll() {
-    synchronized (LOCK) {
-      DatabaseFactory.getSenderKeyDatabase(context).deleteAll();
+    try (SignalSessionLock.Lock unused = ReentrantSessionLock.INSTANCE.acquire()) {
+      SignalDatabase.senderKeys().deleteAll();
     }
   }
 }

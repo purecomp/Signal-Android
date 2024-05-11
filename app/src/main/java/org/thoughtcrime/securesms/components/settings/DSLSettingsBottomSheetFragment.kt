@@ -13,6 +13,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.components.FixedRoundedCornerBottomSheetDialogFragment
+import org.thoughtcrime.securesms.util.WindowUtil
 
 abstract class DSLSettingsBottomSheetFragment(
   @LayoutRes private val layoutId: Int = R.layout.dsl_settings_bottom_sheet,
@@ -34,8 +35,14 @@ abstract class DSLSettingsBottomSheetFragment(
 
     recyclerView.layoutManager = layoutManagerProducer(requireContext())
     recyclerView.adapter = adapter
+    recyclerView.overScrollMode = RecyclerView.OVER_SCROLL_IF_CONTENT_SCROLLS
 
     bindAdapter(adapter)
+  }
+
+  override fun onResume() {
+    super.onResume()
+    WindowUtil.initializeScreenshotSecurity(requireContext(), dialog!!.window!!)
   }
 
   abstract fun bindAdapter(adapter: DSLSettingsAdapter)

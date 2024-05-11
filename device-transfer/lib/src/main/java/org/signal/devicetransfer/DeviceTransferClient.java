@@ -14,6 +14,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import org.greenrobot.eventbus.EventBus;
+import org.signal.core.util.ThreadUtil;
 import org.signal.core.util.concurrent.SignalExecutors;
 import org.signal.core.util.logging.Log;
 
@@ -80,7 +81,7 @@ final class DeviceTransferClient implements Handler.Callback {
     this.context                 = context;
     this.clientTask              = clientTask;
     this.shutdownCallback        = shutdownCallback;
-    this.commandAndControlThread = SignalExecutors.getAndStartHandlerThread("client-cnc");
+    this.commandAndControlThread = SignalExecutors.getAndStartHandlerThread("client-cnc", ThreadUtil.PRIORITY_IMPORTANT_BACKGROUND_THREAD);
     this.handler                 = new Handler(commandAndControlThread.getLooper(), this);
     this.autoRestart             = () -> {
       Log.i(TAG, "Restarting WiFi Direct since we haven't found anything yet and it could be us.");
@@ -356,8 +357,11 @@ final class DeviceTransferClient implements Handler.Callback {
     public void onNetworkConnected(@NonNull WifiP2pInfo info) {
       if (info.isGroupOwner) {
         handler.sendEmptyMessage(START_IP_EXCHANGE);
-      } else {
+      } else if (info.groupOwnerAddress != null) {
         handler.sendMessage(handler.obtainMessage(START_NETWORK_CLIENT, info.groupOwnerAddress.getHostAddress()));
+      } else {
+        Log.d(TAG, "Group owner address null, re-requesting networking information.");
+        handler.sendMessage(handler.obtainMessage(NETWORK_CONNECTION_CHANGED, true));
       }
     }
 

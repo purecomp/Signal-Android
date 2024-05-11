@@ -1,26 +1,26 @@
 package org.thoughtcrime.securesms.jobs;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.annotation.WorkerThread;
 
 import org.signal.core.util.logging.Log;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.GroupDatabase;
-import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.database.model.GroupRecord;
 import org.thoughtcrime.securesms.groups.GroupChangeBusyException;
 import org.thoughtcrime.securesms.groups.GroupId;
 import org.thoughtcrime.securesms.groups.GroupManager;
 import org.thoughtcrime.securesms.groups.GroupNotAMemberException;
 import org.thoughtcrime.securesms.groups.v2.processing.GroupsV2StateProcessor;
-import org.thoughtcrime.securesms.jobmanager.Data;
+import org.thoughtcrime.securesms.jobmanager.JsonJobData;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint;
 import org.thoughtcrime.securesms.recipients.Recipient;
-import org.whispersystems.libsignal.util.guava.Optional;
 import org.whispersystems.signalservice.api.groupsv2.NoCredentialForRedemptionTimeException;
 import org.whispersystems.signalservice.api.push.exceptions.PushNetworkException;
 
 import java.io.IOException;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -41,7 +41,7 @@ final class RequestGroupV2InfoWorkerJob extends BaseJob {
   @WorkerThread
   RequestGroupV2InfoWorkerJob(@NonNull GroupId.V2 groupId, int toRevision) {
     this(new Parameters.Builder()
-                       .setQueue(PushProcessMessageJob.getQueueName(Recipient.externalGroupExact(ApplicationDependencies.getApplication(), groupId).getId()))
+                       .setQueue(PushProcessMessageJob.getQueueName(Recipient.externalGroupExact(groupId).getId()))
                        .addConstraint(NetworkConstraint.KEY)
                        .setLifespan(TimeUnit.DAYS.toMillis(1))
                        .setMaxAttempts(Parameters.UNLIMITED)
@@ -58,10 +58,10 @@ final class RequestGroupV2InfoWorkerJob extends BaseJob {
   }
 
   @Override
-  public @NonNull Data serialize() {
-    return new Data.Builder().putString(KEY_GROUP_ID, groupId.toString())
-                             .putInt(KEY_TO_REVISION, toRevision)
-                             .build();
+  public @Nullable byte[] serialize() {
+    return new JsonJobData.Builder().putString(KEY_GROUP_ID, groupId.toString())
+                                    .putInt(KEY_TO_REVISION, toRevision)
+                                    .serialize();
   }
 
   @Override
@@ -77,14 +77,19 @@ final class RequestGroupV2InfoWorkerJob extends BaseJob {
       Log.i(TAG, "Updating group to revision " + toRevision);
     }
 
-    Optional<GroupDatabase.GroupRecord> group = DatabaseFactory.getGroupDatabase(context).getGroup(groupId);
+    Optional<GroupRecord> group = SignalDatabase.groups().getGroup(groupId);
 
     if (!group.isPresent()) {
       Log.w(TAG, "Group not found");
       return;
     }
 
-    GroupManager.updateGroupFromServer(context, group.get().requireV2GroupProperties().getGroupMasterKey(), toRevision, System.currentTimeMillis(), null);
+    if (Recipient.externalGroupExact(groupId).isBlocked()) {
+      Log.i(TAG, "Not fetching group info for blocked group " + groupId);
+      return;
+    }
+
+    GroupManager.updateGroupFromServer(context, group.get().requireV2GroupProperties().getGroupMasterKey(), toRevision, System.currentTimeMillis());
   }
 
   @Override
@@ -101,7 +106,9 @@ final class RequestGroupV2InfoWorkerJob extends BaseJob {
   public static final class Factory implements Job.Factory<RequestGroupV2InfoWorkerJob> {
 
     @Override
-    public @NonNull RequestGroupV2InfoWorkerJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull RequestGroupV2InfoWorkerJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
+      JsonJobData data = JsonJobData.deserialize(serializedData);
+
       return new RequestGroupV2InfoWorkerJob(parameters,
                                              GroupId.parseOrThrow(data.getString(KEY_GROUP_ID)).requireV2(),
                                              data.getInt(KEY_TO_REVISION));

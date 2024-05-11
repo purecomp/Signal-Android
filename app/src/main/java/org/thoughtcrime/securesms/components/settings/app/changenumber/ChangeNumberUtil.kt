@@ -1,12 +1,11 @@
 package org.thoughtcrime.securesms.components.settings.app.changenumber
 
 import android.os.Bundle
-import android.widget.Toast
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import androidx.navigation.fragment.NavHostFragment
-import androidx.navigation.fragment.findNavController
 import org.thoughtcrime.securesms.R
+import org.thoughtcrime.securesms.components.settings.app.AppSettingsActivity
 import org.thoughtcrime.securesms.registration.fragments.CaptchaFragment
 import org.thoughtcrime.securesms.registration.viewmodel.BaseRegistrationViewModel
 
@@ -35,7 +34,7 @@ object ChangeNumberUtil {
   }
 
   fun Fragment.changeNumberSuccess() {
-    findNavController().navigate(R.id.action_pop_app_settings_change_number)
-    Toast.makeText(requireContext(), R.string.ChangeNumber__your_phone_number_has_been_changed, Toast.LENGTH_SHORT).show()
+    requireActivity().finish()
+    requireActivity().startActivity(AppSettingsActivity.home(requireContext(), AppSettingsActivity.ACTION_CHANGE_NUMBER_SUCCESS))
   }
 }

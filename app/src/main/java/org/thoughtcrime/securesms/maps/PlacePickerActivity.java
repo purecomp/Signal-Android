@@ -2,33 +2,51 @@ package org.thoughtcrime.securesms.maps;
 
 import android.Manifest;
 import android.annotation.SuppressLint;
-import android.app.Activity;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.res.ColorStateList;
+import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.Color;
 import android.location.Address;
 import android.location.Geocoder;
+import android.net.Uri;
 import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
 import android.view.View;
 import android.view.animation.OvershootInterpolator;
 
+import androidx.annotation.ColorInt;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
+import androidx.core.view.ViewCompat;
+import androidx.fragment.app.Fragment;
 
 import com.google.android.gms.maps.CameraUpdateFactory;
 import com.google.android.gms.maps.GoogleMap;
+import com.google.android.gms.maps.MapView;
 import com.google.android.gms.maps.SupportMapFragment;
 import com.google.android.gms.maps.model.LatLng;
+import com.google.android.gms.maps.model.MapStyleOptions;
 
+import org.signal.core.util.concurrent.ListenableFuture;
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.R;
+import org.thoughtcrime.securesms.components.location.SignalMapView;
+import org.thoughtcrime.securesms.providers.BlobProvider;
+import org.thoughtcrime.securesms.util.BitmapUtil;
+import org.thoughtcrime.securesms.util.DynamicNoActionBarTheme;
+import org.thoughtcrime.securesms.util.DynamicTheme;
+import org.thoughtcrime.securesms.util.MediaUtil;
+import org.thoughtcrime.securesms.util.views.SimpleProgressDialog;
 
 import java.io.IOException;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.ExecutionException;
 
 /**
  * Allows selection of an address from a google map.
@@ -46,6 +64,9 @@ public final class PlacePickerActivity extends AppCompatActivity {
 
   private static final int                   ANIMATION_DURATION     = 250;
   private static final OvershootInterpolator OVERSHOOT_INTERPOLATOR = new OvershootInterpolator();
+  public  static final String                KEY_CHAT_COLOR         = "chat_color";
+
+  private final DynamicTheme dynamicTheme = new DynamicNoActionBarTheme();
 
   private SingleAddressBottomSheet bottomSheet;
   private Address                  currentAddress;
@@ -54,25 +75,28 @@ public final class PlacePickerActivity extends AppCompatActivity {
   private AddressLookup            addressLookup;
   private GoogleMap                googleMap;
 
-  public static void startActivityForResultAtCurrentLocation(@NonNull Activity activity, int requestCode) {
-    activity.startActivityForResult(new Intent(activity, PlacePickerActivity.class), requestCode);
+  public static void startActivityForResultAtCurrentLocation(@NonNull Fragment fragment, int requestCode, @ColorInt int chatColor) {
+    fragment.startActivityForResult(new Intent(fragment.requireActivity(), PlacePickerActivity.class).putExtra(KEY_CHAT_COLOR, chatColor), requestCode);
   }
 
   public static AddressData addressFromData(@NonNull Intent data) {
     return data.getParcelableExtra(ADDRESS_INTENT);
   }
 
+  @SuppressLint("MissingInflatedId")
   @Override
   public void onCreate(@Nullable Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
+    dynamicTheme.onCreate(this);
+    
     setContentView(R.layout.activity_place_picker);
 
     bottomSheet      = findViewById(R.id.bottom_sheet);
     View markerImage = findViewById(R.id.marker_image_view);
     View fab         = findViewById(R.id.place_chosen_button);
 
+    ViewCompat.setBackgroundTintList(fab, ColorStateList.valueOf(getIntent().getIntExtra(KEY_CHAT_COLOR, Color.RED)));
     fab.setOnClickListener(v -> finishWithAddress());
-
 
     if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)   == PackageManager.PERMISSION_GRANTED ||
         ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED)
@@ -92,8 +116,18 @@ public final class PlacePickerActivity extends AppCompatActivity {
     if (mapFragment == null) throw new AssertionError("No map fragment");
 
     mapFragment.getMapAsync(googleMap -> {
-
       setMap(googleMap);
+      if (DynamicTheme.isDarkTheme(this)) {
+        try {
+          boolean success = googleMap.setMapStyle(MapStyleOptions.loadRawResourceStyle(this, R.raw.map_style));
+
+          if (!success) {
+            Log.e(TAG, "Style parsing failed.");
+          }
+        } catch (Resources.NotFoundException e) {
+          Log.e(TAG, "Can't find style. Error: ", e);
+        }
+      }
 
       enableMyLocationButtonIfHaveThePermission(googleMap);
 
@@ -117,6 +151,12 @@ public final class PlacePickerActivity extends AppCompatActivity {
         setCurrentLocation(googleMap.getCameraPosition().target);
       });
     });
+  }
+
+  @Override
+  protected void onResume() {
+    super.onResume();
+    dynamicTheme.onResume(this);
   }
 
   private void setInitialLocation(@NonNull LatLng latLng) {
@@ -150,9 +190,29 @@ public final class PlacePickerActivity extends AppCompatActivity {
     String      address      = currentAddress != null && currentAddress.getAddressLine(0) != null ? currentAddress.getAddressLine(0) : "";
     AddressData addressData  = new AddressData(currentLocation.latitude, currentLocation.longitude, address);
 
-    returnIntent.putExtra(ADDRESS_INTENT, addressData);
-    setResult(RESULT_OK, returnIntent);
-    finish();
+    SimpleProgressDialog.DismissibleDialog dismissibleDialog = SimpleProgressDialog.showDelayed(this);
+    MapView mapView = findViewById(R.id.map_view);
+    SignalMapView.snapshot(currentLocation, mapView).addListener(new ListenableFuture.Listener<>() {
+      @Override
+      public void onSuccess(Bitmap result) {
+        dismissibleDialog.dismiss();
+        byte[] blob = BitmapUtil.toByteArray(result);
+        Uri uri = BlobProvider.getInstance()
+                              .forData(blob)
+                              .withMimeType(MediaUtil.IMAGE_JPEG)
+                              .createForSingleSessionInMemory();
+        returnIntent.putExtra(ADDRESS_INTENT, addressData);
+        returnIntent.setData(uri);
+        setResult(RESULT_OK, returnIntent);
+        finish();
+      }
+
+      @Override
+      public void onFailure(ExecutionException e) {
+        dismissibleDialog.dismiss();
+        Log.e(TAG, "Failed to generate snapshot", e);
+      }
+    });
   }
 
   private void enableMyLocationButtonIfHaveThePermission(GoogleMap googleMap) {

@@ -1,6 +1,7 @@
 package org.thoughtcrime.securesms.wallpaper;
 
 import android.content.res.ColorStateList;
+import android.graphics.PorterDuff;
 import android.graphics.drawable.Drawable;
 import android.os.Bundle;
 import android.util.DisplayMetrics;
@@ -19,7 +20,7 @@ import androidx.core.content.ContextCompat;
 import androidx.core.widget.ImageViewCompat;
 import androidx.core.widget.TextViewCompat;
 import androidx.fragment.app.Fragment;
-import androidx.lifecycle.ViewModelProviders;
+import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.Navigation;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
@@ -31,14 +32,16 @@ import org.thoughtcrime.securesms.util.DisplayMetricsUtil;
 import org.thoughtcrime.securesms.util.Projection;
 import org.thoughtcrime.securesms.util.ThemeUtil;
 import org.thoughtcrime.securesms.util.ViewUtil;
+import org.thoughtcrime.securesms.util.navigation.SafeNavigation;
 
 import java.util.Collections;
 
 public class ChatWallpaperFragment extends Fragment {
 
-  private boolean  isSettingDimFromViewModel;
+  private boolean isSettingDimFromViewModel;
 
   private ChatWallpaperViewModel viewModel;
+  private SwitchCompat           dimInNightMode;
 
   @Override
   public @NonNull View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
@@ -47,20 +50,22 @@ public class ChatWallpaperFragment extends Fragment {
 
   @Override
   public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
-    viewModel = ViewModelProviders.of(requireActivity()).get(ChatWallpaperViewModel.class);
+    viewModel = new ViewModelProvider(requireActivity()).get(ChatWallpaperViewModel.class);
 
-    AvatarImageView        portrait             = view.findViewById(R.id.chat_wallpaper_preview_top_bar_portrait);
-    Toolbar                toolbar              = view.findViewById(R.id.toolbar);
-    ImageView              chatWallpaperPreview = view.findViewById(R.id.chat_wallpaper_preview_background);
-    View                   setWallpaper         = view.findViewById(R.id.chat_wallpaper_set_wallpaper);
-    SwitchCompat           dimInNightMode       = view.findViewById(R.id.chat_wallpaper_dark_theme_dims_wallpaper);
-    View                   chatWallpaperDim     = view.findViewById(R.id.chat_wallpaper_dim);
-    TextView               setChatColor         = view.findViewById(R.id.chat_wallpaper_set_chat_color);
-    TextView               resetChatColors      = view.findViewById(R.id.chat_wallpaper_reset_chat_colors);
-    ImageView              sentBubble           = view.findViewById(R.id.chat_wallpaper_preview_bubble_2);
-    ColorizerView          colorizerView        = view.findViewById(R.id.colorizer);
-    TextView               resetAllWallpaper    = view.findViewById(R.id.chat_wallpaper_reset_all_wallpapers);
-    AppCompatImageView     recvBubble           = view.findViewById(R.id.chat_wallpaper_preview_bubble_1);
+    AvatarImageView    portrait             = view.findViewById(R.id.chat_wallpaper_preview_top_bar_portrait);
+    Toolbar            toolbar              = view.findViewById(R.id.toolbar);
+    ImageView          chatWallpaperPreview = view.findViewById(R.id.chat_wallpaper_preview_background);
+    View               setWallpaper         = view.findViewById(R.id.chat_wallpaper_set_wallpaper);
+    View               chatWallpaperDim     = view.findViewById(R.id.chat_wallpaper_dim);
+    TextView           setChatColor         = view.findViewById(R.id.chat_wallpaper_set_chat_color);
+    TextView           resetChatColors      = view.findViewById(R.id.chat_wallpaper_reset_chat_colors);
+    ImageView          sentBubble           = view.findViewById(R.id.chat_wallpaper_preview_bubble_2);
+    ColorizerView      colorizerView        = view.findViewById(R.id.colorizer);
+    TextView           resetAllWallpaper    = view.findViewById(R.id.chat_wallpaper_reset_all_wallpapers);
+    AppCompatImageView recvBubble           = view.findViewById(R.id.chat_wallpaper_preview_bubble_1);
+    View               sendButton           = view.findViewById(R.id.chat_wallpaper_preview_bottom_bar_plus);
+
+    dimInNightMode = view.findViewById(R.id.chat_wallpaper_dark_theme_dims_wallpaper);
 
     toolbar.setTitle(R.string.preferences__chat_color_and_wallpaper);
     toolbar.setNavigationOnClickListener(nav -> {
@@ -77,7 +82,7 @@ public class ChatWallpaperFragment extends Fragment {
     viewModel.getCurrentWallpaper().observe(getViewLifecycleOwner(), wallpaper -> {
       if (wallpaper.isPresent()) {
         wallpaper.get().loadInto(chatWallpaperPreview);
-        ImageViewCompat.setImageTintList(recvBubble, ColorStateList.valueOf(ContextCompat.getColor(requireContext(), R.color.conversation_item_wallpaper_bubble_color)));
+        ImageViewCompat.setImageTintList(recvBubble, ColorStateList.valueOf(ContextCompat.getColor(requireContext(), R.color.conversation_item_recv_bubble_color_wallpaper)));
       } else {
         chatWallpaperPreview.setImageDrawable(null);
         ImageViewCompat.setImageTintList(recvBubble, ColorStateList.valueOf(ContextCompat.getColor(requireContext(), R.color.signal_background_secondary)));
@@ -101,10 +106,10 @@ public class ChatWallpaperFragment extends Fragment {
     });
 
     chatWallpaperPreview.setOnClickListener(unused -> setWallpaper.performClick());
-    setWallpaper.setOnClickListener(unused -> Navigation.findNavController(view)
-                                                        .navigate(R.id.action_chatWallpaperFragment_to_chatWallpaperSelectionFragment));
-    setChatColor.setOnClickListener(unused -> Navigation.findNavController(view)
-                                                        .navigate(ChatWallpaperFragmentDirections.actionChatWallpaperFragmentToChatColorSelectionFragment(viewModel.getRecipientId())));
+    setWallpaper.setOnClickListener(unused -> SafeNavigation.safeNavigate(Navigation.findNavController(view),
+                                                                          R.id.action_chatWallpaperFragment_to_chatWallpaperSelectionFragment));
+    setChatColor.setOnClickListener(unused -> SafeNavigation.safeNavigate(Navigation.findNavController(view),
+                                                                          ChatWallpaperFragmentDirections.actionChatWallpaperFragmentToChatColorSelectionFragment(viewModel.getRecipientId())));
 
     if (viewModel.isGlobal()) {
       resetAllWallpaper.setOnClickListener(unused -> {
@@ -172,12 +177,6 @@ public class ChatWallpaperFragment extends Fragment {
       });
     }
 
-    dimInNightMode.setOnCheckedChangeListener((buttonView, isChecked) -> {
-      if (!isSettingDimFromViewModel) {
-        viewModel.setDimInDarkTheme(isChecked);
-      }
-    });
-
     viewModel.getCurrentChatColors().observe(getViewLifecycleOwner(), chatColors -> {
       sentBubble.getDrawable().setColorFilter(chatColors.getChatBubbleColorFilter());
       colorizerView.setBackground(chatColors.getChatBubbleMask());
@@ -187,9 +186,23 @@ public class ChatWallpaperFragment extends Fragment {
       Drawable colorCircle = chatColors.asCircle();
       colorCircle.setBounds(0, 0, ViewUtil.dpToPx(16), ViewUtil.dpToPx(16));
       TextViewCompat.setCompoundDrawablesRelative(setChatColor, null, null, colorCircle, null);
+
+      sendButton.getBackground().setColorFilter(chatColors.asSingleColor(), PorterDuff.Mode.MULTIPLY);
+      sendButton.getBackground().invalidateSelf();
     });
 
     sentBubble.addOnLayoutChangeListener((v, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> viewModel.refreshChatColors());
+  }
+
+  @Override
+  public void onViewStateRestored(@Nullable Bundle savedInstanceState) {
+    super.onViewStateRestored(savedInstanceState);
+
+    dimInNightMode.setOnCheckedChangeListener((buttonView, isChecked) -> {
+      if (!isSettingDimFromViewModel) {
+        viewModel.setDimInDarkTheme(isChecked);
+      }
+    });
   }
 
   @Override

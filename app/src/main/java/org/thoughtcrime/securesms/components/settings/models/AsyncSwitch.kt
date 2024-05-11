@@ -2,12 +2,13 @@ package org.thoughtcrime.securesms.components.settings.models
 
 import android.view.View
 import android.widget.ViewSwitcher
-import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.materialswitch.MaterialSwitch
 import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.components.settings.DSLSettingsText
 import org.thoughtcrime.securesms.components.settings.PreferenceModel
 import org.thoughtcrime.securesms.components.settings.PreferenceViewHolder
-import org.thoughtcrime.securesms.util.MappingAdapter
+import org.thoughtcrime.securesms.util.adapter.mapping.LayoutFactory
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingAdapter
 
 /**
  * Switch that will perform a long-running async operation (normally network) that requires a
@@ -16,7 +17,7 @@ import org.thoughtcrime.securesms.util.MappingAdapter
 object AsyncSwitch {
 
   fun register(adapter: MappingAdapter) {
-    adapter.registerFactory(Model::class.java, MappingAdapter.LayoutFactory(AsyncSwitch::ViewHolder, R.layout.dsl_async_switch_preference_item))
+    adapter.registerFactory(Model::class.java, LayoutFactory(AsyncSwitch::ViewHolder, R.layout.dsl_async_switch_preference_item))
   }
 
   class Model(
@@ -32,22 +33,31 @@ object AsyncSwitch {
   }
 
   class ViewHolder(itemView: View) : PreferenceViewHolder<Model>(itemView) {
-    private val switchWidget: SwitchMaterial = itemView.findViewById(R.id.switch_widget)
+    private val switchWidget: MaterialSwitch = itemView.findViewById(R.id.switch_widget)
     private val switcher: ViewSwitcher = itemView.findViewById(R.id.switcher)
 
     override fun bind(model: Model) {
       super.bind(model)
+      switchWidget.setOnCheckedChangeListener(null)
       switchWidget.isEnabled = model.isEnabled
       switchWidget.isChecked = model.isChecked
-      itemView.isEnabled = !model.isProcessing
+      itemView.isEnabled = !model.isProcessing && model.isEnabled
       switcher.displayedChild = if (model.isProcessing) 1 else 0
 
-      itemView.setOnClickListener {
+      fun onClick() {
         if (!model.isProcessing) {
           itemView.isEnabled = false
           switcher.displayedChild = 1
           model.onClick()
         }
+      }
+
+      itemView.setOnClickListener {
+        onClick()
+      }
+
+      switchWidget.setOnCheckedChangeListener { _, _ ->
+        onClick()
       }
     }
   }

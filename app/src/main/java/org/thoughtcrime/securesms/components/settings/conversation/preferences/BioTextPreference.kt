@@ -2,16 +2,21 @@ package org.thoughtcrime.securesms.components.settings.conversation.preferences
 
 import android.content.ClipData
 import android.content.Context
+import android.text.SpannableStringBuilder
 import android.view.View
 import android.widget.TextView
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.components.settings.PreferenceModel
-import org.thoughtcrime.securesms.phonenumbers.PhoneNumberFormatter
+import org.thoughtcrime.securesms.fonts.SignalSymbols
 import org.thoughtcrime.securesms.recipients.Recipient
-import org.thoughtcrime.securesms.util.MappingAdapter
-import org.thoughtcrime.securesms.util.MappingViewHolder
+import org.thoughtcrime.securesms.util.ContextUtil
 import org.thoughtcrime.securesms.util.ServiceUtil
+import org.thoughtcrime.securesms.util.SpanUtil
+import org.thoughtcrime.securesms.util.adapter.mapping.LayoutFactory
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingAdapter
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingViewHolder
 
 /**
  * Renders name, description, about, etc. for a given group or recipient.
@@ -19,25 +24,77 @@ import org.thoughtcrime.securesms.util.ServiceUtil
 object BioTextPreference {
 
   fun register(adapter: MappingAdapter) {
-    adapter.registerFactory(RecipientModel::class.java, MappingAdapter.LayoutFactory(::RecipientViewHolder, R.layout.conversation_settings_bio_preference_item))
-    adapter.registerFactory(GroupModel::class.java, MappingAdapter.LayoutFactory(::GroupViewHolder, R.layout.conversation_settings_bio_preference_item))
+    adapter.registerFactory(RecipientModel::class.java, LayoutFactory(::RecipientViewHolder, R.layout.conversation_settings_bio_preference_item))
+    adapter.registerFactory(GroupModel::class.java, LayoutFactory(::GroupViewHolder, R.layout.conversation_settings_bio_preference_item))
   }
 
   abstract class BioTextPreferenceModel<T : BioTextPreferenceModel<T>> : PreferenceModel<T>() {
-    abstract fun getHeadlineText(context: Context): String
-    abstract fun getSubhead1Text(): String?
+    abstract fun getHeadlineText(context: Context): CharSequence
+    abstract fun getSubhead1Text(context: Context): String?
     abstract fun getSubhead2Text(): String?
+
+    open val onHeadlineClickListener: (() -> Unit)? = null
   }
 
   class RecipientModel(
     private val recipient: Recipient,
+    override val onHeadlineClickListener: (() -> Unit)?
   ) : BioTextPreferenceModel<RecipientModel>() {
 
-    override fun getHeadlineText(context: Context): String = recipient.getDisplayNameOrUsername(context)
+    override fun getHeadlineText(context: Context): CharSequence {
+      val name = if (recipient.isSelf) {
+        context.getString(R.string.note_to_self)
+      } else {
+        recipient.getDisplayName(context)
+      }
 
-    override fun getSubhead1Text(): String? = recipient.combinedAboutAndEmoji
+      if (!recipient.showVerified && !recipient.isIndividual) {
+        return name
+      }
 
-    override fun getSubhead2Text(): String? = recipient.e164.transform(PhoneNumberFormatter::prettyPrint).orNull()
+      return SpannableStringBuilder(name).apply {
+        if (recipient.showVerified) {
+          SpanUtil.appendSpacer(this, 8)
+          SpanUtil.appendCenteredImageSpanWithoutSpace(this, ContextUtil.requireDrawable(context, R.drawable.ic_official_28), 28, 28)
+        } else if (recipient.isSystemContact) {
+          val systemContactGlyph = SignalSymbols.getSpannedString(
+            context,
+            SignalSymbols.Weight.BOLD,
+            SignalSymbols.Glyph.PERSON_CIRCLE
+          ).let {
+            SpanUtil.ofSize(it, 20)
+          }
+
+          append(" ")
+          append(systemContactGlyph)
+        }
+
+        if (recipient.isIndividual && !recipient.isSelf) {
+          val chevronGlyph = SignalSymbols.getSpannedString(
+            context,
+            SignalSymbols.Weight.BOLD,
+            SignalSymbols.Glyph.CHEVRON_RIGHT
+          ).let {
+            SpanUtil.ofSize(it, 24)
+          }.let {
+            SpanUtil.color(ContextCompat.getColor(context, R.color.signal_colorOutline), it)
+          }
+
+          append(" ")
+          append(chevronGlyph)
+        }
+      }
+    }
+
+    override fun getSubhead1Text(context: Context): String? {
+      return if (recipient.isReleaseNotes) {
+        context.getString(R.string.ReleaseNotes__signal_release_notes_and_news)
+      } else {
+        recipient.combinedAboutAndEmoji
+      }
+    }
+
+    override fun getSubhead2Text(): String? = null
 
     override fun areContentsTheSame(newItem: RecipientModel): Boolean {
       return super.areContentsTheSame(newItem) && newItem.recipient.hasSameContent(recipient)
@@ -52,9 +109,9 @@ object BioTextPreference {
     val groupTitle: String,
     val groupMembershipDescription: String?
   ) : BioTextPreferenceModel<GroupModel>() {
-    override fun getHeadlineText(context: Context): String = groupTitle
+    override fun getHeadlineText(context: Context): CharSequence = groupTitle
 
-    override fun getSubhead1Text(): String? = groupMembershipDescription
+    override fun getSubhead1Text(context: Context): String? = groupMembershipDescription
 
     override fun getSubhead2Text(): String? = null
 
@@ -78,7 +135,12 @@ object BioTextPreference {
     override fun bind(model: T) {
       headline.text = model.getHeadlineText(context)
 
-      model.getSubhead1Text().let {
+      val clickListener = model.onHeadlineClickListener
+      if (clickListener != null) {
+        headline.setOnClickListener { clickListener() }
+      }
+
+      model.getSubhead1Text(context).let {
         subhead1.text = it
         subhead1.visibility = if (it == null) View.GONE else View.VISIBLE
       }

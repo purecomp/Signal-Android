@@ -1,9 +1,10 @@
 package org.thoughtcrime.securesms.gcm;
 
 import android.content.Context;
-import android.content.Intent;
+import android.os.Build;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.google.firebase.messaging.FirebaseMessagingService;
 import com.google.firebase.messaging.RemoteMessage;
@@ -12,8 +13,10 @@ import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.jobs.FcmRefreshJob;
 import org.thoughtcrime.securesms.jobs.SubmitRateLimitPushChallengeJob;
+import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.registration.PushChallengeRequest;
-import org.thoughtcrime.securesms.util.TextSecurePreferences;
+import org.thoughtcrime.securesms.util.NetworkUtil;
+import org.thoughtcrime.securesms.util.SignalLocalMetrics;
 
 import java.util.Locale;
 
@@ -21,15 +24,16 @@ public class FcmReceiveService extends FirebaseMessagingService {
 
   private static final String TAG = Log.tag(FcmReceiveService.class);
 
-
   @Override
   public void onMessageReceived(RemoteMessage remoteMessage) {
     Log.i(TAG, String.format(Locale.US,
-                             "onMessageReceived() ID: %s, Delay: %d, Priority: %d, Original Priority: %d",
+                             "onMessageReceived() ID: %s, Delay: %d (Server offset: %d), Priority: %d, Original Priority: %d, Network: %s",
                              remoteMessage.getMessageId(),
                              (System.currentTimeMillis() - remoteMessage.getSentTime()),
+                             SignalStore.misc().getLastKnownServerTimeOffset(),
                              remoteMessage.getPriority(),
-                             remoteMessage.getOriginalPriority()));
+                             remoteMessage.getOriginalPriority(),
+                             NetworkUtil.getNetworkStatus(this)));
 
     String registrationChallenge = remoteMessage.getData().get("challenge");
     String rateLimitChallenge    = remoteMessage.getData().get("rateLimitChallenge");
@@ -38,22 +42,22 @@ public class FcmReceiveService extends FirebaseMessagingService {
       handleRegistrationPushChallenge(registrationChallenge);
     } else if (rateLimitChallenge != null) {
       handleRateLimitPushChallenge(rateLimitChallenge);
-    }else {
-      handleReceivedNotification(ApplicationDependencies.getApplication());
+    } else {
+      handleReceivedNotification(ApplicationDependencies.getApplication(), remoteMessage);
     }
   }
 
   @Override
   public void onDeletedMessages() {
     Log.w(TAG, "onDeleteMessages() -- Messages may have been dropped. Doing a normal message fetch.");
-    handleReceivedNotification(ApplicationDependencies.getApplication());
+    handleReceivedNotification(ApplicationDependencies.getApplication(), null);
   }
 
   @Override
   public void onNewToken(String token) {
     Log.i(TAG, "onNewToken()");
 
-    if (!TextSecurePreferences.isPushRegistered(ApplicationDependencies.getApplication())) {
+    if (!SignalStore.account().isRegistered()) {
       Log.i(TAG, "Got a new FCM token, but the user isn't registered.");
       return;
     }
@@ -71,13 +75,22 @@ public class FcmReceiveService extends FirebaseMessagingService {
     Log.w(TAG, "onSendError()", e);
   }
 
-  private static void handleReceivedNotification(Context context) {
+  private static void handleReceivedNotification(Context context, @Nullable RemoteMessage remoteMessage) {
+    boolean highPriority = remoteMessage != null && remoteMessage.getPriority() == RemoteMessage.PRIORITY_HIGH;
     try {
-      context.startService(new Intent(context, FcmFetchService.class));
+      Log.d(TAG, String.format(Locale.US, "[handleReceivedNotification] API: %s, RemoteMessagePriority: %s", Build.VERSION.SDK_INT, remoteMessage != null ? remoteMessage.getPriority() : "n/a"));
+
+      if (highPriority) {
+        FcmFetchManager.startForegroundService(context);
+      } else if (Build.VERSION.SDK_INT < 26) {
+        FcmFetchManager.startBackgroundService(context);
+      }
     } catch (Exception e) {
-      Log.w(TAG, "Failed to start service. Falling back to legacy approach.");
-      FcmFetchService.retrieveMessages(context);
+      Log.w(TAG, "Failed to start service.", e);
+      SignalLocalMetrics.FcmServiceStartFailure.onFcmFailedToStart();
     }
+
+    FcmFetchManager.enqueueFetch(context, highPriority);
   }
 
   private static void handleRegistrationPushChallenge(@NonNull String challenge) {

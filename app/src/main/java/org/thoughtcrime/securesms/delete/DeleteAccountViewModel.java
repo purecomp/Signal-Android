@@ -20,28 +20,28 @@ import org.thoughtcrime.securesms.payments.Balance;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.util.DefaultValueLiveData;
 import org.thoughtcrime.securesms.util.SingleLiveEvent;
-import org.whispersystems.libsignal.util.guava.Optional;
 import org.whispersystems.signalservice.api.payments.FormatterOptions;
 import org.whispersystems.signalservice.api.payments.Money;
 
 import java.util.List;
+import java.util.Optional;
 
 public class DeleteAccountViewModel extends ViewModel {
 
-  private final DeleteAccountRepository           repository;
-  private final List<Country>                     allCountries;
-  private final LiveData<List<Country>>           filteredCountries;
-  private final MutableLiveData<String>           regionCode;
-  private final LiveData<String>                  countryDisplayName;
-  private final MutableLiveData<Long>             nationalNumber;
-  private final MutableLiveData<String>           query;
-  private final SingleLiveEvent<EventType>        events;
-  private final LiveData<Optional<String>>        walletBalance;
+  private final DeleteAccountRepository             repository;
+  private final List<Country>                       allCountries;
+  private final LiveData<List<Country>>             filteredCountries;
+  private final MutableLiveData<String>             regionCode;
+  private final LiveData<String>                    countryDisplayName;
+  private final MutableLiveData<Long>               nationalNumber;
+  private final MutableLiveData<String>             query;
+  private final SingleLiveEvent<DeleteAccountEvent> events;
+  private final LiveData<Optional<String>>          walletBalance;
 
   public DeleteAccountViewModel(@NonNull DeleteAccountRepository repository) {
     this.repository         = repository;
     this.allCountries       = repository.getAllCountries();
-    this.regionCode         = new DefaultValueLiveData<>(PhoneNumberUtil.REGION_CODE_FOR_NON_GEO_ENTITY);
+    this.regionCode         = new DefaultValueLiveData<>("ZZ"); // PhoneNumberUtil private static final String UNKNOWN_REGION = "ZZ";
     this.nationalNumber     = new MutableLiveData<>();
     this.query              = new DefaultValueLiveData<>("");
     this.countryDisplayName = Transformations.map(regionCode, repository::getRegionDisplayName);
@@ -67,7 +67,7 @@ public class DeleteAccountViewModel extends ViewModel {
     return Transformations.distinctUntilChanged(regionCode);
   }
 
-  @NonNull SingleLiveEvent<EventType> getEvents() {
+  @NonNull SingleLiveEvent<DeleteAccountEvent> getEvents() {
     return events;
   }
 
@@ -80,9 +80,7 @@ public class DeleteAccountViewModel extends ViewModel {
   }
 
   void deleteAccount() {
-    repository.deleteAccount(() -> events.postValue(EventType.PIN_DELETION_FAILED),
-                             () -> events.postValue(EventType.SERVER_DELETION_FAILED),
-                             () -> events.postValue(EventType.LOCAL_DATA_DELETION_FAILED));
+    repository.deleteAccount(events::postValue);
   }
 
   void submit() {
@@ -91,12 +89,12 @@ public class DeleteAccountViewModel extends ViewModel {
     Long    nationalNumber = this.nationalNumber.getValue();
 
     if (countryCode == null || countryCode == 0) {
-      events.setValue(EventType.NO_COUNTRY_CODE);
+      events.setValue(DeleteAccountEvent.NoCountryCode.INSTANCE);
       return;
     }
 
     if (nationalNumber == null) {
-      events.setValue(EventType.NO_NATIONAL_NUMBER);
+      events.setValue(DeleteAccountEvent.NoNationalNumber.INSTANCE);
       return;
     }
 
@@ -105,9 +103,9 @@ public class DeleteAccountViewModel extends ViewModel {
     number.setNationalNumber(nationalNumber);
 
     if (PhoneNumberUtil.getInstance().isNumberMatch(number, Recipient.self().requireE164()) == PhoneNumberUtil.MatchType.EXACT_MATCH) {
-      events.setValue(EventType.CONFIRM_DELETION);
+      events.setValue(DeleteAccountEvent.ConfirmDeletion.INSTANCE);
     } else {
-      events.setValue(EventType.NOT_A_MATCH);
+      events.setValue(DeleteAccountEvent.NotAMatch.INSTANCE);
     }
   }
 
@@ -143,7 +141,7 @@ public class DeleteAccountViewModel extends ViewModel {
     if (amount.isPositive()) {
       return Optional.of(amount.toString(FormatterOptions.defaults()));
     } else {
-      return Optional.absent();
+      return Optional.empty();
     }
   }
 
@@ -153,16 +151,6 @@ public class DeleteAccountViewModel extends ViewModel {
     } else {
       return country.getNormalizedDisplayName().contains(query.toLowerCase());
     }
-  }
-
-  enum EventType {
-    NO_COUNTRY_CODE,
-    NO_NATIONAL_NUMBER,
-    NOT_A_MATCH,
-    CONFIRM_DELETION,
-    PIN_DELETION_FAILED,
-    SERVER_DELETION_FAILED,
-    LOCAL_DATA_DELETION_FAILED
   }
 
   public static final class Factory implements ViewModelProvider.Factory {

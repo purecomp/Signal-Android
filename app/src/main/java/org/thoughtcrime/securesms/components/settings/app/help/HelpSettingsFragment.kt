@@ -4,14 +4,15 @@ import androidx.navigation.Navigation
 import org.thoughtcrime.securesms.BuildConfig
 import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.components.settings.DSLConfiguration
-import org.thoughtcrime.securesms.components.settings.DSLSettingsAdapter
 import org.thoughtcrime.securesms.components.settings.DSLSettingsFragment
 import org.thoughtcrime.securesms.components.settings.DSLSettingsText
 import org.thoughtcrime.securesms.components.settings.configure
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingAdapter
+import org.thoughtcrime.securesms.util.navigation.safeNavigate
 
 class HelpSettingsFragment : DSLSettingsFragment(R.string.preferences__help) {
 
-  override fun bindAdapter(adapter: DSLSettingsAdapter) {
+  override fun bindAdapter(adapter: MappingAdapter) {
     adapter.submitList(getConfiguration().toMappingModelList())
   }
 
@@ -25,7 +26,7 @@ class HelpSettingsFragment : DSLSettingsFragment(R.string.preferences__help) {
       clickPref(
         title = DSLSettingsText.from(R.string.HelpSettingsFragment__contact_us),
         onClick = {
-          Navigation.findNavController(requireView()).navigate(R.id.action_helpSettingsFragment_to_helpFragment)
+          Navigation.findNavController(requireView()).safeNavigate(R.id.action_helpSettingsFragment_to_helpFragment)
         }
       )
 
@@ -39,7 +40,14 @@ class HelpSettingsFragment : DSLSettingsFragment(R.string.preferences__help) {
       clickPref(
         title = DSLSettingsText.from(R.string.HelpSettingsFragment__debug_log),
         onClick = {
-          Navigation.findNavController(requireView()).navigate(R.id.action_helpSettingsFragment_to_submitDebugLogActivity)
+          Navigation.findNavController(requireView()).safeNavigate(R.id.action_helpSettingsFragment_to_submitDebugLogActivity)
+        }
+      )
+
+      clickPref(
+        title = DSLSettingsText.from(R.string.HelpSettingsFragment__licenses),
+        onClick = {
+          Navigation.findNavController(requireView()).safeNavigate(R.id.action_helpSettingsFragment_to_licenseFragment)
         }
       )
 
@@ -53,7 +61,7 @@ class HelpSettingsFragment : DSLSettingsFragment(R.string.preferences__help) {
           StringBuilder().apply {
             append(getString(R.string.HelpFragment__copyright_signal_messenger))
             append("\n")
-            append(getString(R.string.HelpFragment__licenced_under_the_gplv3))
+            append(getString(R.string.HelpFragment__licenced_under_the_agplv3))
           }
         )
       )

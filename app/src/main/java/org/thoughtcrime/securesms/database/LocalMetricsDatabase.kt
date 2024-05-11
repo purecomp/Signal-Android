@@ -5,12 +5,12 @@ import android.app.Application
 import android.content.ContentValues
 import net.zetetic.database.sqlcipher.SQLiteDatabase
 import net.zetetic.database.sqlcipher.SQLiteOpenHelper
+import org.signal.core.util.CursorUtil
+import org.signal.core.util.SqlUtil
 import org.signal.core.util.logging.Log
 import org.thoughtcrime.securesms.crypto.DatabaseSecret
 import org.thoughtcrime.securesms.crypto.DatabaseSecretProvider
 import org.thoughtcrime.securesms.database.model.LocalMetricsEvent
-import org.thoughtcrime.securesms.util.CursorUtil
-import org.thoughtcrime.securesms.util.SqlUtil
 import java.util.concurrent.TimeUnit
 
 /**
@@ -18,15 +18,16 @@ import java.util.concurrent.TimeUnit
  *
  * These metrics are only ever included in debug logs in an aggregate fashion (i.e. p50, p90, p99) and are never automatically uploaded anywhere.
  *
- * The performance of insertions is important, but given insertions frequency isn't crazy-high, we can also optimize for retrieval performance.
- * SQLite isn't amazing at statistical analysis, so having indices that speeds those operations up is encouraged.
+ * The performance of insertions is important, but given insertion frequency isn't crazy-high, we can also optimize for retrieval performance.
+ * SQLite isn't amazing at statistical analysis, so having indices that speed up those operations is encouraged.
  *
  * This is it's own separate physical database, so it cannot do joins or queries with any other tables.
  */
 class LocalMetricsDatabase private constructor(
   application: Application,
   databaseSecret: DatabaseSecret
-) : SQLiteOpenHelper(
+) :
+  SQLiteOpenHelper(
     application,
     DATABASE_NAME,
     databaseSecret.asString(),
@@ -34,9 +35,10 @@ class LocalMetricsDatabase private constructor(
     DATABASE_VERSION,
     0,
     SqlCipherDeletingErrorHandler(DATABASE_NAME),
-    SqlCipherDatabaseHook()
+    SqlCipherDatabaseHook(),
+    true
   ),
-  SignalDatabase {
+  SignalDatabaseOpenHelper {
 
   companion object {
     private val TAG = Log.tag(LocalMetricsDatabase::class.java)
@@ -63,7 +65,7 @@ class LocalMetricsDatabase private constructor(
         $SPLIT_NAME TEXT NOT NULL,
         $DURATION INTEGER NOT NULL
       )
-    """.trimIndent()
+    """
 
     private val CREATE_INDEXES = arrayOf(
       "CREATE INDEX events_create_at_index ON $TABLE_NAME ($CREATED_AT)",
@@ -97,7 +99,7 @@ class LocalMetricsDatabase private constructor(
         SELECT $EVENT_ID, $EVENT_NAME, SUM($DURATION) AS $DURATION
         FROM $TABLE_NAME
         GROUP BY $EVENT_ID
-    """.trimIndent()
+    """
   }
 
   override fun onCreate(db: SQLiteDatabase) {
@@ -113,7 +115,6 @@ class LocalMetricsDatabase private constructor(
   }
 
   override fun onOpen(db: SQLiteDatabase) {
-    db.enableWriteAheadLogging()
     db.setForeignKeyConstraintsEnabled(true)
   }
 
@@ -128,13 +129,14 @@ class LocalMetricsDatabase private constructor(
     try {
       event.splits.forEach { split ->
         db.insert(
-          TABLE_NAME, null,
+          TABLE_NAME,
+          null,
           ContentValues().apply {
             put(CREATED_AT, event.createdAt)
             put(EVENT_ID, event.eventId)
             put(EVENT_NAME, event.eventName)
             put(SPLIT_NAME, split.name)
-            put(DURATION, split.duration)
+            put(DURATION, event.timeunit.convert(split.duration, TimeUnit.NANOSECONDS))
           }
         )
       }
@@ -149,6 +151,16 @@ class LocalMetricsDatabase private constructor(
 
   fun clear() {
     writableDatabase.delete(TABLE_NAME, null, null)
+  }
+
+  fun getOldestMetricTime(eventName: String): Long {
+    readableDatabase.rawQuery("SELECT $CREATED_AT FROM $TABLE_NAME WHERE $EVENT_NAME = ? ORDER BY $CREATED_AT ASC", SqlUtil.buildArgs(eventName)).use { cursor ->
+      return if (cursor.moveToFirst()) {
+        cursor.getLong(0)
+      } else {
+        0
+      }
+    }
   }
 
   fun getMetrics(): List<EventMetrics> {
@@ -211,7 +223,7 @@ class LocalMetricsDatabase private constructor(
     }
   }
 
-  private fun eventPercent(eventName: String, percent: Int): Long {
+  fun eventPercent(eventName: String, percent: Int): Long {
     return percentile(EventTotals.VIEW_NAME, "$EVENT_NAME = '$eventName'", percent)
   }
 
@@ -229,7 +241,7 @@ class LocalMetricsDatabase private constructor(
       OFFSET (SELECT COUNT(*)
               FROM $table
               WHERE $where) * $percent / 100 - 1
-    """.trimIndent()
+    """
 
     readableDatabase.rawQuery(query, null).use { cursor ->
       return if (cursor.moveToFirst()) {

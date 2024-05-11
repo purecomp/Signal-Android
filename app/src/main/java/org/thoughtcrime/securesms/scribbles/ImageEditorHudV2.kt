@@ -18,7 +18,7 @@ import androidx.constraintlayout.widget.Guideline
 import androidx.core.animation.doOnEnd
 import androidx.core.content.ContextCompat
 import com.airbnb.lottie.SimpleColorFilter
-import com.google.android.material.switchmaterial.SwitchMaterial
+import com.google.android.material.materialswitch.MaterialSwitch
 import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.components.TooltipPopup
 import org.thoughtcrime.securesms.keyvalue.SignalStore
@@ -59,7 +59,7 @@ class ImageEditorHudV2 @JvmOverloads constructor(
   private val cropFlipButton: View = findViewById(R.id.image_editor_hud_flip_button)
   private val cropAspectLockButton: ImageView = findViewById(R.id.image_editor_hud_aspect_lock_button)
   private val blurToggleContainer: View = findViewById(R.id.image_editor_hud_blur_toggle_container)
-  private val blurToggle: SwitchMaterial = findViewById(R.id.image_editor_hud_blur_toggle)
+  private val blurToggle: MaterialSwitch = findViewById(R.id.image_editor_hud_blur_toggle)
   private val blurToast: View = findViewById(R.id.image_editor_hud_blur_toast)
   private val blurHelpText: View = findViewById(R.id.image_editor_hud_blur_help_text)
   private val colorIndicator: ImageView = findViewById(R.id.image_editor_hud_color_indicator)
@@ -146,9 +146,9 @@ class ImageEditorHudV2 @JvmOverloads constructor(
     cropAspectLockButton.setOnClickListener {
       listener?.onCropAspectLock()
       if (listener?.isCropAspectLocked == true) {
-        cropAspectLockButton.setImageResource(R.drawable.ic_crop_lock_24)
+        cropAspectLockButton.setImageResource(R.drawable.symbol_crop_lock_24)
       } else {
-        cropAspectLockButton.setImageResource(R.drawable.ic_crop_unlock_24)
+        cropAspectLockButton.setImageResource(R.drawable.symbol_crop_unlock_24)
       }
     }
 
@@ -229,9 +229,6 @@ class ImageEditorHudV2 @JvmOverloads constructor(
 
   fun setUpForAvatarEditing() {
     isAvatarEdit = true
-  }
-
-  fun setColorPalette(colors: Set<Int>) {
   }
 
   fun getActiveColor(): Int {
@@ -358,7 +355,7 @@ class ImageEditorHudV2 @JvmOverloads constructor(
 
   private fun presentModeDraw() {
     drawButton.isSelected = true
-    brushToggle.setImageResource(R.drawable.ic_draw_white_24)
+    brushToggle.setImageResource(R.drawable.symbol_brush_pen_24)
     widthSeekBar.progress = SignalStore.imageEditorValues().getMarkerPercentage()
     listener?.onColorChange(getActiveColor())
     updateColorIndicator()
@@ -371,7 +368,7 @@ class ImageEditorHudV2 @JvmOverloads constructor(
 
   private fun presentModeHighlight() {
     drawButton.isSelected = true
-    brushToggle.setImageResource(R.drawable.ic_marker_24)
+    brushToggle.setImageResource(R.drawable.symbol_brush_highlighter_24)
     widthSeekBar.progress = SignalStore.imageEditorValues().getHighlighterPercentage()
     listener?.onColorChange(getActiveColor())
     updateColorIndicator()

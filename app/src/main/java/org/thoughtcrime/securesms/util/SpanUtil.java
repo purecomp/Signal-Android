@@ -2,8 +2,9 @@ package org.thoughtcrime.securesms.util;
 
 import android.content.Context;
 import android.content.res.Resources;
-import android.graphics.Bitmap;
+import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.ColorDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
 import android.text.Layout;
@@ -25,6 +26,7 @@ import android.text.style.RelativeSizeSpan;
 import android.text.style.StyleSpan;
 import android.text.style.TextAppearanceSpan;
 import android.text.style.TypefaceSpan;
+import android.text.style.URLSpan;
 import android.view.View;
 
 import androidx.annotation.ColorInt;
@@ -33,6 +35,7 @@ import androidx.annotation.StringRes;
 import androidx.annotation.StyleRes;
 import androidx.core.content.ContextCompat;
 
+import org.signal.core.util.DimensionUnit;
 import org.thoughtcrime.securesms.R;
 
 public final class SpanUtil {
@@ -102,10 +105,6 @@ public final class SpanUtil {
     return spannable;
   }
 
-  public static @NonNull CharSequence bullet(@NonNull CharSequence sequence) {
-    return bullet(sequence, BulletSpan.STANDARD_GAP_WIDTH);
-  }
-
   public static @NonNull CharSequence bullet(@NonNull CharSequence sequence, int gapWidth) {
     SpannableString spannable = new SpannableString(sequence);
     spannable.setSpan(new BulletSpan(gapWidth), 0, sequence.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
@@ -113,9 +112,13 @@ public final class SpanUtil {
   }
 
   public static CharSequence buildImageSpan(@NonNull Drawable drawable) {
-    SpannableString imageSpan = new SpannableString(" ");
-
     int flag = Build.VERSION.SDK_INT >= 29 ? DynamicDrawableSpan.ALIGN_CENTER : DynamicDrawableSpan.ALIGN_BASELINE;
+
+    return buildImageSpan(drawable, flag);
+  }
+
+  private static CharSequence buildImageSpan(@NonNull Drawable drawable, int flag) {
+    SpannableString imageSpan = new SpannableString(" ");
 
     imageSpan.setSpan(new ImageSpan(drawable, flag), 0, imageSpan.length(), 0);
 
@@ -126,6 +129,27 @@ public final class SpanUtil {
     SpannableString imageSpan = new SpannableString(" ");
     imageSpan.setSpan(new CenteredImageSpan(drawable), 0, imageSpan.length(), 0);
     return imageSpan;
+  }
+
+  public static CharSequence space(int width, @NonNull DimensionUnit widthUnit) {
+    Drawable drawable = new ColorDrawable(Color.TRANSPARENT);
+    drawable.setBounds(0, 0, (int) widthUnit.toPixels(width), 1);
+
+    return buildCenteredImageSpan(drawable);
+  }
+
+  public static void appendCenteredImageSpan(@NonNull SpannableStringBuilder builder, @NonNull Drawable drawable, int width, int height) {
+    drawable.setBounds(0, 0, ViewUtil.dpToPx(width), ViewUtil.dpToPx(height));
+    builder.append(" ").append(SpanUtil.buildCenteredImageSpan(drawable));
+  }
+
+  public static void appendSpacer(@NonNull SpannableStringBuilder builder, int width) {
+    SpanUtil.appendCenteredImageSpanWithoutSpace(builder, new ColorDrawable(Color.TRANSPARENT), width, 8);
+  }
+
+  public static void appendCenteredImageSpanWithoutSpace(@NonNull SpannableStringBuilder builder, @NonNull Drawable drawable, int width, int height) {
+    drawable.setBounds(0, 0, ViewUtil.dpToPx(width), ViewUtil.dpToPx(height));
+    builder.append(SpanUtil.buildCenteredImageSpan(drawable));
   }
 
   public static CharSequence learnMore(@NonNull Context context,
@@ -149,6 +173,17 @@ public final class SpanUtil {
                                        @NonNull View.OnClickListener onLearnMoreClicked)
   {
     return clickSubstring(text, text, onLearnMoreClicked, color);
+  }
+
+  public static Spanned urlSubsequence(@NonNull CharSequence fullString, @NonNull CharSequence substring, @NonNull String url) {
+    SpannableString spannable = new SpannableString(fullString);
+    int             start     = TextUtils.indexOf(fullString, substring);
+    int             end       = start + substring.length();
+
+    if (start >= 0 && end <= fullString.length()) {
+      spannable.setSpan(new URLSpan(url), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
+    }
+    return spannable;
   }
 
   /**

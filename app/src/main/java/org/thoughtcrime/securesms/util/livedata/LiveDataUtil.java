@@ -14,13 +14,16 @@ import com.annimon.stream.function.Predicate;
 
 import org.signal.core.util.concurrent.SignalExecutors;
 import org.thoughtcrime.securesms.util.concurrent.SerialMonoLifoExecutor;
-import org.whispersystems.libsignal.util.guava.Function;
+import org.whispersystems.signalservice.api.util.Preconditions;
 
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.Executor;
+import java.util.function.Function;
+
+import kotlin.jvm.functions.Function1;
 
 public final class LiveDataUtil {
 
@@ -81,7 +84,7 @@ public final class LiveDataUtil {
   /**
    * Performs a map operation on the source observable and then only emits the mapped item if it has changed since the previous emission.
    */
-  public static <A, B> LiveData<B> mapDistinct(@NonNull LiveData<A> source, @NonNull androidx.arch.core.util.Function<A, B> mapFunction) {
+  public static <A, B> LiveData<B> mapDistinct(@NonNull LiveData<A> source, @NonNull Function1<A, B> mapFunction) {
     return Transformations.distinctUntilChanged(Transformations.map(source, mapFunction));
   }
 
@@ -96,6 +99,20 @@ public final class LiveDataUtil {
                                                     @NonNull LiveData<B> b,
                                                     @NonNull Combine<A, B, R> combine) {
     return new CombineLiveData<>(a, b, combine);
+  }
+
+  /**
+   * Once there is non-null data on each input {@link LiveData}, the {@link Combine3} function is
+   * run and produces a live data of the combined data.
+   * <p>
+   * As each live data changes, the combine function is re-run, and a new value is emitted always
+   * with the latest, non-null values.
+   */
+  public static <A, B, C, R> LiveData<R> combineLatest(@NonNull LiveData<A> a,
+                                                       @NonNull LiveData<B> b,
+                                                       @NonNull LiveData<C> c,
+                                                       @NonNull Combine3<A, B, C, R> combine) {
+    return new Combine3LiveData<>(a, b, c, combine);
   }
 
   /**
@@ -283,6 +300,43 @@ public final class LiveDataUtil {
           }
         });
       }
+    }
+  }
+
+  private static final class Combine3LiveData<A, B, C, R> extends MediatorLiveData<R> {
+    private A a;
+    private B b;
+    private C c;
+
+    Combine3LiveData(LiveData<A> liveDataA, LiveData<B> liveDataB, LiveData<C> liveDataC, Combine3<A, B, C, R> combine) {
+      Preconditions.checkArgument(liveDataA != liveDataB && liveDataB != liveDataC && liveDataA != liveDataC);
+
+      addSource(liveDataA, (a) -> {
+        if (a != null) {
+          this.a = a;
+          if (b != null && c != null) {
+            setValue(combine.apply(a, b, c));
+          }
+        }
+      });
+
+      addSource(liveDataB, (b) -> {
+        if (b != null) {
+          this.b = b;
+          if (a != null && c != null) {
+            setValue(combine.apply(a, b, c));
+          }
+        }
+      });
+
+      addSource(liveDataC, (c) -> {
+        if (c != null) {
+          this.c = c;
+          if (a != null && b != null) {
+            setValue(combine.apply(a, b, c));
+          }
+        }
+      });
     }
   }
 }

@@ -9,7 +9,8 @@ import org.junit.runner.RunWith;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 import org.thoughtcrime.securesms.profiles.ProfileName;
-import org.whispersystems.libsignal.util.guava.Optional;
+
+import java.util.Optional;
 
 import static android.provider.ContactsContract.Intents.Insert.EMAIL;
 import static android.provider.ContactsContract.Intents.Insert.NAME;
@@ -37,6 +38,19 @@ public final class RecipientExporterTest {
   }
 
   @Test
+  public void asAddContactIntent_with_phone_number_should_not_show_number() {
+    Recipient recipient = givenPhoneRecipient(ProfileName.fromParts("Alice", null), "+1555123456", false);
+
+    Intent intent = RecipientExporter.export(recipient).asAddContactIntent();
+
+    assertEquals(Intent.ACTION_INSERT_OR_EDIT, intent.getAction());
+    assertEquals(ContactsContract.Contacts.CONTENT_ITEM_TYPE, intent.getType());
+    assertEquals("Alice", intent.getStringExtra(NAME));
+    assertNull(intent.getStringExtra(PHONE));
+    assertNull(intent.getStringExtra(EMAIL));
+  }
+
+  @Test
   public void asAddContactIntent_with_email() {
     Recipient recipient = givenEmailRecipient(ProfileName.fromParts("Bob", null), "bob@signal.org");
 
@@ -49,13 +63,19 @@ public final class RecipientExporterTest {
     assertNull(intent.getStringExtra(PHONE));
   }
 
+
   private Recipient givenPhoneRecipient(ProfileName profileName, String phone) {
+    return givenPhoneRecipient(profileName, phone, true);
+  }
+
+  private Recipient givenPhoneRecipient(ProfileName profileName, String phone, boolean shouldShowPhoneNumber) {
     Recipient recipient = mock(Recipient.class);
     when(recipient.getProfileName()).thenReturn(profileName);
 
     when(recipient.requireE164()).thenReturn(phone);
     when(recipient.getE164()).thenAnswer(i -> Optional.of(phone));
-    when(recipient.getEmail()).thenAnswer(i -> Optional.absent());
+    when(recipient.getEmail()).thenAnswer(i -> Optional.empty());
+    when(recipient.getShouldShowE164()).thenAnswer(i -> shouldShowPhoneNumber);
 
     return recipient;
   }
@@ -66,7 +86,7 @@ public final class RecipientExporterTest {
 
     when(recipient.requireEmail()).thenReturn(email);
     when(recipient.getEmail()).thenAnswer(i -> Optional.of(email));
-    when(recipient.getE164()).thenAnswer(i -> Optional.absent());
+    when(recipient.getE164()).thenAnswer(i -> Optional.empty());
 
     return recipient;
   }

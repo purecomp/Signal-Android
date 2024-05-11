@@ -15,8 +15,9 @@ import androidx.recyclerview.widget.RecyclerView;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.components.AvatarImageView;
 import org.thoughtcrime.securesms.components.FromTextView;
-import org.thoughtcrime.securesms.database.IdentityDatabase;
 import org.thoughtcrime.securesms.database.model.IdentityRecord;
+import org.thoughtcrime.securesms.util.ContextUtil;
+import org.thoughtcrime.securesms.util.DrawableUtil;
 import org.thoughtcrime.securesms.util.ViewUtil;
 import org.thoughtcrime.securesms.util.adapter.AlwaysChangedDiffUtil;
 
@@ -63,13 +64,11 @@ final class SafetyNumberChangeAdapter extends ListAdapter<ChangedRecipient, Safe
       if (changedRecipient.isUnverified() || changedRecipient.isVerified()) {
         subtitle.setText(R.string.safety_number_change_dialog__previous_verified);
 
-        Drawable check = ContextCompat.getDrawable(itemView.getContext(), R.drawable.check);
-        if (check != null) {
-          check.setBounds(0, 0, ViewUtil.dpToPx(12), ViewUtil.dpToPx(12));
-          subtitle.setCompoundDrawables(check, null, null, null);
-        }
+        Drawable check = DrawableUtil.tint(ContextUtil.requireDrawable(itemView.getContext(), R.drawable.symbol_check_24), ContextCompat.getColor(itemView.getContext(), R.color.signal_text_secondary));
+        check.setBounds(0, 0, ViewUtil.dpToPx(12), ViewUtil.dpToPx(12));
+        subtitle.setCompoundDrawables(check, null, null, null);
       } else if (changedRecipient.getRecipient().hasAUserSetDisplayName(itemView.getContext())) {
-        subtitle.setText(changedRecipient.getRecipient().getE164().or(""));
+        subtitle.setText(changedRecipient.getRecipient().getE164().orElse(""));
         subtitle.setCompoundDrawables(null, null, null, null);
       } else {
         subtitle.setText("");

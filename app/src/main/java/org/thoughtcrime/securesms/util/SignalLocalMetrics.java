@@ -1,12 +1,15 @@
 package org.thoughtcrime.securesms.util;
 
+import android.os.SystemClock;
+
 import androidx.annotation.MainThread;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Objects;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.TimeUnit;
 
 /**
  * A nice interface for {@link LocalMetrics} that gives us a place to define string constants and nicer method names.
@@ -73,23 +76,50 @@ public final class SignalLocalMetrics {
   public static final class ConversationOpen {
     private static final String NAME = "conversation-open";
 
-    private static final String SPLIT_DATA_LOADED = "data-loaded";
-    private static final String SPLIT_RENDER      = "render";
+    private static final String SPLIT_VIEWMODEL_INIT  = "viewmodel-init";
+    private static final String SPLIT_METADATA_LOADED = "metadata-loaded";
+    private static final String SPLIT_DATA_LOADED     = "data-loaded";
+    private static final String SPLIT_DATA_POSTED     = "data-posted";
+    private static final String SPLIT_RENDER          = "render";
 
     private static String id;
 
     public static void start() {
+      SignalTrace.beginSection("6-ConversationOpen");
       id = NAME + "-" + System.currentTimeMillis();
       LocalMetrics.getInstance().start(id, NAME);
+      SignalTrace.beginSection("1-ConversationOpen-ViewModel-Init");
+    }
+
+    public static void onMetadataLoadStarted() {
+      SignalTrace.endSection();
+      LocalMetrics.getInstance().split(id, SPLIT_VIEWMODEL_INIT);
+      SignalTrace.beginSection("2-ConversationOpen-Metadata-Loaded");
+    }
+
+    public static void onMetadataLoaded() {
+      SignalTrace.endSection();
+      LocalMetrics.getInstance().split(id, SPLIT_METADATA_LOADED);
+      SignalTrace.beginSection("3-ConversationOpen-Data-Loaded");
     }
 
     public static void onDataLoaded() {
+      SignalTrace.endSection();
       LocalMetrics.getInstance().split(id, SPLIT_DATA_LOADED);
+      SignalTrace.beginSection("4-ConversationOpen-Data-Posted");
+    }
+
+    public static void onDataPostedToMain() {
+      SignalTrace.endSection();
+      LocalMetrics.getInstance().split(id, SPLIT_DATA_POSTED);
+      SignalTrace.beginSection("5-ConversationOpen-Render");
     }
 
     public static void onRenderFinished() {
+      SignalTrace.endSection();
       LocalMetrics.getInstance().split(id, SPLIT_RENDER);
       LocalMetrics.getInstance().end(id);
+      SignalTrace.endSection();
     }
   }
 
@@ -116,63 +146,160 @@ public final class SignalLocalMetrics {
     public static void onInsertedIntoDatabase(long messageId, String id) {
       if (id != null) {
         ID_MAP.put(messageId, id);
-        LocalMetrics.getInstance().split(requireId(messageId), SPLIT_DB_INSERT);
+        split(messageId, SPLIT_DB_INSERT);
       }
     }
 
     public static void onJobStarted(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().split(requireId(messageId), SPLIT_JOB_ENQUEUE);
+      split(messageId, SPLIT_JOB_ENQUEUE);
     }
 
     public static void onDeliveryStarted(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().split(requireId(messageId), SPLIT_JOB_PRE_NETWORK);
+      split(messageId, SPLIT_JOB_PRE_NETWORK);
     }
 
     public static void onMessageEncrypted(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().split(requireId(messageId), SPLIT_ENCRYPT);
+      split(messageId, SPLIT_ENCRYPT);
     }
 
     public static void onMessageSent(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().split(requireId(messageId), SPLIT_NETWORK_MAIN);
+      split(messageId, SPLIT_NETWORK_MAIN);
     }
 
     public static void onSyncMessageSent(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().split(requireId(messageId), SPLIT_NETWORK_SYNC);
+      split(messageId, SPLIT_NETWORK_SYNC);
     }
 
     public static void onJobFinished(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().split(requireId(messageId), SPLIT_JOB_POST_NETWORK);
+      split(messageId, SPLIT_JOB_POST_NETWORK);
     }
 
     public static void onUiUpdated(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().split(requireId(messageId), SPLIT_UI_UPDATE);
-      LocalMetrics.getInstance().end(requireId(messageId));
+      split(messageId, SPLIT_UI_UPDATE);
+      end(messageId);
 
       ID_MAP.remove(messageId);
     }
 
-    public static void cancel(@Nullable String id) {
-      if (id != null) {
-        LocalMetrics.getInstance().cancel(id);
+    public static void cancel(long messageId) {
+      String splitId = ID_MAP.get(messageId);
+      if (splitId != null) {
+        LocalMetrics.getInstance().cancel(splitId);
+      }
+
+      ID_MAP.remove(messageId);
+    }
+
+    private static void split(long messageId, @NonNull String event) {
+      String splitId = ID_MAP.get(messageId);
+      if (splitId != null) {
+        LocalMetrics.getInstance().split(splitId, event);
       }
     }
 
-    public static void cancel(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().cancel(requireId(messageId));
+    private static void end(long messageId) {
+      String splitId = ID_MAP.get(messageId);
+      if (splitId != null) {
+        LocalMetrics.getInstance().end(splitId);
+      }
+    }
+  }
+
+  public static final class MessageLatency {
+    public static final String NAME_HIGH = "message-latency-high-priority";
+    public static final String NAME_LOW = "message-latency-low-priority";
+
+    private static final String SPLIT_LATENCY = "latency";
+
+    public static void onMessageReceived(long serverReceiveTimestamp, long serverDeliverTimestamp, boolean highPriority) {
+      String name    = highPriority ? NAME_HIGH : NAME_LOW;
+      long   latency = serverDeliverTimestamp - serverReceiveTimestamp;
+
+      if (latency > SystemClock.elapsedRealtime()) {
+        // Ignore messages with latency that would be before device boot time
+        return;
+      }
+
+      String id = name + System.currentTimeMillis();
+      LocalMetrics.getInstance().start(id, name);
+      LocalMetrics.getInstance().splitWithDuration(id, SPLIT_LATENCY, latency);
+      LocalMetrics.getInstance().end(id);
+    }
+  }
+
+  public static final class FcmServiceStartFailure {
+    public static final String NAME = "fcm-service-start-failure";
+
+    private static final String SPLIT_EVENT = "event";
+
+    public static void onFcmFailedToStart() {
+      String id = NAME + System.currentTimeMillis();
+      LocalMetrics.getInstance().start(id, NAME);
+      LocalMetrics.getInstance().splitWithDuration(id, SPLIT_EVENT, 1);
+      LocalMetrics.getInstance().end(id);
     }
 
+  }
 
-    private static @NonNull String requireId(long messageId) {
-      return Objects.requireNonNull(ID_MAP.get(messageId));
+  public static final class FcmServiceStartSuccess {
+    public static final String NAME = "fcm-service-start-success";
+
+    private static final String SPLIT_EVENT = "event";
+
+    public static void onFcmStarted() {
+      String id = NAME + System.currentTimeMillis();
+      LocalMetrics.getInstance().start(id, NAME);
+      LocalMetrics.getInstance().splitWithDuration(id, SPLIT_EVENT, 1);
+      LocalMetrics.getInstance().end(id);
     }
+
+  }
+  public static final class PushWebsocketFetch {
+    public static final String SUCCESS_EVENT = "push-websocket-fetch";
+    public static final String TIMEOUT_EVENT = "timed-out-fetch";
+
+    private static final String SPLIT_BATCH_PROCESSED = "batches-processed";
+    private static final String SPLIT_PROCESS_TIME    = "fetch-time";
+    private static final String SPLIT_TIMED_OUT = "timeout";
+
+    private static final AtomicInteger processedBatches = new AtomicInteger(0);
+
+    public static @NonNull String startFetch() {
+      String baseId = System.currentTimeMillis() + "";
+
+      String timeoutId = TIMEOUT_EVENT + baseId;
+      String successId = SUCCESS_EVENT + baseId;
+
+      LocalMetrics.getInstance().start(successId, SUCCESS_EVENT);
+      LocalMetrics.getInstance().start(timeoutId, TIMEOUT_EVENT);
+      processedBatches.set(0);
+
+      return baseId;
+    }
+
+    public static void onProcessedBatch() {
+      processedBatches.incrementAndGet();
+    }
+
+    public static void onTimedOut(String metricId) {
+      LocalMetrics.getInstance().cancel(SUCCESS_EVENT + metricId);
+
+      String timeoutId = TIMEOUT_EVENT + metricId;
+
+      LocalMetrics.getInstance().split(timeoutId, SPLIT_TIMED_OUT);
+      LocalMetrics.getInstance().end(timeoutId);
+    }
+
+    public static void onDrained(String metricId) {
+      LocalMetrics.getInstance().cancel(TIMEOUT_EVENT + metricId);
+
+      String successId = SUCCESS_EVENT + metricId;
+
+      LocalMetrics.getInstance().split(successId, SPLIT_PROCESS_TIME);
+      LocalMetrics.getInstance().splitWithDuration(successId, SPLIT_BATCH_PROCESSED, processedBatches.get());
+      LocalMetrics.getInstance().end(successId);
+    }
+
   }
 
   public static final class GroupMessageSend {
@@ -202,64 +329,53 @@ public final class SignalLocalMetrics {
     public static void onInsertedIntoDatabase(long messageId, String id) {
       if (id != null) {
         ID_MAP.put(messageId, id);
-        LocalMetrics.getInstance().split(requireId(messageId), SPLIT_DB_INSERT);
+        split(messageId, SPLIT_DB_INSERT);
       }
     }
 
     public static void onJobStarted(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().split(requireId(messageId), SPLIT_JOB_ENQUEUE);
+      split(messageId, SPLIT_JOB_ENQUEUE);
     }
 
     public static void onSenderKeyStarted(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().split(requireId(messageId), SPLIT_JOB_PRE_NETWORK);
+      split(messageId, SPLIT_JOB_PRE_NETWORK);
     }
 
     public static void onSenderKeyShared(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().split(requireId(messageId), SPLIT_SENDER_KEY_SHARED);
+      split(messageId, SPLIT_SENDER_KEY_SHARED);
     }
 
     public static void onSenderKeyEncrypted(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().split(requireId(messageId), SPLIT_ENCRYPTION);
+      split(messageId, SPLIT_ENCRYPTION);
     }
 
     public static void onSenderKeyMessageSent(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().split(requireId(messageId), SPLIT_NETWORK_SENDER_KEY);
+      split(messageId, SPLIT_NETWORK_SENDER_KEY);
     }
 
     public static void onSenderKeySyncSent(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().split(requireId(messageId), SPLIT_NETWORK_SENDER_KEY_SYNC);
+      split(messageId, SPLIT_NETWORK_SENDER_KEY_SYNC);
     }
 
     public static void onSenderKeyMslInserted(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().split(requireId(messageId), SPLIT_MSL_SENDER_KEY);
+      split(messageId, SPLIT_MSL_SENDER_KEY);
     }
 
     public static void onLegacyMessageSent(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().split(requireId(messageId), SPLIT_NETWORK_LEGACY);
+      split(messageId, SPLIT_NETWORK_LEGACY);
     }
 
     public static void onLegacySyncFinished(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().split(requireId(messageId), SPLIT_NETWORK_LEGACY_SYNC);
+      split(messageId, SPLIT_NETWORK_LEGACY_SYNC);
     }
 
     public static void onJobFinished(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().split(requireId(messageId), SPLIT_JOB_POST_NETWORK);
+      split(messageId, SPLIT_JOB_POST_NETWORK);
     }
 
     public static void onUiUpdated(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().split(requireId(messageId), SPLIT_UI_UPDATE);
-      LocalMetrics.getInstance().end(requireId(messageId));
+      split(messageId, SPLIT_UI_UPDATE);
+      end(messageId);
 
       ID_MAP.remove(messageId);
     }
@@ -271,13 +387,102 @@ public final class SignalLocalMetrics {
     }
 
     public static void cancel(long messageId) {
-      if (!ID_MAP.containsKey(messageId)) return;
-      LocalMetrics.getInstance().cancel(requireId(messageId));
+      String splitId = ID_MAP.get(messageId);
+      if (splitId != null) {
+        LocalMetrics.getInstance().cancel(splitId);
+      }
+
+      ID_MAP.remove(messageId);
     }
 
+    private static void split(long messageId, @NonNull String event) {
+      String splitId = ID_MAP.get(messageId);
+      if (splitId != null) {
+        LocalMetrics.getInstance().split(splitId, event);
+      }
+    }
 
-    private static @NonNull String requireId(long messageId) {
-      return Objects.requireNonNull(ID_MAP.get(messageId));
+    private static void end(long messageId) {
+      String splitId = ID_MAP.get(messageId);
+      if (splitId != null) {
+        LocalMetrics.getInstance().end(splitId);
+      }
+    }
+  }
+
+  public static final class MessageReceive {
+    private static final String NAME_GROUP      = "group-message-receive";
+    private static final String NAME_INDIVIDUAL = "individual-message-receive";
+
+    private static final String SPLIT_DECRYPTION        = "decryption";
+    private static final String SPLIT_PRE_PROCESS       = "pre-process";
+    private static final String SPLIT_GROUPS_PROCESSING = "groups-v2";
+    private static final String SPLIT_DB_INSERT_MEDIA   = "media-insert";
+    private static final String SPLIT_DB_INSERT_TEXT    = "text-insert";
+    private static final String SPLIT_POST_PROCESS      = "post-process";
+    private boolean insertedToDb = false;
+
+    private final String individualMetricId;
+    private final String groupMetricId;
+
+    public static MessageReceive start() {
+      return new MessageReceive();
+    }
+
+    private MessageReceive() {
+      long time = System.currentTimeMillis();
+      individualMetricId = NAME_INDIVIDUAL + time;
+      groupMetricId = NAME_GROUP + time;
+
+      LocalMetrics.getInstance().start(individualMetricId, NAME_INDIVIDUAL, TimeUnit.MICROSECONDS);
+      LocalMetrics.getInstance().start(groupMetricId, NAME_GROUP, TimeUnit.MICROSECONDS);
+    }
+
+    public void onEnvelopeDecrypted() {
+      split(SPLIT_DECRYPTION);
+    }
+
+    public void onPreProcessComplete() {
+      split(SPLIT_PRE_PROCESS);
+    }
+
+    public void onInsertedMediaMessage() {
+      split(SPLIT_DB_INSERT_MEDIA);
+      insertedToDb = true;
+    }
+
+    public void onInsertedTextMessage() {
+      split(SPLIT_DB_INSERT_TEXT);
+      insertedToDb = true;
+    }
+
+    public void onPostProcessComplete() {
+      split(SPLIT_POST_PROCESS);
+    }
+
+    public void onGv2Processed() {
+      split(SPLIT_GROUPS_PROCESSING);
+    }
+
+    private void split(String name) {
+      LocalMetrics.getInstance().split(groupMetricId, name);
+      LocalMetrics.getInstance().split(individualMetricId, name);
+    }
+
+    public void complete(boolean isGroup) {
+      if (!insertedToDb) {
+        LocalMetrics.getInstance().cancel(groupMetricId);
+        LocalMetrics.getInstance().cancel(individualMetricId);
+        return;
+      }
+
+      if (isGroup) {
+        LocalMetrics.getInstance().cancel(individualMetricId);
+        LocalMetrics.getInstance().end(groupMetricId);
+      } else {
+        LocalMetrics.getInstance().cancel(groupMetricId);
+        LocalMetrics.getInstance().end(individualMetricId);
+      }
     }
   }
 }

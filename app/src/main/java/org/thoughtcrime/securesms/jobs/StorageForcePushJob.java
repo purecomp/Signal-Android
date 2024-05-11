@@ -1,15 +1,16 @@
 package org.thoughtcrime.securesms.jobs;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.annimon.stream.Stream;
 
 import org.signal.core.util.logging.Log;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.RecipientDatabase;
-import org.thoughtcrime.securesms.database.UnknownStorageIdDatabase;
+import org.signal.libsignal.protocol.InvalidKeyException;
+import org.thoughtcrime.securesms.database.RecipientTable;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.database.UnknownStorageIdTable;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.jobmanager.Data;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
@@ -19,8 +20,6 @@ import org.thoughtcrime.securesms.storage.StorageSyncHelper;
 import org.thoughtcrime.securesms.storage.StorageSyncModels;
 import org.thoughtcrime.securesms.storage.StorageSyncValidations;
 import org.thoughtcrime.securesms.transport.RetryLaterException;
-import org.thoughtcrime.securesms.util.TextSecurePreferences;
-import org.whispersystems.libsignal.InvalidKeyException;
 import org.whispersystems.signalservice.api.SignalServiceAccountManager;
 import org.whispersystems.signalservice.api.push.exceptions.PushNetworkException;
 import org.whispersystems.signalservice.api.storage.SignalStorageManifest;
@@ -61,8 +60,8 @@ public class StorageForcePushJob extends BaseJob {
   }
 
   @Override
-  public @NonNull Data serialize() {
-    return Data.EMPTY;
+  public @Nullable byte[] serialize() {
+    return null;
   }
 
   @Override
@@ -72,18 +71,33 @@ public class StorageForcePushJob extends BaseJob {
 
   @Override
   protected void onRun() throws IOException, RetryLaterException {
+    if (SignalStore.account().isLinkedDevice()) {
+      Log.i(TAG, "Only the primary device can force push");
+      return;
+    }
+
+    if (!SignalStore.account().isRegistered() || SignalStore.account().getE164() == null) {
+      Log.w(TAG, "User not registered. Skipping.");
+      return;
+    }
+
+    if (Recipient.self().getStorageId() == null) {
+      Log.w(TAG, "No storage ID set for self! Skipping.");
+      return;
+    }
+
     StorageKey                  storageServiceKey = SignalStore.storageService().getOrCreateStorageKey();
     SignalServiceAccountManager accountManager    = ApplicationDependencies.getSignalServiceAccountManager();
-    RecipientDatabase           recipientDatabase = DatabaseFactory.getRecipientDatabase(context);
-    UnknownStorageIdDatabase    storageIdDatabase = DatabaseFactory.getUnknownStorageIdDatabase(context);
+    RecipientTable              recipientTable    = SignalDatabase.recipients();
+    UnknownStorageIdTable       storageIdTable    = SignalDatabase.unknownStorageIds();
 
     long                        currentVersion       = accountManager.getStorageManifestVersion();
-    Map<RecipientId, StorageId> oldContactStorageIds = recipientDatabase.getContactStorageSyncIdsMap();
+    Map<RecipientId, StorageId> oldContactStorageIds = recipientTable.getContactStorageSyncIdsMap();
 
     long                        newVersion           = currentVersion + 1;
     Map<RecipientId, StorageId> newContactStorageIds = generateContactStorageIds(oldContactStorageIds);
     List<SignalStorageRecord>   inserts              = Stream.of(oldContactStorageIds.keySet())
-                                                             .map(recipientDatabase::getRecipientSettingsForSync)
+                                                             .map(recipientTable::getRecordForSync)
                                                              .withoutNulls()
                                                              .map(s -> StorageSyncModels.localToRemoteRecord(s, Objects.requireNonNull(newContactStorageIds.get(s.getId())).getRaw()))
                                                              .toList();
@@ -94,7 +108,7 @@ public class StorageForcePushJob extends BaseJob {
     inserts.add(accountRecord);
     allNewStorageIds.add(accountRecord.getId());
 
-    SignalStorageManifest manifest = new SignalStorageManifest(newVersion, allNewStorageIds);
+    SignalStorageManifest manifest = new SignalStorageManifest(newVersion, SignalStore.account().getDeviceId(), allNewStorageIds);
     StorageSyncValidations.validateForcePush(manifest, inserts, Recipient.self().fresh());
 
     try {
@@ -118,9 +132,9 @@ public class StorageForcePushJob extends BaseJob {
 
     Log.i(TAG, "Force push succeeded. Updating local manifest version to: " + newVersion);
     SignalStore.storageService().setManifest(manifest);
-    recipientDatabase.applyStorageIdUpdates(newContactStorageIds);
-    recipientDatabase.applyStorageIdUpdates(Collections.singletonMap(Recipient.self().getId(), accountRecord.getId()));
-    storageIdDatabase.deleteAll();
+    recipientTable.applyStorageIdUpdates(newContactStorageIds);
+    recipientTable.applyStorageIdUpdates(Collections.singletonMap(Recipient.self().getId(), accountRecord.getId()));
+    storageIdTable.deleteAll();
   }
 
   @Override
@@ -144,7 +158,7 @@ public class StorageForcePushJob extends BaseJob {
 
   public static final class Factory implements Job.Factory<StorageForcePushJob> {
     @Override
-    public @NonNull StorageForcePushJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull StorageForcePushJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
       return new StorageForcePushJob(parameters);
     }
   }

@@ -2,11 +2,11 @@ package org.thoughtcrime.securesms.components.settings.app.chats
 
 import android.content.Context
 import org.signal.core.util.concurrent.SignalExecutors
-import org.thoughtcrime.securesms.database.DatabaseFactory
+import org.thoughtcrime.securesms.database.SignalDatabase
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies
 import org.thoughtcrime.securesms.jobs.MultiDeviceConfigurationUpdateJob
+import org.thoughtcrime.securesms.jobs.MultiDeviceContactUpdateJob
 import org.thoughtcrime.securesms.keyvalue.SignalStore
-import org.thoughtcrime.securesms.megaphone.Megaphones
 import org.thoughtcrime.securesms.recipients.Recipient
 import org.thoughtcrime.securesms.storage.StorageSyncHelper
 import org.thoughtcrime.securesms.util.TextSecurePreferences
@@ -19,7 +19,7 @@ class ChatsSettingsRepository {
     SignalExecutors.BOUNDED.execute {
       val isLinkPreviewsEnabled = SignalStore.settings().isLinkPreviewsEnabled
 
-      DatabaseFactory.getRecipientDatabase(context).markNeedsSync(Recipient.self().id)
+      SignalDatabase.recipients.markNeedsSync(Recipient.self().id)
       StorageSyncHelper.scheduleSyncForDataChange()
       ApplicationDependencies.getJobManager().add(
         MultiDeviceConfigurationUpdateJob(
@@ -29,9 +29,21 @@ class ChatsSettingsRepository {
           isLinkPreviewsEnabled
         )
       )
-      if (isLinkPreviewsEnabled) {
-        ApplicationDependencies.getMegaphoneRepository().markFinished(Megaphones.Event.LINK_PREVIEWS)
-      }
+    }
+  }
+
+  fun syncPreferSystemContactPhotos() {
+    SignalExecutors.BOUNDED.execute {
+      SignalDatabase.recipients.markNeedsSync(Recipient.self().id)
+      ApplicationDependencies.getJobManager().add(MultiDeviceContactUpdateJob(true))
+      StorageSyncHelper.scheduleSyncForDataChange()
+    }
+  }
+
+  fun syncKeepMutedChatsArchivedState() {
+    SignalExecutors.BOUNDED.execute {
+      SignalDatabase.recipients.markNeedsSync(Recipient.self().id)
+      StorageSyncHelper.scheduleSyncForDataChange()
     }
   }
 }

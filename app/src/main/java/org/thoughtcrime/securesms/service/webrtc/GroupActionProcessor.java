@@ -20,9 +20,10 @@ import org.thoughtcrime.securesms.ringrtc.RemotePeer;
 import org.thoughtcrime.securesms.service.webrtc.state.VideoState;
 import org.thoughtcrime.securesms.service.webrtc.state.WebRtcServiceState;
 import org.thoughtcrime.securesms.service.webrtc.state.WebRtcServiceStateBuilder;
+import org.webrtc.PeerConnection;
 import org.webrtc.VideoTrack;
 import org.whispersystems.signalservice.api.messages.calls.OfferMessage;
-import org.whispersystems.signalservice.api.push.ACI;
+import org.whispersystems.signalservice.api.push.ServiceId.ACI;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -37,8 +38,15 @@ import java.util.Set;
  * and call specific setup information that is the same for any group call state.
  */
 public class GroupActionProcessor extends DeviceAwareActionProcessor {
-  public GroupActionProcessor(@NonNull WebRtcInteractor webRtcInteractor, @NonNull String tag) {
+
+  protected MultiPeerActionProcessorFactory actionProcessorFactory;
+
+  public GroupActionProcessor(@NonNull MultiPeerActionProcessorFactory actionProcessorFactory,
+                              @NonNull WebRtcInteractor webRtcInteractor,
+                              @NonNull String tag)
+  {
     super(webRtcInteractor, tag);
+    this.actionProcessorFactory = actionProcessorFactory;
   }
 
   protected @NonNull WebRtcServiceState handleReceivedOffer(@NonNull WebRtcServiceState currentState,
@@ -83,7 +91,7 @@ public class GroupActionProcessor extends DeviceAwareActionProcessor {
     seen.add(Recipient.self());
 
     for (GroupCall.RemoteDeviceState device : remoteDeviceStates) {
-      Recipient                   recipient         = Recipient.externalPush(context, ACI.from(device.getUserId()), null, false);
+      Recipient                   recipient         = Recipient.externalPush(ACI.from(device.getUserId()));
       CallParticipantId           callParticipantId = new CallParticipantId(device.getDemuxId(), recipient.getId());
       CallParticipant             callParticipant   = participants.get(callParticipantId);
 
@@ -100,13 +108,17 @@ public class GroupActionProcessor extends DeviceAwareActionProcessor {
         videoSink = new BroadcastVideoSink();
       }
 
+      long handRaisedTimestamp = callParticipant != null ? callParticipant.getHandRaisedTimestamp() : CallParticipant.HAND_LOWERED;
+
       builder.putParticipant(callParticipantId,
                              CallParticipant.createRemote(callParticipantId,
                                                           recipient,
                                                           null,
                                                           videoSink,
+                                                          device.getForwardingVideo() == null || device.getForwardingVideo(),
                                                           Boolean.FALSE.equals(device.getAudioMuted()),
                                                           Boolean.FALSE.equals(device.getVideoMuted()),
+                                                          handRaisedTimestamp,
                                                           device.getSpeakerTime(),
                                                           device.getMediaKeysReceived(),
                                                           device.getAddedTime(),
@@ -123,8 +135,30 @@ public class GroupActionProcessor extends DeviceAwareActionProcessor {
   }
 
   @Override
-  protected @NonNull WebRtcServiceState handleGroupRequestMembershipProof(@NonNull WebRtcServiceState currentState, int groupCallHash, @NonNull byte[] groupMembershipToken) {
+  protected @NonNull WebRtcServiceState handleGroupRequestMembershipProof(@NonNull WebRtcServiceState currentState, int groupCallHashCode) {
     Log.i(tag, "handleGroupRequestMembershipProof():");
+    Recipient recipient = currentState.getCallInfoState().getCallRecipient();
+    if (!recipient.isPushV2Group()) {
+      Log.i(tag, "Request membership proof for non-group");
+      return currentState;
+    }
+
+    GroupCall currentGroupCall = currentState.getCallInfoState().getGroupCall();
+
+    if (currentGroupCall == null || currentGroupCall.hashCode() != groupCallHashCode) {
+      Log.i(tag, "Skipping group membership proof request, requested group call does not match current group call");
+      return currentState;
+    }
+
+    //noinspection OptionalGetWithoutIsPresent
+    webRtcInteractor.requestGroupMembershipProof(recipient.getGroupId().get().requireV2(), groupCallHashCode);
+
+    return currentState;
+  }
+
+  @Override
+  protected @NonNull WebRtcServiceState handleGroupMembershipProofResponse(@NonNull WebRtcServiceState currentState, int groupCallHash, @NonNull byte[] groupMembershipToken) {
+    Log.i(tag, "handleGroupMembershipProofResponse():");
 
     GroupCall groupCall = currentState.getCallInfoState().getGroupCall();
 
@@ -175,7 +209,7 @@ public class GroupActionProcessor extends DeviceAwareActionProcessor {
     }
 
     try {
-      currentState.getCallInfoState().requireGroupCall().requestVideo(resolutionRequests);
+      currentState.getCallInfoState().requireGroupCall().requestVideo(resolutionRequests, 0);
     } catch (CallException e) {
       return groupCallFailure(currentState, "Unable to set rendered resolutions", e);
     }
@@ -185,14 +219,14 @@ public class GroupActionProcessor extends DeviceAwareActionProcessor {
 
   @Override
   protected @NonNull WebRtcServiceState handleSetRingGroup(@NonNull WebRtcServiceState currentState, boolean ringGroup) {
-    Log.i(tag, "handleReceivedOpaqueMessage(): ring: " + ringGroup);
+    Log.i(tag, "handleSetRingGroup(): ring: " + ringGroup);
 
-    if (currentState.getCallSetupState().shouldRingGroup() == ringGroup) {
+    if (currentState.getCallSetupState(RemotePeer.GROUP_CALL_ID).shouldRingGroup() == ringGroup) {
       return currentState;
     }
 
     return currentState.builder()
-                       .changeCallSetupState()
+                       .changeCallSetupState(RemotePeer.GROUP_CALL_ID)
                        .setRingGroup(ringGroup)
                        .build();
   }
@@ -238,6 +272,17 @@ public class GroupActionProcessor extends DeviceAwareActionProcessor {
     return currentState;
   }
 
+  @Override protected @NonNull WebRtcServiceState handleGroupLocalDeviceStateChanged(@NonNull WebRtcServiceState currentState) {
+    GroupCall                  groupCall = currentState.getCallInfoState().requireGroupCall();
+    PeerConnection.AdapterType type      = groupCall.getLocalDeviceState().getNetworkRoute().getLocalAdapterType();
+
+    return currentState.builder()
+                       .changeLocalDeviceState()
+                       .setNetworkConnectionType(type)
+                       .commit()
+                       .build();
+  }
+
   @Override
   protected @NonNull WebRtcServiceState handleGroupCallEnded(@NonNull WebRtcServiceState currentState, int groupCallHash, @NonNull GroupCall.GroupCallEndReason groupCallEndReason) {
     Log.i(tag, "handleGroupCallEnded(): reason: " + groupCallEndReason);
@@ -260,7 +305,7 @@ public class GroupActionProcessor extends DeviceAwareActionProcessor {
       VideoState videoState       = currentState.getVideoState();
 
       currentState = terminateGroupCall(currentState, false).builder()
-                                                            .actionProcessor(new GroupNetworkUnavailableActionProcessor(webRtcInteractor))
+                                                            .actionProcessor(actionProcessorFactory.createNetworkUnavailableActionProcessor(webRtcInteractor))
                                                             .changeVideoState()
                                                             .eglBase(videoState.getLockableEglBase())
                                                             .camera(videoState.getCamera())

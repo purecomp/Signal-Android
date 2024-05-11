@@ -7,11 +7,11 @@ import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 import org.signal.core.util.logging.Log;
-import org.whispersystems.libsignal.util.guava.Optional;
 import org.whispersystems.signalservice.api.SignalServiceAccountManager;
 
 import java.io.IOException;
 import java.util.Locale;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
@@ -27,25 +27,24 @@ public final class PushChallengeRequest {
    *
    * @param accountManager Account manager to request the push from.
    * @param fcmToken       Optional FCM token. If not present will return absent.
-   * @param e164number     Local number.
+   * @param sessionId      Local number.
    * @param timeoutMs      Timeout in milliseconds
    * @return Either returns a challenge, or absent.
    */
   @WorkerThread
   public static Optional<String> getPushChallengeBlocking(@NonNull SignalServiceAccountManager accountManager,
+                                                          @NonNull String sessionId,
                                                           @NonNull Optional<String> fcmToken,
-                                                          @NonNull String e164number,
                                                           long timeoutMs)
   {
-    if (!fcmToken.isPresent()) {
+    if (fcmToken.isEmpty() || fcmToken.get().isEmpty()) {
       Log.w(TAG, "Push challenge not requested, as no FCM token was present");
-      return Optional.absent();
+      return Optional.empty();
     }
 
     long startTime = System.currentTimeMillis();
     Log.i(TAG, "Requesting a push challenge");
-
-    Request request = new Request(accountManager, fcmToken.get(), e164number, timeoutMs);
+    Request request = new Request(accountManager, fcmToken.get(), sessionId, timeoutMs);
 
     Optional<String> challenge = request.requestAndReceiveChallengeBlocking();
 
@@ -69,19 +68,19 @@ public final class PushChallengeRequest {
     private final AtomicReference<String>     challenge;
     private final SignalServiceAccountManager accountManager;
     private final String                      fcmToken;
-    private final String                      e164number;
+    private final String                      sessionId;
     private final long                        timeoutMs;
 
     private Request(@NonNull SignalServiceAccountManager accountManager,
                     @NonNull String fcmToken,
-                    @NonNull String e164number,
+                    @NonNull String sessionId,
                     long timeoutMs)
     {
       this.latch          = new CountDownLatch(1);
       this.challenge      = new AtomicReference<>();
       this.accountManager = accountManager;
       this.fcmToken       = fcmToken;
-      this.e164number     = e164number;
+      this.sessionId      = sessionId;
       this.timeoutMs      = timeoutMs;
     }
 
@@ -91,14 +90,14 @@ public final class PushChallengeRequest {
 
       eventBus.register(this);
       try {
-        accountManager.requestRegistrationPushChallenge(fcmToken, e164number);
+        accountManager.requestRegistrationPushChallenge(sessionId, fcmToken);
 
         latch.await(timeoutMs, TimeUnit.MILLISECONDS);
 
-        return Optional.fromNullable(challenge.get());
+        return Optional.ofNullable(challenge.get());
       } catch (InterruptedException | IOException e) {
         Log.w(TAG, "Error getting push challenge", e);
-        return Optional.absent();
+        return Optional.empty();
       } finally {
         eventBus.unregister(this);
       }
@@ -111,11 +110,15 @@ public final class PushChallengeRequest {
     }
   }
 
-  static class PushChallengeEvent {
+  public static class PushChallengeEvent {
     private final String challenge;
 
     PushChallengeEvent(String challenge) {
       this.challenge = challenge;
+    }
+
+    public String getChallenge() {
+      return challenge;
     }
   }
 }

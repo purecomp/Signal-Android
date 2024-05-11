@@ -1,73 +1,112 @@
 package org.thoughtcrime.securesms.database.model;
 
 import android.app.Application;
+import android.text.Spannable;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.test.core.app.ApplicationProvider;
 
 import com.annimon.stream.Stream;
-import com.google.common.collect.ImmutableMap;
 
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
-import org.powermock.core.classloader.annotations.PowerMockIgnore;
-import org.powermock.core.classloader.annotations.PrepareForTest;
-import org.powermock.modules.junit4.rule.PowerMockRule;
+import org.mockito.Mock;
+import org.mockito.MockedStatic;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
-import org.signal.core.util.ThreadUtil;
 import org.signal.storageservice.protos.groups.AccessControl;
 import org.signal.storageservice.protos.groups.local.DecryptedGroup;
 import org.signal.storageservice.protos.groups.local.DecryptedGroupChange;
 import org.signal.storageservice.protos.groups.local.DecryptedMember;
 import org.signal.storageservice.protos.groups.local.DecryptedPendingMember;
-import org.thoughtcrime.securesms.testutil.MainThreadUtil;
-import org.whispersystems.signalservice.api.push.ACI;
-import org.whispersystems.signalservice.api.util.UuidUtil;
+import org.thoughtcrime.securesms.backup.v2.proto.GroupChangeChatUpdate;
+import org.thoughtcrime.securesms.database.model.databaseprotos.DecryptedGroupV2Context;
+import org.thoughtcrime.securesms.recipients.Recipient;
+import org.thoughtcrime.securesms.recipients.RecipientId;
+import org.whispersystems.signalservice.api.push.ServiceId;
+import org.whispersystems.signalservice.api.push.ServiceId.ACI;
+import org.whispersystems.signalservice.api.push.ServiceId.PNI;
+import org.whispersystems.signalservice.api.push.ServiceIds;
 
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
-import java.util.Map;
+import java.util.ListIterator;
 import java.util.UUID;
 import java.util.stream.Collectors;
 
-import static java.util.Collections.emptyList;
-import static java.util.Collections.singletonList;
+import kotlin.collections.CollectionsKt;
+
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
-import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+import static org.signal.core.util.StringUtil.isolateBidi;
 import static org.thoughtcrime.securesms.groups.v2.ChangeBuilder.changeBy;
 import static org.thoughtcrime.securesms.groups.v2.ChangeBuilder.changeByUnknown;
-import static org.thoughtcrime.securesms.util.StringUtil.isolateBidi;
+import static java.util.Collections.emptyList;
+import static java.util.Collections.singletonList;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(manifest = Config.NONE, application = Application.class)
-@PowerMockIgnore({ "org.mockito.*", "org.robolectric.*", "android.*", "androidx.*" })
-@PrepareForTest(ThreadUtil.class)
 public final class GroupsV2UpdateMessageProducerTest {
 
-  private UUID you;
-  private UUID alice;
-  private UUID bob;
+  private ACI you;
+  private ACI alice;
+  private ACI bob;
+
+  private ServiceIds selfIds;
 
   private GroupsV2UpdateMessageProducer producer;
 
   @Rule
-  public PowerMockRule powerMockRule = new PowerMockRule();
+  public MockitoRule rule = MockitoJUnit.rule();
+
+  @Mock
+  public MockedStatic<Recipient> recipientMockedStatic;
+
+  @Mock
+  public MockedStatic<RecipientId> recipientIdMockedStatic;
 
   @Before
   public void setup() {
-    you   = UUID.randomUUID();
-    alice = UUID.randomUUID();
-    bob   = UUID.randomUUID();
-    GroupsV2UpdateMessageProducer.DescribeMemberStrategy describeMember = createDescriber(ImmutableMap.of(alice, "Alice", bob, "Bob"));
-    producer = new GroupsV2UpdateMessageProducer(ApplicationProvider.getApplicationContext(), describeMember, you);
+    you   = ACI.from(UUID.randomUUID());
+    alice = ACI.from(UUID.randomUUID());
+    bob   = ACI.from(UUID.randomUUID());
+
+    selfIds = new ServiceIds(you, PNI.from(UUID.randomUUID()));
+
+    recipientIdMockedStatic.when(() -> RecipientId.from(anyLong())).thenCallRealMethod();
+
+    RecipientId aliceId = RecipientId.from(1);
+    RecipientId bobId   = RecipientId.from(2);
+
+    Recipient aliceRecipient = recipientWithName(aliceId, "Alice");
+    Recipient bobRecipient   = recipientWithName(bobId, "Bob");
+
+    producer = new GroupsV2UpdateMessageProducer(ApplicationProvider.getApplicationContext(), selfIds, null);
+
+    recipientIdMockedStatic.when(() -> RecipientId.from(alice)).thenReturn(aliceId);
+    recipientIdMockedStatic.when(() -> RecipientId.from(bob)).thenReturn(bobId);
+    recipientMockedStatic.when(() -> Recipient.resolved(aliceId)).thenReturn(aliceRecipient);
+    recipientMockedStatic.when(() -> Recipient.resolved(bobId)).thenReturn(bobRecipient);
+  }
+
+  private static Recipient recipientWithName(RecipientId id, String name) {
+    Recipient recipient = mock(Recipient.class);
+    when(recipient.getId()).thenReturn(id);
+    when(recipient.getDisplayName(any())).thenReturn(name);
+    return recipient;
   }
 
   @Test
@@ -405,7 +444,7 @@ public final class GroupsV2UpdateMessageProducerTest {
   public void member_invited_2_persons() {
     DecryptedGroupChange change = changeBy(alice)
                                     .invite(bob)
-                                    .invite(UUID.randomUUID())
+                                    .invite(ACI.from(UUID.randomUUID()))
                                     .build();
 
     assertThat(describeChange(change), is(singletonList("Alice invited 2 people to the group.")));
@@ -416,8 +455,8 @@ public final class GroupsV2UpdateMessageProducerTest {
     DecryptedGroupChange change = changeBy(bob)
                                     .invite(alice)
                                     .invite(you)
-                                    .invite(UUID.randomUUID())
-                                    .invite(UUID.randomUUID())
+                                    .invite(ACI.from(UUID.randomUUID()))
+                                    .invite(ACI.from(UUID.randomUUID()))
                                     .build();
 
     assertThat(describeChange(change), is(Arrays.asList("Bob invited you to the group.", "Bob invited 3 people to the group.")));
@@ -465,8 +504,8 @@ public final class GroupsV2UpdateMessageProducerTest {
     DecryptedGroupChange change = changeByUnknown()
                                     .invite(alice)
                                     .invite(you)
-                                    .invite(UUID.randomUUID())
-                                    .invite(UUID.randomUUID())
+                                    .invite(ACI.from(UUID.randomUUID()))
+                                    .invite(ACI.from(UUID.randomUUID()))
                                     .build();
 
     assertThat(describeChange(change), is(Arrays.asList("You were invited to the group.", "3 people were invited to the group.")));
@@ -477,8 +516,8 @@ public final class GroupsV2UpdateMessageProducerTest {
     DecryptedGroupChange change = changeByUnknown()
                                     .invite(alice)
                                     .inviteBy(you, bob)
-                                    .invite(UUID.randomUUID())
-                                    .invite(UUID.randomUUID())
+                                    .invite(ACI.from(UUID.randomUUID()))
+                                    .invite(ACI.from(UUID.randomUUID()))
                                     .build();
 
     assertThat(describeChange(change), is(Arrays.asList("Bob invited you to the group.", "3 people were invited to the group.")));
@@ -489,8 +528,8 @@ public final class GroupsV2UpdateMessageProducerTest {
     DecryptedGroupChange change = changeBy(bob)
                                     .addMember(alice)
                                     .invite(you)
-                                    .invite(UUID.randomUUID())
-                                    .invite(UUID.randomUUID())
+                                    .invite(ACI.from(UUID.randomUUID()))
+                                    .invite(ACI.from(UUID.randomUUID()))
                                     .build();
 
     assertThat(describeChange(change), is(Arrays.asList("Bob invited you to the group.", "Bob added Alice.", "Bob invited 2 people to the group.")));
@@ -531,7 +570,7 @@ public final class GroupsV2UpdateMessageProducerTest {
   public void member_uninvited_2_people() {
     DecryptedGroupChange change = changeBy(alice)
                                     .uninvite(bob)
-                                    .uninvite(UUID.randomUUID())
+                                    .uninvite(ACI.from(UUID.randomUUID()))
                                     .build();
 
     assertThat(describeChange(change), is(singletonList("Alice revoked 2 invitations to the group.")));
@@ -550,7 +589,7 @@ public final class GroupsV2UpdateMessageProducerTest {
   public void you_uninvited_2_people() {
     DecryptedGroupChange change = changeBy(you)
                                     .uninvite(bob)
-                                    .uninvite(UUID.randomUUID())
+                                    .uninvite(ACI.from(UUID.randomUUID()))
                                     .build();
 
     assertThat(describeChange(change), is(singletonList("You revoked 2 invitations to the group.")));
@@ -596,7 +635,7 @@ public final class GroupsV2UpdateMessageProducerTest {
   public void unknown_revokes_2_invites() {
     DecryptedGroupChange change = changeByUnknown()
                                     .uninvite(bob)
-                                    .uninvite(UUID.randomUUID())
+                                    .uninvite(ACI.from(UUID.randomUUID()))
                                     .build();
 
     assertThat(describeChange(change), is(singletonList("2 invitations to the group were revoked.")));
@@ -607,8 +646,8 @@ public final class GroupsV2UpdateMessageProducerTest {
     DecryptedGroupChange change = changeByUnknown()
                                     .uninvite(bob)
                                     .uninvite(you)
-                                    .uninvite(UUID.randomUUID())
-                                    .uninvite(UUID.randomUUID())
+                                    .uninvite(ACI.from(UUID.randomUUID()))
+                                    .uninvite(ACI.from(UUID.randomUUID()))
                                     .build();
 
     assertThat(describeChange(change), is(Arrays.asList("An admin revoked your invitation to the group.", "3 invitations to the group were revoked.")));
@@ -962,11 +1001,12 @@ public final class GroupsV2UpdateMessageProducerTest {
     assertEquals("The admin approval for the group link has been turned on.", describeGroupLinkChange(null, AccessControl.AccessRequired.ANY, AccessControl.AccessRequired.ADMINISTRATOR));
   }
 
-  private String describeGroupLinkChange(@Nullable UUID editor, @NonNull AccessControl.AccessRequired fromAccess, AccessControl.AccessRequired toAccess){
-    DecryptedGroup       previousGroupState = DecryptedGroup.newBuilder()
-                                                            .setAccessControl(AccessControl.newBuilder()
-                                                                                           .setAddFromInviteLink(fromAccess))
-                                                            .build();
+  private String describeGroupLinkChange(@Nullable ACI editor, @NonNull AccessControl.AccessRequired fromAccess, AccessControl.AccessRequired toAccess){
+    DecryptedGroup       previousGroupState = new DecryptedGroup.Builder()
+                                                                .accessControl(new AccessControl.Builder()
+                                                                                                .addFromInviteLink(fromAccess)
+                                                                                                .build())
+                                                                .build();
     DecryptedGroupChange change             = (editor != null ? changeBy(editor) : changeByUnknown()).inviteLinkAccess(toAccess)
                                                                                                      .build();
 
@@ -1322,43 +1362,143 @@ public final class GroupsV2UpdateMessageProducerTest {
                              .build();
 
     assertThat(describeNewGroup(group), is("Group updated."));
-  } 
-  
+  }
+
+  @Test
+  public void makeRecipientsClickable_onePlaceholder() {
+    RecipientId id = RecipientId.from(1);
+
+    Spannable result = GroupsV2UpdateMessageProducer.makeRecipientsClickable(
+        ApplicationProvider.getApplicationContext(),
+        GroupsV2UpdateMessageProducer.makePlaceholder(id),
+        Collections.singletonList(id),
+        null
+    );
+
+    assertEquals("Alice", result.toString());
+  }
+
+  @Test
+  public void makeRecipientsClickable_twoPlaceholders_sameRecipient() {
+    RecipientId id          = RecipientId.from(1);
+    String      placeholder = GroupsV2UpdateMessageProducer.makePlaceholder(id);
+
+    Spannable result = GroupsV2UpdateMessageProducer.makeRecipientsClickable(
+        ApplicationProvider.getApplicationContext(),
+        placeholder + " " + placeholder,
+        Collections.singletonList(id),
+        null
+    );
+
+    assertEquals("Alice Alice", result.toString());
+  }
+
+  @Test
+  public void makeRecipientsClickable_twoPlaceholders_differentRecipient() {
+    RecipientId id1 = RecipientId.from(1);
+    RecipientId id2 = RecipientId.from(2);
+
+    String placeholder1 = GroupsV2UpdateMessageProducer.makePlaceholder(id1);
+    String placeholder2 = GroupsV2UpdateMessageProducer.makePlaceholder(id2);
+
+    Spannable result = GroupsV2UpdateMessageProducer.makeRecipientsClickable(
+        ApplicationProvider.getApplicationContext(),
+        placeholder1 + " " + placeholder2,
+        Arrays.asList(id1, id2),
+        null
+    );
+
+    assertEquals("Alice Bob", result.toString());
+  }
+
+  @Test
+  public void makeRecipientsClickable_complicated() {
+    RecipientId id1 = RecipientId.from(1);
+    RecipientId id2 = RecipientId.from(2);
+
+    String placeholder1 = GroupsV2UpdateMessageProducer.makePlaceholder(id1);
+    String placeholder2 = GroupsV2UpdateMessageProducer.makePlaceholder(id2);
+
+    Spannable result = GroupsV2UpdateMessageProducer.makeRecipientsClickable(
+        ApplicationProvider.getApplicationContext(),
+        placeholder1 + " said hello to " + placeholder2 + ", and " + placeholder2 + " said hello back to " + placeholder1 + ".",
+        Arrays.asList(id1, id2),
+        null
+    );
+
+    assertEquals("Alice said hello to Bob, and Bob said hello back to Alice.", result.toString());
+  }
+
+  private @NonNull String describeConvertedNewGroup(@NonNull DecryptedGroup groupState, @NonNull DecryptedGroupChange groupChange) {
+    GroupChangeChatUpdate update = GroupsV2UpdateMessageConverter.translateDecryptedChangeNewGroup(selfIds, new DecryptedGroupV2Context.Builder()
+        .change(groupChange)
+        .groupState(groupState)
+        .build());
+
+    return producer.describeChanges(update.updates).get(0).getSpannable().toString();
+  }
+
+  private @NonNull List<String> describeConvertedChange(@Nullable DecryptedGroup previousGroupState, @NonNull DecryptedGroupChange change) {
+    GroupChangeChatUpdate update = GroupsV2UpdateMessageConverter.translateDecryptedChangeUpdate(selfIds, new DecryptedGroupV2Context.Builder()
+        .change(change)
+        .previousGroupState(previousGroupState)
+        .build());
+
+    return Stream.of(producer.describeChanges(update.updates))
+                                        .map(UpdateDescription::getSpannable)
+                                        .map(Spannable::toString)
+                                        .toList();
+  }
+
   private @NonNull List<String> describeChange(@NonNull DecryptedGroupChange change) {
     return describeChange(null, change);
   }
 
   private @NonNull List<String> describeChange(@Nullable DecryptedGroup previousGroupState,
-                                               @NonNull DecryptedGroupChange change)
+                                                  @NonNull DecryptedGroupChange change)
   {
-    MainThreadUtil.setMainThread(false);
-    return Stream.of(producer.describeChanges(previousGroupState, change))
-                 .map(UpdateDescription::getString)
-                 .toList();
+    List<String> convertedChange = describeConvertedChange(previousGroupState, change);
+    List<String> describedChange = Stream.of(producer.describeChanges(previousGroupState, change))
+                                         .map(UpdateDescription::getSpannable)
+                                         .map(Spannable::toString)
+                                         .toList();
+    assertEquals(describedChange.size(), convertedChange.size());
+
+    ListIterator<String> convertedIterator = convertedChange.listIterator();
+    ListIterator<String> describedIterator = describedChange.listIterator();
+
+    while (convertedIterator.hasNext()) {
+      assertEquals(describedIterator.next(), convertedIterator.next());
+    }
+    return describedChange;
   }
 
   private @NonNull String describeNewGroup(@NonNull DecryptedGroup group) {
-    return describeNewGroup(group, DecryptedGroupChange.getDefaultInstance());
+    return describeNewGroup(group, new DecryptedGroupChange());
   }
 
   private @NonNull String describeNewGroup(@NonNull DecryptedGroup group, @NonNull DecryptedGroupChange groupChange) {
-    MainThreadUtil.setMainThread(false);
-    return producer.describeNewGroup(group, groupChange).getString();
+    String newGroupString = producer.describeNewGroup(group, groupChange).getSpannable().toString();
+    String convertedGroupString = describeConvertedNewGroup(group, groupChange);
+
+    assertEquals(newGroupString, convertedGroupString);
+
+    return newGroupString;
   }
 
-  private static GroupStateBuilder newGroupBy(UUID foundingMember, int revision) {
+  private static GroupStateBuilder newGroupBy(ACI foundingMember, int revision) {
     return new GroupStateBuilder(foundingMember, revision);
   }
 
-  private void assertSingleChangeMentioning(DecryptedGroupChange change, List<UUID> expectedMentions) {
-    List<ACI> expectedMentionAcis = expectedMentions.stream().map(ACI::from).collect(Collectors.toList());
+  private void assertSingleChangeMentioning(DecryptedGroupChange change, List<ACI> expectedMentions) {
+    List<ServiceId> expectedMentionSids = expectedMentions.stream().collect(Collectors.toList());
 
     List<UpdateDescription> changes = producer.describeChanges(null, change);
 
     assertThat(changes.size(), is(1));
 
     UpdateDescription description = changes.get(0);
-    assertThat(description.getMentioned(), is(expectedMentionAcis));
+    assertThat(description.getMentioned(), is(expectedMentionSids));
 
     if (expectedMentions.isEmpty()) {
       assertTrue(description.isStringStatic());
@@ -1371,36 +1511,24 @@ public final class GroupsV2UpdateMessageProducerTest {
 
     private final DecryptedGroup.Builder builder;
 
-    GroupStateBuilder(@NonNull UUID foundingMember, int revision) {
-    builder = DecryptedGroup.newBuilder()
-                            .setRevision(revision)
-                            .addMembers(DecryptedMember.newBuilder()
-                                                       .setUuid(UuidUtil.toByteString(foundingMember)));
+    GroupStateBuilder(@NonNull ACI foundingMember, int revision) {
+      builder = new DecryptedGroup.Builder()
+          .revision(revision)
+          .members(Collections.singletonList(new DecryptedMember.Builder().aciBytes(foundingMember.toByteString()).build()));
     }
 
-    GroupStateBuilder invite(@NonNull UUID inviter, @NonNull UUID invitee) {
-       builder.addPendingMembers(DecryptedPendingMember.newBuilder()
-                                                       .setUuid(UuidUtil.toByteString(invitee))
-                                                       .setAddedByUuid(UuidUtil.toByteString(inviter)));
-       return this;
+    GroupStateBuilder invite(@NonNull ACI inviter, @NonNull ServiceId invitee) {
+      builder.pendingMembers(CollectionsKt.plus(builder.pendingMembers, new DecryptedPendingMember.Builder().serviceIdBytes(invitee.toByteString()).addedByAci(inviter.toByteString()).build()));
+      return this;
     }
 
-    GroupStateBuilder member(@NonNull UUID member) {
-       builder.addMembers(DecryptedMember.newBuilder()
-                                         .setUuid(UuidUtil.toByteString(member)));
-       return this;
+    GroupStateBuilder member(@NonNull ACI member) {
+      builder.members(CollectionsKt.plus(builder.members, new DecryptedMember.Builder().aciBytes(member.toByteString()).build()));
+      return this;
     }
 
     public DecryptedGroup build() {
       return builder.build();
     }
-  }
-
-  private static @NonNull GroupsV2UpdateMessageProducer.DescribeMemberStrategy createDescriber(@NonNull Map<UUID, String> map) {
-    return aci -> {
-      String name = map.get(aci.uuid());
-      assertNotNull(name);
-      return name;
-    };
   }
 }

@@ -28,7 +28,8 @@ public final class WebRtcControls {
                                                                null,
                                                                FoldableState.flat(),
                                                                SignalAudioManager.AudioDevice.NONE,
-                                                               emptySet());
+                                                               emptySet(),
+                                                               false);
 
   private final boolean                             isRemoteVideoEnabled;
   private final boolean                             isLocalVideoEnabled;
@@ -41,6 +42,7 @@ public final class WebRtcControls {
   private final FoldableState                       foldableState;
   private final SignalAudioManager.AudioDevice      activeDevice;
   private final Set<SignalAudioManager.AudioDevice> availableDevices;
+  private final boolean                             isCallLink;
 
   private WebRtcControls() {
     this(false,
@@ -53,7 +55,8 @@ public final class WebRtcControls {
          null,
          FoldableState.flat(),
          SignalAudioManager.AudioDevice.NONE,
-         emptySet());
+         emptySet(),
+         false);
   }
 
   WebRtcControls(boolean isLocalVideoEnabled,
@@ -66,7 +69,8 @@ public final class WebRtcControls {
                  @Nullable Long participantLimit,
                  @NonNull FoldableState foldableState,
                  @NonNull SignalAudioManager.AudioDevice activeDevice,
-                 @NonNull Set<SignalAudioManager.AudioDevice> availableDevices)
+                 @NonNull Set<SignalAudioManager.AudioDevice> availableDevices,
+                 boolean isCallLink)
   {
     this.isLocalVideoEnabled          = isLocalVideoEnabled;
     this.isRemoteVideoEnabled         = isRemoteVideoEnabled;
@@ -79,6 +83,7 @@ public final class WebRtcControls {
     this.foldableState                = foldableState;
     this.activeDevice                 = activeDevice;
     this.availableDevices             = availableDevices;
+    this.isCallLink                   = isCallLink;
   }
 
   public @NonNull WebRtcControls withFoldableState(FoldableState foldableState) {
@@ -92,26 +97,34 @@ public final class WebRtcControls {
                               participantLimit,
                               foldableState,
                               activeDevice,
-                              availableDevices);
+                              availableDevices,
+                              isCallLink);
   }
 
-  boolean displayErrorControls() {
+  /**
+   * This is only true at the very start of a call and will then never be true again
+   */
+  public boolean hideControlsSheetInitially() {
+    return displayIncomingCallButtons() || callState == CallState.NONE || isHandledElsewhere();
+  }
+
+  public boolean displayErrorControls() {
     return isError();
   }
 
-  boolean displayStartCallControls() {
+  public boolean displayStartCallControls() {
     return isPreJoin();
   }
 
-  boolean adjustForFold() {
+  public boolean adjustForFold() {
     return foldableState.isFolded();
   }
 
-  @Px int getFold() {
+  public @Px int getFold() {
     return foldableState.getFoldPoint();
   }
 
-  @StringRes int getStartCallButtonText() {
+  public @StringRes int getStartCallButtonText() {
     if (isGroupCall()) {
       if (groupCallState == GroupCallState.FULL) {
         return R.string.WebRtcCallView__call_is_full;
@@ -122,102 +135,116 @@ public final class WebRtcControls {
     return R.string.WebRtcCallView__start_call;
   }
 
-  boolean isStartCallEnabled() {
+  public boolean isStartCallEnabled() {
     return groupCallState != GroupCallState.FULL;
   }
 
-  boolean displayGroupCallFull() {
+  public boolean displayGroupCallFull() {
     return groupCallState == GroupCallState.FULL;
   }
 
-  @NonNull String getGroupCallFullMessage(@NonNull Context context) {
+  public @NonNull String getGroupCallFullMessage(@NonNull Context context) {
     if (participantLimit != null) {
       return context.getString(R.string.WebRtcCallView__the_maximum_number_of_d_participants_has_been_Reached_for_this_call, participantLimit);
     }
     return "";
   }
 
-  boolean displayGroupMembersButton() {
+  public boolean displayGroupMembersButton() {
     return (groupCallState.isAtLeast(GroupCallState.CONNECTING) && hasAtLeastOneRemote) || groupCallState.isAtLeast(GroupCallState.FULL);
   }
 
-  boolean displayEndCall() {
-    return isAtLeastOutgoing();
+  public boolean displayEndCall() {
+    return isAtLeastOutgoing() || callState == CallState.RECONNECTING;
   }
 
-  boolean displayMuteAudio() {
+  public boolean displayOverflow() {
+    return isAtLeastOutgoing() && hasAtLeastOneRemote && isGroupCall();
+  }
+
+  public boolean displayMuteAudio() {
     return isPreJoin() || isAtLeastOutgoing();
   }
 
-  boolean displayVideoToggle() {
+  public boolean displayVideoToggle() {
     return isPreJoin() || isAtLeastOutgoing();
   }
 
-  boolean displayAudioToggle() {
-    return (isPreJoin() || isAtLeastOutgoing()) && (!isLocalVideoEnabled || enableHeadsetInAudioToggle());
+  public boolean displayAudioToggle() {
+    return (isPreJoin() || isAtLeastOutgoing()) && (!isLocalVideoEnabled || isBluetoothHeadsetAvailableForAudioToggle() || isWiredHeadsetAvailableForAudioToggle());
   }
 
-  boolean displayCameraToggle() {
-    return (isPreJoin() || isAtLeastOutgoing()) && isLocalVideoEnabled && isMoreThanOneCameraAvailable;
+  public boolean displayCameraToggle() {
+    return (isPreJoin() || (isAtLeastOutgoing() && !hasAtLeastOneRemote)) && isLocalVideoEnabled && isMoreThanOneCameraAvailable && !isInPipMode;
   }
 
-  boolean displayRemoteVideoRecycler() {
+  public boolean displayRemoteVideoRecycler() {
     return isOngoing();
   }
 
-  boolean displayAnswerWithAudio() {
+  public boolean displayAnswerWithoutVideo() {
     return isIncoming() && isRemoteVideoEnabled;
   }
 
-  boolean displayIncomingCallButtons() {
+  public boolean displayIncomingCallButtons() {
     return isIncoming();
   }
 
-  boolean enableHandsetInAudioToggle() {
+  public boolean isEarpieceAvailableForAudioToggle() {
     return !isLocalVideoEnabled;
   }
 
-  boolean enableHeadsetInAudioToggle() {
+  public boolean isBluetoothHeadsetAvailableForAudioToggle() {
     return availableDevices.contains(SignalAudioManager.AudioDevice.BLUETOOTH);
   }
 
-  boolean isFadeOutEnabled() {
-    return isAtLeastOutgoing() && isRemoteVideoEnabled;
+  public boolean isWiredHeadsetAvailableForAudioToggle() {
+    return availableDevices.contains(SignalAudioManager.AudioDevice.WIRED_HEADSET);
   }
 
-  boolean displaySmallOngoingCallButtons() {
-    return isAtLeastOutgoing() && displayAudioToggle() && displayCameraToggle();
+  public boolean isFadeOutEnabled() {
+    return isAtLeastOutgoing() && isRemoteVideoEnabled && callState != CallState.RECONNECTING;
   }
 
-  boolean displayLargeOngoingCallButtons() {
-    return isAtLeastOutgoing() && !(displayAudioToggle() && displayCameraToggle());
+  public boolean displaySmallCallButtons() {
+    return displayedButtonCount() >= 5;
   }
 
-  boolean displayTopViews() {
+  public boolean displayTopViews() {
     return !isInPipMode;
   }
 
-  @NonNull WebRtcAudioOutput getAudioOutput() {
+  public boolean displayReactions() {
+    return !isInPipMode;
+  }
+
+  public boolean displayRaiseHand() {
+    return FeatureFlags.groupCallRaiseHand() && !isInPipMode;
+  }
+
+  public @NonNull WebRtcAudioOutput getAudioOutput() {
     switch (activeDevice) {
       case SPEAKER_PHONE:
         return WebRtcAudioOutput.SPEAKER;
       case BLUETOOTH:
-        return WebRtcAudioOutput.HEADSET;
+        return WebRtcAudioOutput.BLUETOOTH_HEADSET;
+      case WIRED_HEADSET:
+        return WebRtcAudioOutput.WIRED_HEADSET;
       default:
         return WebRtcAudioOutput.HANDSET;
     }
   }
 
-  boolean showSmallHeader() {
+  public boolean showSmallHeader() {
     return isAtLeastOutgoing();
   }
 
-  boolean showFullScreenShade() {
+  public boolean showFullScreenShade() {
     return isPreJoin() || isIncoming();
   }
 
-  boolean displayRingToggle() {
-    return FeatureFlags.groupCallRinging() && isPreJoin() && isGroupCall() && !hasAtLeastOneRemote;
+  public boolean displayRingToggle() {
+    return isPreJoin() && isGroupCall() && !isCallLink && !hasAtLeastOneRemote;
   }
 
   private boolean isError() {
@@ -236,6 +263,10 @@ public final class WebRtcControls {
     return callState == CallState.INCOMING;
   }
 
+  private boolean isHandledElsewhere() {
+    return callState == CallState.HANDLED_ELSEWHERE;
+  }
+
   private boolean isAtLeastOutgoing() {
     return callState.isAtLeast(CallState.OUTGOING);
   }
@@ -244,10 +275,22 @@ public final class WebRtcControls {
     return groupCallState != GroupCallState.NONE;
   }
 
+  private int displayedButtonCount() {
+    return (displayAudioToggle() ? 1 : 0) +
+           (displayCameraToggle() ? 1 : 0) +
+           (displayVideoToggle() ? 1 : 0) +
+           (displayMuteAudio() ? 1 : 0) +
+           (displayRingToggle() ? 1 : 0) +
+           (displayOverflow() ? 1 : 0) +
+           (displayEndCall() ? 1 : 0);
+  }
+
   public enum CallState {
     NONE,
     ERROR,
+    HANDLED_ELSEWHERE,
     PRE_JOIN,
+    RECONNECTING,
     INCOMING,
     OUTGOING,
     ONGOING,

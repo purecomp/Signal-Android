@@ -2,17 +2,18 @@ package org.thoughtcrime.securesms.jobs;
 
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.crypto.UnidentifiedAccessUtil;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.jobmanager.Data;
+import org.thoughtcrime.securesms.jobmanager.JsonJobData;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint;
+import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.net.NotPushRegisteredException;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
-import org.whispersystems.libsignal.util.guava.Optional;
 import org.whispersystems.signalservice.api.SignalServiceMessageSender;
 import org.whispersystems.signalservice.api.crypto.UntrustedIdentityException;
 import org.whispersystems.signalservice.api.messages.multidevice.ConfigurationMessage;
@@ -21,6 +22,7 @@ import org.whispersystems.signalservice.api.push.exceptions.PushNetworkException
 import org.whispersystems.signalservice.api.push.exceptions.ServerRejectedException;
 
 import java.io.IOException;
+import java.util.Optional;
 
 public class MultiDeviceConfigurationUpdateJob extends BaseJob {
 
@@ -70,12 +72,12 @@ public class MultiDeviceConfigurationUpdateJob extends BaseJob {
   }
 
   @Override
-  public @NonNull Data serialize() {
-    return new Data.Builder().putBoolean(KEY_READ_RECEIPTS_ENABLED, readReceiptsEnabled)
-                             .putBoolean(KEY_TYPING_INDICATORS_ENABLED, typingIndicatorsEnabled)
-                             .putBoolean(KEY_UNIDENTIFIED_DELIVERY_INDICATORS_ENABLED, unidentifiedDeliveryIndicatorsEnabled)
-                             .putBoolean(KEY_LINK_PREVIEWS_ENABLED, linkPreviewsEnabled)
-                             .build();
+  public @Nullable byte[] serialize() {
+    return new JsonJobData.Builder().putBoolean(KEY_READ_RECEIPTS_ENABLED, readReceiptsEnabled)
+                                    .putBoolean(KEY_TYPING_INDICATORS_ENABLED, typingIndicatorsEnabled)
+                                    .putBoolean(KEY_UNIDENTIFIED_DELIVERY_INDICATORS_ENABLED, unidentifiedDeliveryIndicatorsEnabled)
+                                    .putBoolean(KEY_LINK_PREVIEWS_ENABLED, linkPreviewsEnabled)
+                                    .serialize();
   }
 
   @Override
@@ -91,6 +93,11 @@ public class MultiDeviceConfigurationUpdateJob extends BaseJob {
 
     if (!TextSecurePreferences.isMultiDevice(context)) {
       Log.i(TAG, "Not multi device, aborting...");
+      return;
+    }
+
+    if (SignalStore.account().isLinkedDevice()) {
+      Log.i(TAG, "Not primary device, aborting...");
       return;
     }
 
@@ -115,7 +122,9 @@ public class MultiDeviceConfigurationUpdateJob extends BaseJob {
 
   public static final class Factory implements Job.Factory<MultiDeviceConfigurationUpdateJob> {
     @Override
-    public @NonNull MultiDeviceConfigurationUpdateJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull MultiDeviceConfigurationUpdateJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
+      JsonJobData data = JsonJobData.deserialize(serializedData);
+
       return new MultiDeviceConfigurationUpdateJob(parameters,
                                                    data.getBooleanOrDefault(KEY_READ_RECEIPTS_ENABLED, false),
                                                    data.getBooleanOrDefault(KEY_TYPING_INDICATORS_ENABLED, false),

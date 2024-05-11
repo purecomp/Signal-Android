@@ -10,6 +10,7 @@ import androidx.lifecycle.ViewModelProvider;
 import com.annimon.stream.Stream;
 
 import org.signal.core.util.logging.Log;
+import org.signal.core.util.money.FiatMoney;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.components.settings.SettingHeader;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
@@ -21,7 +22,6 @@ import org.thoughtcrime.securesms.payments.Payment;
 import org.thoughtcrime.securesms.payments.UnreadPaymentsRepository;
 import org.thoughtcrime.securesms.payments.currency.CurrencyExchange;
 import org.thoughtcrime.securesms.payments.currency.CurrencyExchangeRepository;
-import org.signal.core.util.money.FiatMoney;
 import org.thoughtcrime.securesms.payments.preferences.model.InProgress;
 import org.thoughtcrime.securesms.payments.preferences.model.InfoCard;
 import org.thoughtcrime.securesms.payments.preferences.model.IntroducingPayments;
@@ -29,14 +29,14 @@ import org.thoughtcrime.securesms.payments.preferences.model.NoRecentActivity;
 import org.thoughtcrime.securesms.payments.preferences.model.PaymentItem;
 import org.thoughtcrime.securesms.payments.preferences.model.SeeAll;
 import org.thoughtcrime.securesms.util.AsynchronousCallback;
-import org.thoughtcrime.securesms.util.MappingModelList;
 import org.thoughtcrime.securesms.util.SingleLiveEvent;
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingModelList;
 import org.thoughtcrime.securesms.util.livedata.LiveDataUtil;
 import org.thoughtcrime.securesms.util.livedata.Store;
-import org.whispersystems.libsignal.util.guava.Optional;
 import org.whispersystems.signalservice.api.payments.Money;
 
 import java.util.List;
+import java.util.Optional;
 
 public class PaymentsHomeViewModel extends ViewModel {
 
@@ -51,6 +51,7 @@ public class PaymentsHomeViewModel extends ViewModel {
   private final LiveData<FiatMoney>                exchange;
   private final SingleLiveEvent<PaymentStateEvent> paymentStateEvents;
   private final SingleLiveEvent<ErrorEnabling>     errorEnablingPayments;
+  private final LiveData<Boolean>                  enclaveFailure;
 
   private final PaymentsHomeRepository     paymentsHomeRepository;
   private final CurrencyExchangeRepository currencyExchangeRepository;
@@ -72,7 +73,7 @@ public class PaymentsHomeViewModel extends ViewModel {
     this.exchangeLoadState          = LiveDataUtil.mapDistinct(store.getStateLiveData(), PaymentsHomeState::getExchangeRateLoadState);
     this.paymentStateEvents         = new SingleLiveEvent<>();
     this.errorEnablingPayments      = new SingleLiveEvent<>();
-
+    this.enclaveFailure             = LiveDataUtil.mapDistinct(SignalStore.paymentsValues().enclaveFailure(), isFailure -> isFailure);
     this.store.update(paymentsRepository.getRecentPayments(), this::updateRecentPayments);
 
     LiveData<CurrencyExchange.ExchangeRate> liveExchangeRate = LiveDataUtil.combineLatest(SignalStore.paymentsValues().liveCurrentCurrency(),
@@ -82,9 +83,15 @@ public class PaymentsHomeViewModel extends ViewModel {
     LiveData<Optional<FiatMoney>> liveExchangeAmount = LiveDataUtil.combineLatest(this.balance,
                                                                                   liveExchangeRate,
                                                                                   (balance, exchangeRate) -> exchangeRate.exchange(balance));
-    this.store.update(liveExchangeAmount, (amount, state) -> state.updateCurrencyAmount(amount.orNull()));
+    this.store.update(liveExchangeAmount, (amount, state) -> state.updateCurrencyAmount(amount.orElse(null)));
 
     refreshExchangeRates(true);
+  }
+
+  @Override
+  protected void onCleared() {
+    super.onCleared();
+    store.clear();
   }
 
   private static PaymentsHomeState.PaymentsState getPaymentsState() {
@@ -107,6 +114,14 @@ public class PaymentsHomeViewModel extends ViewModel {
 
   @NonNull LiveData<ErrorEnabling> getErrorEnablingPayments() {
     return errorEnablingPayments;
+  }
+
+  @NonNull LiveData<Boolean> getEnclaveFailure() {
+    return enclaveFailure;
+  }
+
+  @NonNull boolean isEnclaveFailurePresent() {
+    return Boolean.TRUE.equals(getEnclaveFailure().getValue());
   }
 
   @NonNull LiveData<MappingModelList> getList() {
@@ -188,7 +203,7 @@ public class PaymentsHomeViewModel extends ViewModel {
     return state.updatePayments(paymentItems, payments.size());
   }
 
-  public void onInfoCardDismissed() {
+  public void updateStore() {
     store.update(s -> s);
   }
 
@@ -203,6 +218,7 @@ public class PaymentsHomeViewModel extends ViewModel {
       @Override
       public void onComplete(@Nullable Void result) {
         store.update(state -> state.updatePaymentsEnabled(PaymentsHomeState.PaymentsState.ACTIVATED));
+        paymentStateEvents.postValue(PaymentStateEvent.ACTIVATED);
       }
 
       @Override

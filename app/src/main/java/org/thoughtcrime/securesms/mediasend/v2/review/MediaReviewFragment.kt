@@ -2,9 +2,16 @@ package org.thoughtcrime.securesms.mediasend.v2.review
 
 import android.animation.Animator
 import android.animation.AnimatorSet
+import android.content.Context
+import android.content.res.ColorStateList
 import android.graphics.Color
+import android.graphics.Rect
+import android.net.Uri
 import android.os.Bundle
+import android.provider.OpenableColumns
+import android.view.Gravity
 import android.view.View
+import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
@@ -12,19 +19,33 @@ import android.widget.Toast
 import android.widget.ViewSwitcher
 import androidx.activity.OnBackPressedCallback
 import androidx.constraintlayout.widget.ConstraintLayout
+import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.DrawableCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.updateLayoutParams
 import androidx.fragment.app.Fragment
-import androidx.fragment.app.setFragmentResultListener
 import androidx.fragment.app.viewModels
+import androidx.navigation.fragment.findNavController
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
 import app.cash.exhaustive.Exhaustive
-import io.reactivex.rxjava3.disposables.CompositeDisposable
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.imageview.ShapeableImageView
+import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers
+import org.signal.core.util.concurrent.LifecycleDisposable
+import org.signal.core.util.concurrent.SimpleTask
+import org.signal.core.util.isNotNullOrBlank
+import org.signal.core.util.logging.Log
 import org.thoughtcrime.securesms.R
-import org.thoughtcrime.securesms.conversation.mutiselect.forward.MultiselectForwardFragment
+import org.thoughtcrime.securesms.contacts.paged.ContactSearchKey
+import org.thoughtcrime.securesms.conversation.MessageSendType
+import org.thoughtcrime.securesms.conversation.ScheduleMessageContextMenu
+import org.thoughtcrime.securesms.conversation.ScheduleMessageTimePickerBottomSheet
+import org.thoughtcrime.securesms.conversation.mutiselect.forward.MultiselectForwardActivity
 import org.thoughtcrime.securesms.conversation.mutiselect.forward.MultiselectForwardFragmentArgs
-import org.thoughtcrime.securesms.keyboard.findListener
+import org.thoughtcrime.securesms.keyvalue.SignalStore
+import org.thoughtcrime.securesms.mediasend.Media
 import org.thoughtcrime.securesms.mediasend.MediaSendActivityResult
 import org.thoughtcrime.securesms.mediasend.v2.HudCommand
 import org.thoughtcrime.securesms.mediasend.v2.MediaAnimations
@@ -33,18 +54,31 @@ import org.thoughtcrime.securesms.mediasend.v2.MediaSelectionNavigator.Companion
 import org.thoughtcrime.securesms.mediasend.v2.MediaSelectionState
 import org.thoughtcrime.securesms.mediasend.v2.MediaSelectionViewModel
 import org.thoughtcrime.securesms.mediasend.v2.MediaValidator
+import org.thoughtcrime.securesms.mediasend.v2.stories.StoriesMultiselectForwardActivity
+import org.thoughtcrime.securesms.mms.MediaConstraints
 import org.thoughtcrime.securesms.mms.SentMediaQuality
 import org.thoughtcrime.securesms.permissions.Permissions
-import org.thoughtcrime.securesms.recipients.RecipientId
-import org.thoughtcrime.securesms.util.MappingAdapter
+import org.thoughtcrime.securesms.recipients.Recipient
+import org.thoughtcrime.securesms.scribbles.ImageEditorFragment
+import org.thoughtcrime.securesms.util.BottomSheetUtil
 import org.thoughtcrime.securesms.util.MediaUtil
+import org.thoughtcrime.securesms.util.MemoryUnitFormat
+import org.thoughtcrime.securesms.util.SystemWindowInsetsSetter
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingAdapter
+import org.thoughtcrime.securesms.util.fragments.requireListener
 import org.thoughtcrime.securesms.util.views.TouchInterceptingFrameLayout
 import org.thoughtcrime.securesms.util.visible
+import org.thoughtcrime.securesms.video.TranscodingQuality
+import org.thoughtcrime.securesms.video.videoconverter.VideoThumbnailsRangeSelectorView
+import java.io.IOException
+import java.util.Locale
+import java.util.concurrent.TimeUnit
+import kotlin.math.roundToInt
 
 /**
  * Allows the user to view and edit selected media.
  */
-class MediaReviewFragment : Fragment(R.layout.v2_media_review_fragment) {
+class MediaReviewFragment : Fragment(R.layout.v2_media_review_fragment), ScheduleMessageTimePickerBottomSheet.ScheduleCallback, VideoThumbnailsRangeSelectorView.RangeDragListener {
 
   private val sharedViewModel: MediaSelectionViewModel by viewModels(
     ownerProducer = { requireActivity() }
@@ -56,31 +90,42 @@ class MediaReviewFragment : Fragment(R.layout.v2_media_review_fragment) {
   private lateinit var cropAndRotateButton: View
   private lateinit var qualityButton: ImageView
   private lateinit var saveButton: View
-  private lateinit var sendButton: View
+  private lateinit var sendButton: ImageView
   private lateinit var addMediaButton: View
   private lateinit var viewOnceButton: ViewSwitcher
-  private lateinit var viewOnceMessage: TextView
+  private lateinit var emojiButton: ShapeableImageView
   private lateinit var addMessageButton: TextView
-  private lateinit var addMessageEntry: TextView
   private lateinit var recipientDisplay: TextView
   private lateinit var pager: ViewPager2
   private lateinit var controls: ConstraintLayout
   private lateinit var selectionRecycler: RecyclerView
   private lateinit var controlsShade: View
+  private lateinit var videoTimeLine: VideoThumbnailsRangeSelectorView
+  private lateinit var videoSizeHint: TextView
+  private lateinit var videoTimelinePlaceholder: View
   private lateinit var progress: ProgressBar
   private lateinit var progressWrapper: TouchInterceptingFrameLayout
 
+  private val exclusionZone = listOf(Rect())
   private val navigator = MediaSelectionNavigator(
-    toGallery = R.id.action_mediaReviewFragment_to_mediaGalleryFragment,
+    toGallery = R.id.action_mediaReviewFragment_to_mediaGalleryFragment
   )
 
   private var animatorSet: AnimatorSet? = null
-  private var disposables: CompositeDisposable? = null
+  private var disposables: LifecycleDisposable = LifecycleDisposable()
+  private var sentMediaQuality: SentMediaQuality = SignalStore.settings().sentMediaQuality
+  private var viewOnceToggleState: MediaSelectionState.ViewOnceToggleState = MediaSelectionState.ViewOnceToggleState.default
+
+  private var scheduledSendTime: Long? = null
 
   override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
     postponeEnterTransition()
 
-    callback = requireNotNull(findListener())
+    SystemWindowInsetsSetter.attach(view, viewLifecycleOwner)
+
+    disposables.bindTo(viewLifecycleOwner)
+
+    callback = requireListener()
 
     drawToolButton = view.findViewById(R.id.draw_tool)
     cropAndRotateButton = view.findViewById(R.id.crop_and_rotate_tool)
@@ -89,33 +134,40 @@ class MediaReviewFragment : Fragment(R.layout.v2_media_review_fragment) {
     sendButton = view.findViewById(R.id.send)
     addMediaButton = view.findViewById(R.id.add_media)
     viewOnceButton = view.findViewById(R.id.view_once_toggle)
+    emojiButton = view.findViewById(R.id.emoji_button)
     addMessageButton = view.findViewById(R.id.add_a_message)
-    addMessageEntry = view.findViewById(R.id.add_a_message_entry)
     recipientDisplay = view.findViewById(R.id.recipient)
     pager = view.findViewById(R.id.media_pager)
     controls = view.findViewById(R.id.controls)
     selectionRecycler = view.findViewById(R.id.selection_recycler)
     controlsShade = view.findViewById(R.id.controls_shade)
-    viewOnceMessage = view.findViewById(R.id.view_once_message)
     progress = view.findViewById(R.id.progress)
     progressWrapper = view.findViewById(R.id.progress_wrapper)
+    videoTimeLine = view.findViewById(R.id.video_timeline)
+    videoSizeHint = view.findViewById(R.id.video_size_hint)
+    videoTimelinePlaceholder = view.findViewById(R.id.timeline_placeholder)
 
     DrawableCompat.setTint(progress.indeterminateDrawable, Color.WHITE)
     progressWrapper.setOnInterceptTouchEventListener { true }
 
     val pagerAdapter = MediaReviewFragmentPagerAdapter(this)
 
-    disposables = CompositeDisposable()
-    disposables?.add(
-      sharedViewModel.hudCommands.subscribe {
-        when (it) {
-          HudCommand.ResumeEntryTransition -> startPostponedEnterTransition()
-          else -> Unit
-        }
+    disposables += sharedViewModel.hudCommands.subscribe {
+      when (it) {
+        HudCommand.ResumeEntryTransition -> startPostponedEnterTransition()
+        else -> Unit
       }
-    )
+    }
 
     pager.adapter = pagerAdapter
+
+    controls.addOnLayoutChangeListener { v, left, _, right, _, _, _, _, _ ->
+      val outRect: Rect = exclusionZone[0]
+      videoTimeLine.getHitRect(outRect)
+      outRect.left = left
+      outRect.right = right
+      ViewCompat.setSystemGestureExclusionRects(v, exclusionZone)
+    }
 
     drawToolButton.setOnClickListener {
       sharedViewModel.sendCommand(HudCommand.StartDraw)
@@ -126,24 +178,92 @@ class MediaReviewFragment : Fragment(R.layout.v2_media_review_fragment) {
     }
 
     qualityButton.setOnClickListener {
-      QualitySelectorBottomSheetDialog.show(parentFragmentManager)
+      QualitySelectorBottomSheet().show(parentFragmentManager, BottomSheetUtil.STANDARD_BOTTOM_SHEET_FRAGMENT_TAG)
     }
 
     saveButton.setOnClickListener {
       sharedViewModel.sendCommand(HudCommand.SaveMedia)
     }
 
-    setFragmentResultListener(MultiselectForwardFragment.RESULT_SELECTION) { _, bundle ->
-      val recipientIds: List<RecipientId> = requireNotNull(bundle.getParcelableArrayList(MultiselectForwardFragment.RESULT_SELECTION_RECIPIENTS))
-      performSend(recipientIds)
+    val multiselectContract = MultiselectForwardActivity.SelectionContract()
+    val storiesContract = StoriesMultiselectForwardActivity.SelectionContract()
+
+    val multiselectLauncher = registerForActivityResult(multiselectContract) { keys ->
+      if (keys.isNotEmpty()) {
+        performSend(keys)
+      }
+    }
+
+    val storiesLauncher = registerForActivityResult(storiesContract) { keys ->
+      if (keys.isNotEmpty()) {
+        performSend(keys)
+      }
     }
 
     sendButton.setOnClickListener {
+      val viewOnce: Boolean = sharedViewModel.state.value?.viewOnceToggleState == MediaSelectionState.ViewOnceToggleState.ONCE
+
       if (sharedViewModel.isContactSelectionRequired) {
-        val args = MultiselectForwardFragmentArgs(false, title = R.string.MediaReviewFragment__send_to)
-        MultiselectForwardFragment.show(parentFragmentManager, args)
+        val args = MultiselectForwardFragmentArgs(
+          title = R.string.MediaReviewFragment__send_to,
+          storySendRequirements = sharedViewModel.getStorySendRequirements(),
+          isSearchEnabled = !sharedViewModel.isStory(),
+          isViewOnce = viewOnce
+        )
+
+        if (sharedViewModel.isStory()) {
+          val snapshot = sharedViewModel.state.value
+
+          if (snapshot != null) {
+            sendButton.isEnabled = false
+            SimpleTask.run(viewLifecycleOwner.lifecycle, {
+              snapshot.selectedMedia.take(2).map { media ->
+                val editorData = snapshot.editorStateMap[media.uri]
+                if (MediaUtil.isImageType(media.mimeType) && editorData != null && editorData is ImageEditorFragment.Data) {
+                  val model = editorData.readModel()
+                  if (model != null) {
+                    ImageEditorFragment.renderToSingleUseBlob(requireContext(), model)
+                  } else {
+                    media.uri
+                  }
+                } else {
+                  media.uri
+                }
+              }
+            }, {
+              sendButton.isEnabled = true
+              storiesLauncher.launch(StoriesMultiselectForwardActivity.Args(args, it))
+            })
+          } else {
+            storiesLauncher.launch(StoriesMultiselectForwardActivity.Args(args, emptyList()))
+          }
+          scheduledSendTime = null
+        } else {
+          multiselectLauncher.launch(args)
+        }
+      } else if (sharedViewModel.isAddToGroupStoryFlow) {
+        MaterialAlertDialogBuilder(requireContext())
+          .setMessage(getString(R.string.MediaReviewFragment__add_to_the_group_story, sharedViewModel.state.value!!.recipient!!.getDisplayName(requireContext())))
+          .setPositiveButton(R.string.MediaReviewFragment__add_to_story) { _, _ -> performSend() }
+          .setNegativeButton(android.R.string.cancel) { _, _ -> }
+          .show()
+        scheduledSendTime = null
       } else {
         performSend()
+      }
+    }
+    if (!sharedViewModel.isStory()) {
+      sendButton.setOnLongClickListener {
+        ScheduleMessageContextMenu.show(it, (requireView() as ViewGroup)) { time: Long ->
+          if (time == -1L) {
+            scheduledSendTime = null
+            ScheduleMessageTimePickerBottomSheet.showSchedule(childFragmentManager)
+          } else {
+            scheduledSendTime = time
+            sendButton.performClick()
+          }
+        }
+        true
       }
     }
 
@@ -155,12 +275,14 @@ class MediaReviewFragment : Fragment(R.layout.v2_media_review_fragment) {
       sharedViewModel.incrementViewOnceState()
     }
 
-    addMessageButton.setOnClickListener {
-      AddMessageDialogFragment.show(parentFragmentManager, sharedViewModel.state.value?.message)
+    if (!SignalStore.settings().isPreferSystemEmoji) {
+      emojiButton.setOnClickListener {
+        AddMessageDialogFragment.show(parentFragmentManager, sharedViewModel.state.value?.message, true)
+      }
     }
 
-    addMessageEntry.setOnClickListener {
-      AddMessageDialogFragment.show(parentFragmentManager, sharedViewModel.state.value?.message)
+    addMessageButton.setOnClickListener {
+      AddMessageDialogFragment.show(parentFragmentManager, sharedViewModel.state.value?.message, false)
     }
 
     if (sharedViewModel.isReply) {
@@ -169,11 +291,17 @@ class MediaReviewFragment : Fragment(R.layout.v2_media_review_fragment) {
 
     pager.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
       override fun onPageSelected(position: Int) {
-        sharedViewModel.setFocusedMedia(position)
+        qualityButton.alpha = 0f
+        saveButton.alpha = 0f
+        sharedViewModel.onPageChanged(position)
       }
     })
 
-    val selectionAdapter = MappingAdapter()
+    if (MediaConstraints.isVideoTranscodeAvailable()) {
+      videoTimeLine.registerEditorOnRangeChangeListener(this)
+    }
+
+    val selectionAdapter = MappingAdapter(false)
     MediaReviewAddItem.register(selectionAdapter) {
       launchGallery()
     }
@@ -181,7 +309,7 @@ class MediaReviewFragment : Fragment(R.layout.v2_media_review_fragment) {
       if (isSelected) {
         sharedViewModel.removeMedia(media)
       } else {
-        sharedViewModel.setFocusedMedia(media)
+        sharedViewModel.onPageChanged(media)
       }
     }
     selectionRecycler.adapter = selectionAdapter
@@ -194,28 +322,34 @@ class MediaReviewFragment : Fragment(R.layout.v2_media_review_fragment) {
         state.selectedMedia.map { MediaReviewSelectedItem.Model(it, state.focusedMedia == it) } + MediaReviewAddItem.Model
       )
 
+      presentSendButton(state.sendType, state.recipient)
       presentPager(state)
-      presentAddMessageEntry(state.message)
-      presentImageQualityToggle(state.quality)
+      presentAddMessageEntry(state.viewOnceToggleState, state.message)
+      presentImageQualityToggle(state)
+      if (state.quality != sentMediaQuality) {
+        presentQualityToggleToast(state)
+      }
+      sentMediaQuality = state.quality
 
       viewOnceButton.displayedChild = if (state.viewOnceToggleState == MediaSelectionState.ViewOnceToggleState.ONCE) 1 else 0
-      sendButton.isEnabled = !state.isSent && state.selectedMedia.isNotEmpty()
+      if (state.viewOnceToggleState != viewOnceToggleState &&
+        state.viewOnceToggleState == MediaSelectionState.ViewOnceToggleState.ONCE &&
+        state.selectedMedia.size == 1
+      ) {
+        presentViewOnceToggleToast(MediaUtil.isNonGifVideo(state.selectedMedia[0]))
+      }
+      viewOnceToggleState = state.viewOnceToggleState
+
+      presentVideoTimeline(state)
+      presentVideoSizeHint(state)
 
       computeViewStateAndAnimate(state)
     }
 
-    sharedViewModel.mediaErrors.observe(viewLifecycleOwner) { error: MediaValidator.FilterError ->
-      @Exhaustive
-      when (error) {
-        MediaValidator.FilterError.ITEM_TOO_LARGE -> Toast.makeText(requireContext(), R.string.MediaReviewFragment__one_or_more_items_were_too_large, Toast.LENGTH_SHORT).show()
-        MediaValidator.FilterError.ITEM_INVALID_TYPE -> Toast.makeText(requireContext(), R.string.MediaReviewFragment__one_or_more_items_were_invalid, Toast.LENGTH_SHORT).show()
-        MediaValidator.FilterError.TOO_MANY_ITEMS -> Toast.makeText(requireContext(), R.string.MediaReviewFragment__too_many_items_selected, Toast.LENGTH_SHORT).show()
-        MediaValidator.FilterError.NO_ITEMS -> {
-          Toast.makeText(requireContext(), R.string.MediaReviewFragment__one_or_more_items_were_invalid, Toast.LENGTH_SHORT).show()
-          callback.onNoMediaSelected()
-        }
-      }
-    }
+    disposables.bindTo(viewLifecycleOwner)
+    disposables += sharedViewModel.mediaErrors
+      .observeOn(AndroidSchedulers.mainThread())
+      .subscribe(this::handleMediaValidatorFilterError)
 
     requireActivity().onBackPressedDispatcher.addCallback(
       viewLifecycleOwner,
@@ -227,6 +361,56 @@ class MediaReviewFragment : Fragment(R.layout.v2_media_review_fragment) {
     )
   }
 
+  private fun presentViewOnceToggleToast(isVideo: Boolean) {
+    val description = if (isVideo) {
+      getString(R.string.MediaReviewFragment__video_set_to_view_once)
+    } else {
+      getString(R.string.MediaReviewFragment__photo_set_to_view_once)
+    }
+
+    MediaReviewToastPopupWindow.show(controls, R.drawable.symbol_view_once_24, description)
+  }
+
+  private fun presentQualityToggleToast(state: MediaSelectionState) {
+    val mediaList = state.selectedMedia
+    if (mediaList.isEmpty()) {
+      return
+    }
+
+    val description = if (mediaList.size == 1) {
+      val media: Media = mediaList[0]
+      if (MediaUtil.isNonGifVideo(media)) {
+        if (state.quality == SentMediaQuality.HIGH) {
+          getString(R.string.MediaReviewFragment__video_set_to_high_quality)
+        } else {
+          getString(R.string.MediaReviewFragment__video_set_to_standard_quality)
+        }
+      } else if (MediaUtil.isImageType(media.mimeType)) {
+        if (state.quality == SentMediaQuality.HIGH) {
+          getString(R.string.MediaReviewFragment__photo_set_to_high_quality)
+        } else {
+          getString(R.string.MediaReviewFragment__photo_set_to_standard_quality)
+        }
+      } else {
+        Log.i(TAG, "Could not display quality toggle toast for attachment of type: ${media.mimeType}")
+        return
+      }
+    } else {
+      if (state.quality == SentMediaQuality.HIGH) {
+        resources.getQuantityString(R.plurals.MediaReviewFragment__items_set_to_high_quality, mediaList.size, mediaList.size)
+      } else {
+        resources.getQuantityString(R.plurals.MediaReviewFragment__items_set_to_standard_quality, mediaList.size, mediaList.size)
+      }
+    }
+
+    val icon = when (state.quality) {
+      SentMediaQuality.HIGH -> R.drawable.symbol_quality_high_24
+      else -> R.drawable.symbol_quality_high_slash_24
+    }
+
+    MediaReviewToastPopupWindow.show(controls, icon, description)
+  }
+
   override fun onResume() {
     super.onResume()
     sharedViewModel.kick()
@@ -236,26 +420,42 @@ class MediaReviewFragment : Fragment(R.layout.v2_media_review_fragment) {
     Permissions.onRequestPermissionsResult(this, requestCode, permissions, grantResults)
   }
 
-  override fun onDestroyView() {
-    disposables?.dispose()
-    super.onDestroyView()
+  private fun handleMediaValidatorFilterError(error: MediaValidator.FilterError) {
+    @Exhaustive
+    when (error) {
+      MediaValidator.FilterError.None -> return
+      MediaValidator.FilterError.ItemTooLarge -> Toast.makeText(requireContext(), R.string.MediaReviewFragment__one_or_more_items_were_too_large, Toast.LENGTH_SHORT).show()
+      MediaValidator.FilterError.ItemInvalidType -> Toast.makeText(requireContext(), R.string.MediaReviewFragment__one_or_more_items_were_invalid, Toast.LENGTH_SHORT).show()
+      MediaValidator.FilterError.TooManyItems -> Toast.makeText(requireContext(), R.string.MediaReviewFragment__too_many_items_selected, Toast.LENGTH_SHORT).show()
+      is MediaValidator.FilterError.NoItems -> {
+        if (error.cause != null) {
+          handleMediaValidatorFilterError(error.cause)
+        } else {
+          Toast.makeText(requireContext(), R.string.MediaReviewFragment__one_or_more_items_were_invalid, Toast.LENGTH_SHORT).show()
+        }
+        callback.onNoMediaSelected()
+      }
+    }
+
+    sharedViewModel.clearMediaErrors()
   }
 
   private fun launchGallery() {
+    val controller = findNavController()
     requestPermissionsForGallery {
-      navigator.goToGallery(requireView())
+      navigator.goToGallery(controller)
     }
   }
 
-  private fun performSend(selection: List<RecipientId> = listOf()) {
+  private fun performSend(selection: List<ContactSearchKey> = listOf()) {
     progressWrapper.visible = true
     progressWrapper.animate()
       .setStartDelay(300)
       .setInterpolator(MediaAnimations.interpolator)
       .alpha(1f)
 
-    sharedViewModel
-      .send(selection)
+    disposables += sharedViewModel
+      .send(selection.filterIsInstance(ContactSearchKey.RecipientSearchKey::class.java), scheduledSendTime)
       .subscribe(
         { result -> callback.onSentWithResult(result) },
         { error -> callback.onSendError(error) },
@@ -263,17 +463,62 @@ class MediaReviewFragment : Fragment(R.layout.v2_media_review_fragment) {
       )
   }
 
-  private fun presentAddMessageEntry(message: CharSequence?) {
-    addMessageEntry.setText(message, TextView.BufferType.SPANNABLE)
+  private fun presentAddMessageEntry(viewOnceState: MediaSelectionState.ViewOnceToggleState, message: CharSequence?) {
+    when (viewOnceState) {
+      MediaSelectionState.ViewOnceToggleState.INFINITE -> {
+        addMessageButton.gravity = Gravity.CENTER_VERTICAL
+        addMessageButton.setText(
+          message.takeIf { it.isNotNullOrBlank() } ?: getString(R.string.MediaReviewFragment__add_a_message),
+          TextView.BufferType.SPANNABLE
+        )
+        addMessageButton.isClickable = true
+      }
+      MediaSelectionState.ViewOnceToggleState.ONCE -> {
+        addMessageButton.gravity = Gravity.CENTER
+        addMessageButton.setText(R.string.MediaReviewFragment__view_once_message)
+        addMessageButton.isClickable = false
+      }
+    }
   }
 
-  private fun presentImageQualityToggle(quality: SentMediaQuality) {
+  private fun presentImageQualityToggle(state: MediaSelectionState) {
+    qualityButton.updateLayoutParams<ConstraintLayout.LayoutParams> {
+      if (MediaUtil.isImageAndNotGif(state.focusedMedia?.mimeType ?: "")) {
+        startToStart = ConstraintLayout.LayoutParams.UNSET
+        startToEnd = cropAndRotateButton.id
+      } else {
+        startToStart = ConstraintLayout.LayoutParams.PARENT_ID
+        startToEnd = ConstraintLayout.LayoutParams.UNSET
+      }
+    }
     qualityButton.setImageResource(
-      when (quality) {
-        SentMediaQuality.STANDARD -> R.drawable.ic_sq_36
-        SentMediaQuality.HIGH -> R.drawable.ic_hq_36
+      when (state.quality) {
+        SentMediaQuality.STANDARD -> R.drawable.symbol_quality_high_slash_24
+        SentMediaQuality.HIGH -> R.drawable.symbol_quality_high_24
       }
     )
+  }
+
+  private fun presentSendButton(sendType: MessageSendType, recipient: Recipient?) {
+    val sendButtonBackgroundTint = when {
+      recipient != null -> recipient.chatColors.asSingleColor()
+      sendType.usesSignalTransport -> ContextCompat.getColor(requireContext(), R.color.signal_colorOnSecondaryContainer)
+      else -> ContextCompat.getColor(requireContext(), R.color.core_grey_50)
+    }
+
+    val sendButtonForegroundDrawable = when {
+      recipient != null -> ContextCompat.getDrawable(requireContext(), R.drawable.symbol_send_fill_24)
+      else -> ContextCompat.getDrawable(requireContext(), R.drawable.symbol_arrow_end_24)
+    }
+
+    val sendButtonForegroundTint = when {
+      recipient != null -> ContextCompat.getColor(requireContext(), R.color.signal_colorOnCustom)
+      else -> ContextCompat.getColor(requireContext(), R.color.signal_colorSecondaryContainer)
+    }
+
+    sendButton.setImageDrawable(sendButtonForegroundDrawable)
+    sendButton.setColorFilter(sendButtonForegroundTint)
+    ViewCompat.setBackgroundTintList(sendButton, ColorStateList.valueOf(sendButtonBackgroundTint))
   }
 
   private fun presentPager(state: MediaSelectionState) {
@@ -292,12 +537,51 @@ class MediaReviewFragment : Fragment(R.layout.v2_media_review_fragment) {
     }
   }
 
+  private fun presentVideoTimeline(state: MediaSelectionState) {
+    val mediaItem = state.focusedMedia ?: return
+    if (!MediaUtil.isVideoType(mediaItem.mimeType) || !MediaConstraints.isVideoTranscodeAvailable()) {
+      return
+    }
+    val uri = mediaItem.uri
+    val updatedInputInTimeline = videoTimeLine.setInput(uri)
+    if (updatedInputInTimeline) {
+      videoTimeLine.unregisterDragListener()
+    }
+    val size: Long = tryGetUriSize(requireContext(), uri, Long.MAX_VALUE)
+    val maxSend = sharedViewModel.getMediaConstraints().getVideoMaxSize(requireContext())
+    if (size > maxSend) {
+      videoTimeLine.setTimeLimit(state.transcodingPreset.calculateMaxVideoUploadDurationInSeconds(maxSend), TimeUnit.SECONDS)
+    }
+
+    if (state.isTouchEnabled) {
+      val data = state.getOrCreateVideoTrimData(uri)
+
+      if (data.totalInputDurationUs > 0) {
+        videoTimeLine.setRange(data.startTimeUs, data.endTimeUs)
+      }
+    }
+  }
+
+  private fun presentVideoSizeHint(state: MediaSelectionState) {
+    val focusedMedia = state.focusedMedia ?: return
+    val trimData = state.getOrCreateVideoTrimData(focusedMedia.uri)
+
+    videoSizeHint.text = if (state.isVideoTrimmingVisible) {
+      val seconds = trimData.getDuration().inWholeSeconds
+      val bytes = TranscodingQuality.createFromPreset(state.transcodingPreset, trimData.getDuration().inWholeMilliseconds).byteCountEstimate
+      String.format(Locale.getDefault(), "%d:%02d • %s", seconds / 60, seconds % 60, MemoryUnitFormat.formatBytes(bytes, MemoryUnitFormat.MEGA_BYTES, true))
+    } else {
+      null
+    }
+  }
+
   private fun computeViewStateAndAnimate(state: MediaSelectionState) {
     this.animatorSet?.cancel()
 
     val animators = mutableListOf<Animator>()
 
     animators.addAll(computeAddMessageAnimators(state))
+    animators.addAll(computeEmojiButtonAnimators(state))
     animators.addAll(computeViewOnceButtonAnimators(state))
     animators.addAll(computeAddMediaButtonsAnimators(state))
     animators.addAll(computeSendButtonAnimators(state))
@@ -307,61 +591,85 @@ class MediaReviewFragment : Fragment(R.layout.v2_media_review_fragment) {
     animators.addAll(computeDrawToolButtonAnimators(state))
     animators.addAll(computeRecipientDisplayAnimators(state))
     animators.addAll(computeControlsShadeAnimators(state))
+    animators.addAll(computeVideoTimelineAnimator(state))
 
     val animatorSet = AnimatorSet()
     animatorSet.playTogether(animators)
-    animatorSet.interpolator = MediaAnimations.interpolator
     animatorSet.start()
 
     this.animatorSet = animatorSet
   }
 
   private fun computeControlsShadeAnimators(state: MediaSelectionState): List<Animator> {
-    return if (state.isTouchEnabled) {
-      listOf(MediaReviewAnimatorController.getFadeInAnimator(controlsShade))
+    val animators = mutableListOf<Animator>()
+    animators += if (state.isTouchEnabled) {
+      MediaReviewAnimatorController.getFadeInAnimator(controlsShade)
     } else {
-      listOf(MediaReviewAnimatorController.getFadeOutAnimator(controlsShade))
+      MediaReviewAnimatorController.getFadeOutAnimator(controlsShade)
     }
+
+    animators += if (state.isVideoTrimmingVisible) {
+      MediaReviewAnimatorController.getHeightAnimator(videoTimelinePlaceholder, videoTimelinePlaceholder.height, resources.getDimension(R.dimen.video_timeline_height_expanded).roundToInt())
+    } else {
+      MediaReviewAnimatorController.getHeightAnimator(videoTimelinePlaceholder, videoTimelinePlaceholder.height, resources.getDimension(R.dimen.video_timeline_height_collapsed).roundToInt())
+    }
+
+    return animators
+  }
+
+  private fun computeVideoTimelineAnimator(state: MediaSelectionState): List<Animator> {
+    val animators = mutableListOf<Animator>()
+
+    if (state.isVideoTrimmingVisible) {
+      animators += MediaReviewAnimatorController.getFadeInAnimator(videoTimeLine).apply {
+        startDelay = 100
+        duration = 500
+      }
+    } else {
+      animators += MediaReviewAnimatorController.getFadeOutAnimator(videoTimeLine).apply {
+        duration = 400
+      }
+    }
+
+    animators += if (state.isVideoTrimmingVisible && state.isTouchEnabled) {
+      MediaReviewAnimatorController.getFadeInAnimator(videoSizeHint).apply {
+        startDelay = 100
+        duration = 500
+      }
+    } else {
+      MediaReviewAnimatorController.getFadeOutAnimator(videoSizeHint).apply {
+        duration = 400
+      }
+    }
+
+    return animators
   }
 
   private fun computeAddMessageAnimators(state: MediaSelectionState): List<Animator> {
-    return when {
-      !state.isTouchEnabled -> {
-        listOf(
-          MediaReviewAnimatorController.getFadeOutAnimator(viewOnceMessage),
-          MediaReviewAnimatorController.getFadeOutAnimator(addMessageButton),
-          MediaReviewAnimatorController.getFadeOutAnimator(addMessageEntry)
-        )
-      }
-      state.viewOnceToggleState == MediaSelectionState.ViewOnceToggleState.ONCE -> {
-        listOf(
-          MediaReviewAnimatorController.getFadeInAnimator(viewOnceMessage),
-          MediaReviewAnimatorController.getFadeOutAnimator(addMessageButton),
-          MediaReviewAnimatorController.getFadeOutAnimator(addMessageEntry)
-        )
-      }
-      state.message.isNullOrEmpty() -> {
-        listOf(
-          MediaReviewAnimatorController.getFadeOutAnimator(viewOnceMessage),
-          MediaReviewAnimatorController.getFadeInAnimator(addMessageButton),
-          MediaReviewAnimatorController.getFadeOutAnimator(addMessageEntry)
-        )
-      }
-      else -> {
-        listOf(
-          MediaReviewAnimatorController.getFadeOutAnimator(viewOnceMessage),
-          MediaReviewAnimatorController.getFadeInAnimator(addMessageEntry),
-          MediaReviewAnimatorController.getFadeOutAnimator(addMessageButton)
-        )
-      }
+    return if (!state.isTouchEnabled) {
+      listOf(
+        MediaReviewAnimatorController.getFadeOutAnimator(addMessageButton)
+      )
+    } else {
+      listOf(
+        MediaReviewAnimatorController.getFadeInAnimator(addMessageButton)
+      )
     }
   }
 
   private fun computeViewOnceButtonAnimators(state: MediaSelectionState): List<Animator> {
-    return if (state.isTouchEnabled && state.selectedMedia.size == 1) {
+    return if (state.isTouchEnabled && state.selectedMedia.size == 1 && !state.isStory) {
       listOf(MediaReviewAnimatorController.getFadeInAnimator(viewOnceButton))
     } else {
       listOf(MediaReviewAnimatorController.getFadeOutAnimator(viewOnceButton))
+    }
+  }
+
+  private fun computeEmojiButtonAnimators(state: MediaSelectionState): List<Animator> {
+    return if (state.isTouchEnabled && !SignalStore.settings().isPreferSystemEmoji && state.viewOnceToggleState != MediaSelectionState.ViewOnceToggleState.ONCE) {
+      listOf(MediaReviewAnimatorController.getFadeInAnimator(emojiButton))
+    } else {
+      listOf(MediaReviewAnimatorController.getFadeOutAnimator(emojiButton))
     }
   }
 
@@ -389,29 +697,19 @@ class MediaReviewFragment : Fragment(R.layout.v2_media_review_fragment) {
   }
 
   private fun computeSendButtonAnimators(state: MediaSelectionState): List<Animator> {
-
-    val slideIn = listOf(
-      MediaReviewAnimatorController.getSlideInAnimator(sendButton),
-    )
-
-    return slideIn + if (state.isTouchEnabled) {
+    return if (state.isTouchEnabled) {
       listOf(
-        MediaReviewAnimatorController.getFadeInAnimator(sendButton),
+        MediaReviewAnimatorController.getFadeInAnimator(sendButton, isEnabled = state.canSend)
       )
     } else {
       listOf(
-        MediaReviewAnimatorController.getFadeOutAnimator(sendButton),
+        MediaReviewAnimatorController.getFadeOutAnimator(sendButton, isEnabled = state.canSend)
       )
     }
   }
 
   private fun computeSaveButtonAnimators(state: MediaSelectionState): List<Animator> {
-
-    val slideIn = listOf(
-      MediaReviewAnimatorController.getSlideInAnimator(saveButton)
-    )
-
-    return slideIn + if (state.isTouchEnabled && !MediaUtil.isVideo(state.focusedMedia?.mimeType)) {
+    return if (state.isTouchEnabled && !MediaUtil.isVideo(state.focusedMedia?.mimeType)) {
       listOf(
         MediaReviewAnimatorController.getFadeInAnimator(saveButton)
       )
@@ -423,9 +721,7 @@ class MediaReviewFragment : Fragment(R.layout.v2_media_review_fragment) {
   }
 
   private fun computeQualityButtonAnimators(state: MediaSelectionState): List<Animator> {
-    val slide = listOf(MediaReviewAnimatorController.getSlideInAnimator(qualityButton))
-
-    return slide + if (state.isTouchEnabled && state.selectedMedia.any { MediaUtil.isImageType(it.mimeType) }) {
+    return if (state.isTouchEnabled && !state.isStory) {
       listOf(MediaReviewAnimatorController.getFadeInAnimator(qualityButton))
     } else {
       listOf(MediaReviewAnimatorController.getFadeOutAnimator(qualityButton))
@@ -433,9 +729,7 @@ class MediaReviewFragment : Fragment(R.layout.v2_media_review_fragment) {
   }
 
   private fun computeCropAndRotateButtonAnimators(state: MediaSelectionState): List<Animator> {
-    val slide = listOf(MediaReviewAnimatorController.getSlideInAnimator(cropAndRotateButton))
-
-    return slide + if (state.isTouchEnabled && MediaUtil.isImageAndNotGif(state.focusedMedia?.mimeType ?: "")) {
+    return if (state.isTouchEnabled && MediaUtil.isImageAndNotGif(state.focusedMedia?.mimeType ?: "")) {
       listOf(MediaReviewAnimatorController.getFadeInAnimator(cropAndRotateButton))
     } else {
       listOf(MediaReviewAnimatorController.getFadeOutAnimator(cropAndRotateButton))
@@ -443,9 +737,7 @@ class MediaReviewFragment : Fragment(R.layout.v2_media_review_fragment) {
   }
 
   private fun computeDrawToolButtonAnimators(state: MediaSelectionState): List<Animator> {
-    val slide = listOf(MediaReviewAnimatorController.getSlideInAnimator(drawToolButton))
-
-    return slide + if (state.isTouchEnabled && MediaUtil.isImageAndNotGif(state.focusedMedia?.mimeType ?: "")) {
+    return if (state.isTouchEnabled && MediaUtil.isImageAndNotGif(state.focusedMedia?.mimeType ?: "")) {
       listOf(MediaReviewAnimatorController.getFadeInAnimator(drawToolButton))
     } else {
       listOf(MediaReviewAnimatorController.getFadeOutAnimator(drawToolButton))
@@ -461,11 +753,43 @@ class MediaReviewFragment : Fragment(R.layout.v2_media_review_fragment) {
     }
   }
 
+  companion object {
+    private val TAG = Log.tag(MediaReviewFragment::class.java)
+
+    @JvmStatic
+    private fun tryGetUriSize(context: Context, uri: Uri, defaultValue: Long): Long {
+      return try {
+        var size: Long = 0
+        context.contentResolver.query(uri, null, null, null, null).use { cursor ->
+          if (cursor != null && cursor.moveToFirst() && cursor.getColumnIndex(OpenableColumns.SIZE) >= 0) {
+            size = cursor.getLong(cursor.getColumnIndexOrThrow(OpenableColumns.SIZE))
+          }
+        }
+        if (size <= 0) {
+          size = MediaUtil.getMediaSize(context, uri)
+        }
+        size
+      } catch (e: IOException) {
+        Log.w(TAG, e)
+        defaultValue
+      }
+    }
+  }
+
   interface Callback {
     fun onSentWithResult(mediaSendActivityResult: MediaSendActivityResult)
     fun onSentWithoutResult()
     fun onSendError(error: Throwable)
     fun onNoMediaSelected()
     fun onPopFromReview()
+  }
+
+  override fun onScheduleSend(scheduledTime: Long) {
+    scheduledSendTime = scheduledTime
+    sendButton.performClick()
+  }
+
+  override fun onRangeDrag(minValue: Long, maxValue: Long, duration: Long, end: Boolean) {
+    sharedViewModel.onEditVideoDuration(context = requireContext(), totalDurationUs = duration, startTimeUs = minValue, endTimeUs = maxValue, touchEnabled = end)
   }
 }

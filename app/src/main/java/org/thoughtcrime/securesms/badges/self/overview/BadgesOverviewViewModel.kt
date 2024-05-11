@@ -12,17 +12,18 @@ import io.reactivex.rxjava3.kotlin.subscribeBy
 import io.reactivex.rxjava3.subjects.PublishSubject
 import org.signal.core.util.logging.Log
 import org.thoughtcrime.securesms.badges.BadgeRepository
-import org.thoughtcrime.securesms.components.settings.app.subscription.SubscriptionsRepository
+import org.thoughtcrime.securesms.components.settings.app.subscription.MonthlyDonationRepository
 import org.thoughtcrime.securesms.keyvalue.SignalStore
 import org.thoughtcrime.securesms.recipients.Recipient
+import org.thoughtcrime.securesms.util.InternetConnectionObserver
 import org.thoughtcrime.securesms.util.livedata.Store
-import org.whispersystems.libsignal.util.guava.Optional
+import java.util.Optional
 
 private val TAG = Log.tag(BadgesOverviewViewModel::class.java)
 
 class BadgesOverviewViewModel(
   private val badgeRepository: BadgeRepository,
-  private val subscriptionsRepository: SubscriptionsRepository
+  private val subscriptionsRepository: MonthlyDonationRepository
 ) : ViewModel() {
   private val store = Store(BadgesOverviewState())
   private val eventSubject = PublishSubject.create<BadgesOverviewEvent>()
@@ -42,18 +43,24 @@ class BadgesOverviewViewModel(
       )
     }
 
+    disposables += InternetConnectionObserver.observe()
+      .distinctUntilChanged()
+      .subscribeBy { isConnected ->
+        store.update { it.copy(hasInternet = isConnected) }
+      }
+
     disposables += Single.zip(
       subscriptionsRepository.getActiveSubscription(),
       subscriptionsRepository.getSubscriptions()
     ) { active, all ->
       if (!active.isActive && active.activeSubscription?.willCancelAtPeriodEnd() == true) {
-        Optional.fromNullable<String>(all.firstOrNull { it.level == active.activeSubscription?.level }?.badge?.id)
+        Optional.ofNullable<String>(all.firstOrNull { it.level == active.activeSubscription?.level }?.badge?.id)
       } else {
-        Optional.absent()
+        Optional.empty()
       }
     }.subscribeBy(
       onSuccess = { badgeId ->
-        store.update { it.copy(fadedBadgeId = badgeId.orNull()) }
+        store.update { it.copy(fadedBadgeId = badgeId.orElse(null)) }
       },
       onError = { throwable ->
         Log.w(TAG, "Could not retrieve data from server", throwable)
@@ -82,9 +89,9 @@ class BadgesOverviewViewModel(
 
   class Factory(
     private val badgeRepository: BadgeRepository,
-    private val subscriptionsRepository: SubscriptionsRepository
+    private val subscriptionsRepository: MonthlyDonationRepository
   ) : ViewModelProvider.Factory {
-    override fun <T : ViewModel?> create(modelClass: Class<T>): T {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
       return requireNotNull(modelClass.cast(BadgesOverviewViewModel(badgeRepository, subscriptionsRepository)))
     }
   }

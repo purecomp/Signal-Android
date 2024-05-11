@@ -2,7 +2,9 @@ package org.thoughtcrime.securesms.keyboard.emoji
 
 import android.os.Bundle
 import android.view.KeyEvent
+import android.view.LayoutInflater
 import android.view.View
+import android.view.ViewGroup
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -14,14 +16,17 @@ import org.thoughtcrime.securesms.components.emoji.EmojiEventListener
 import org.thoughtcrime.securesms.components.emoji.EmojiPageView
 import org.thoughtcrime.securesms.components.emoji.EmojiPageViewGridAdapter
 import org.thoughtcrime.securesms.components.emoji.EmojiPageViewGridAdapter.EmojiHeader
-import org.thoughtcrime.securesms.keyboard.findListener
+import org.thoughtcrime.securesms.keyboard.KeyboardPageCategoryIconMappingModel
+import org.thoughtcrime.securesms.keyboard.KeyboardPageSelected
 import org.thoughtcrime.securesms.keyvalue.SignalStore
-import org.thoughtcrime.securesms.util.MappingModel
+import org.thoughtcrime.securesms.util.ThemedFragment.themedInflate
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingModel
+import org.thoughtcrime.securesms.util.fragments.requireListener
 import java.util.Optional
 
 private val DELETE_KEY_EVENT: KeyEvent = KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_DEL)
 
-class EmojiKeyboardPageFragment : Fragment(R.layout.keyboard_pager_emoji_page_fragment), EmojiEventListener, EmojiPageViewGridAdapter.VariationSelectorListener {
+class EmojiKeyboardPageFragment : Fragment(), EmojiEventListener, EmojiPageViewGridAdapter.VariationSelectorListener, KeyboardPageSelected {
 
   private lateinit var viewModel: EmojiKeyboardPageViewModel
   private lateinit var emojiPageView: EmojiPageView
@@ -36,8 +41,12 @@ class EmojiKeyboardPageFragment : Fragment(R.layout.keyboard_pager_emoji_page_fr
 
   private val categoryUpdateOnScroll = UpdateCategorySelectionOnScroll()
 
+  override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
+    return themedInflate(R.layout.keyboard_pager_emoji_page_fragment, inflater, container)
+  }
+
   override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-    callback = requireNotNull(findListener())
+    callback = requireNotNull(requireListener())
 
     emojiPageView = view.findViewById(R.id.emoji_page_view)
     emojiPageView.initialize(this, this, true)
@@ -85,12 +94,21 @@ class EmojiKeyboardPageFragment : Fragment(R.layout.keyboard_pager_emoji_page_fr
 
     viewModel.selectedKey.observe(viewLifecycleOwner) { updateCategoryTab(it) }
 
-    eventListener = findListener() ?: throw AssertionError("No emoji listener found")
+    eventListener = requireListener()
+  }
+
+  override fun onResume() {
+    super.onResume()
+    viewModel.refreshRecentEmoji()
+  }
+
+  override fun onPageSelected() {
+    viewModel.refreshRecentEmoji()
   }
 
   private fun updateCategoryTab(key: String) {
     emojiCategoriesRecycler.post {
-      val index: Int = categoriesAdapter.indexOfFirst(EmojiKeyboardPageCategoryMappingModel::class.java) { it.key == key }
+      val index: Int = categoriesAdapter.indexOfFirst(KeyboardPageCategoryIconMappingModel::class.java) { it.key == key }
 
       if (index != -1) {
         emojiCategoriesRecycler.smoothScrollToPosition(index)
@@ -112,7 +130,6 @@ class EmojiKeyboardPageFragment : Fragment(R.layout.keyboard_pager_emoji_page_fr
   override fun onEmojiSelected(emoji: String) {
     SignalStore.emojiValues().setPreferredVariation(emoji)
     eventListener.onEmojiSelected(emoji)
-    viewModel.addToRecents(emoji)
   }
 
   override fun onKeyEvent(keyEvent: KeyEvent?) {

@@ -86,7 +86,7 @@ class WebRtcCallParticipantsPagerAdapter extends ListAdapter<WebRtcCallParticipa
 
     @Override
     void bind(WebRtcCallParticipantsPage page) {
-      callParticipantsLayout.update(page.getCallParticipants(), page.getFocusedParticipant(), page.isRenderInPip(), page.isPortrait(), page.isIncomingRing(), page.getLayoutStrategy());
+      callParticipantsLayout.update(page.getCallParticipants(), page.getFocusedParticipant(), page.isRenderInPip(), page.isPortrait(), page.shouldHideAvatar(), page.getNavBarBottomInset(), page.getLayoutStrategy());
     }
   }
 
@@ -112,6 +112,7 @@ class WebRtcCallParticipantsPagerAdapter extends ListAdapter<WebRtcCallParticipa
       CallParticipant participant = page.getCallParticipants().get(0);
       callParticipantView.setCallParticipant(participant);
       callParticipantView.setRenderInPip(page.isRenderInPip());
+      callParticipantView.setRaiseHandAllowed(false);
       if (participant.isScreenSharing()) {
         callParticipantView.setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT);
       } else {

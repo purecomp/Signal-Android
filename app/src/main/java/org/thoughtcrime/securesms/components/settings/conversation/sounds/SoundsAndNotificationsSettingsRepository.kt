@@ -2,23 +2,32 @@ package org.thoughtcrime.securesms.components.settings.conversation.sounds
 
 import android.content.Context
 import org.signal.core.util.concurrent.SignalExecutors
-import org.thoughtcrime.securesms.database.DatabaseFactory
-import org.thoughtcrime.securesms.database.RecipientDatabase
+import org.thoughtcrime.securesms.database.RecipientTable
+import org.thoughtcrime.securesms.database.SignalDatabase
 import org.thoughtcrime.securesms.notifications.NotificationChannels
 import org.thoughtcrime.securesms.recipients.Recipient
 import org.thoughtcrime.securesms.recipients.RecipientId
 
 class SoundsAndNotificationsSettingsRepository(private val context: Context) {
 
-  fun setMuteUntil(recipientId: RecipientId, muteUntil: Long) {
+  fun ensureCustomChannelConsistency(complete: () -> Unit) {
     SignalExecutors.BOUNDED.execute {
-      DatabaseFactory.getRecipientDatabase(context).setMuted(recipientId, muteUntil)
+      if (NotificationChannels.supported()) {
+        NotificationChannels.getInstance().ensureCustomChannelConsistency()
+      }
+      complete()
     }
   }
 
-  fun setMentionSetting(recipientId: RecipientId, mentionSetting: RecipientDatabase.MentionSetting) {
+  fun setMuteUntil(recipientId: RecipientId, muteUntil: Long) {
     SignalExecutors.BOUNDED.execute {
-      DatabaseFactory.getRecipientDatabase(context).setMentionSetting(recipientId, mentionSetting)
+      SignalDatabase.recipients.setMuted(recipientId, muteUntil)
+    }
+  }
+
+  fun setMentionSetting(recipientId: RecipientId, mentionSetting: RecipientTable.MentionSetting) {
+    SignalExecutors.BOUNDED.execute {
+      SignalDatabase.recipients.setMentionSetting(recipientId, mentionSetting)
     }
   }
 
@@ -29,7 +38,7 @@ class SoundsAndNotificationsSettingsRepository(private val context: Context) {
         if (recipient.notificationChannel != null || !NotificationChannels.supported()) {
           true
         } else {
-          NotificationChannels.updateWithShortcutBasedChannel(context, recipient)
+          NotificationChannels.getInstance().updateWithShortcutBasedChannel(recipient)
         }
       )
     }

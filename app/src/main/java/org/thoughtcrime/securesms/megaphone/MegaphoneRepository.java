@@ -1,9 +1,9 @@
 package org.thoughtcrime.securesms.megaphone;
 
 import android.app.Application;
-import android.content.Context;
 
 import androidx.annotation.AnyThread;
+import androidx.annotation.Discouraged;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.WorkerThread;
@@ -12,7 +12,6 @@ import com.annimon.stream.Collectors;
 import com.annimon.stream.Stream;
 
 import org.signal.core.util.concurrent.SignalExecutors;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
 import org.thoughtcrime.securesms.database.MegaphoneDatabase;
 import org.thoughtcrime.securesms.database.model.MegaphoneRecord;
 import org.thoughtcrime.securesms.megaphone.Megaphones.Event;
@@ -36,6 +35,7 @@ public class MegaphoneRepository {
 
   private boolean enabled;
 
+  @Discouraged(message = "Instances of MegaphoneRepository should be accessed via ApplicationDependencies.")
   public MegaphoneRepository(@NonNull Application context) {
     this.context       = context;
     this.executor      = SignalExecutors.SERIAL;
@@ -51,13 +51,8 @@ public class MegaphoneRepository {
   @AnyThread
   public void onFirstEverAppLaunch() {
     executor.execute(() -> {
-      database.markFinished(Event.REACTIONS);
-      database.markFinished(Event.MESSAGE_REQUESTS);
-      database.markFinished(Event.LINK_PREVIEWS);
-      database.markFinished(Event.RESEARCH);
-      database.markFinished(Event.GROUP_CALLING);
-      database.markFinished(Event.CHAT_COLORS);
       database.markFinished(Event.ADD_A_PROFILE_PHOTO);
+      database.markFinished(Event.PNP_LAUNCH);
       resetDatabaseCache();
     });
   }

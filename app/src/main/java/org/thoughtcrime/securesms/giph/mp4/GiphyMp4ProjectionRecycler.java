@@ -1,7 +1,6 @@
 package org.thoughtcrime.securesms.giph.mp4;
 
 import android.util.SparseArray;
-import android.view.View;
 import android.view.ViewGroup;
 
 import androidx.annotation.NonNull;
@@ -115,14 +114,17 @@ public final class GiphyMp4ProjectionRecycler implements GiphyMp4PlaybackControl
       });
       holder.playContent(giphyMp4Playable.getMediaItem(), giphyMp4Playable.getPlaybackPolicyEnforcer());
     } else {
+      giphyMp4Playable.showProjectionArea();
+
       holder.setOnPlaybackReady(() -> {
+        holder.show();
         giphyMp4Playable.hideProjectionArea();
         parent.invalidate();
       });
     }
   }
 
-  private @Nullable GiphyMp4ProjectionPlayerHolder getCurrentHolder(int adapterPosition) {
+  public @Nullable GiphyMp4ProjectionPlayerHolder getCurrentHolder(int adapterPosition) {
     if (playing.get(adapterPosition) != null) {
       return playing.get(adapterPosition);
     } else if (notPlaying.get(adapterPosition) != null) {

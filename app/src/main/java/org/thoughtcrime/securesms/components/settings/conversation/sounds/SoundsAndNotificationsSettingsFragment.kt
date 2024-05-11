@@ -6,14 +6,15 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import org.thoughtcrime.securesms.MuteDialog
 import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.components.settings.DSLConfiguration
-import org.thoughtcrime.securesms.components.settings.DSLSettingsAdapter
 import org.thoughtcrime.securesms.components.settings.DSLSettingsFragment
 import org.thoughtcrime.securesms.components.settings.DSLSettingsIcon
 import org.thoughtcrime.securesms.components.settings.DSLSettingsText
 import org.thoughtcrime.securesms.components.settings.configure
 import org.thoughtcrime.securesms.components.settings.conversation.preferences.Utils.formatMutedUntil
-import org.thoughtcrime.securesms.database.RecipientDatabase
+import org.thoughtcrime.securesms.database.RecipientTable
 import org.thoughtcrime.securesms.recipients.Recipient
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingAdapter
+import org.thoughtcrime.securesms.util.navigation.safeNavigate
 
 class SoundsAndNotificationsSettingsFragment : DSLSettingsFragment(
   titleId = R.string.ConversationSettingsFragment__sounds_and_notifications
@@ -32,9 +33,14 @@ class SoundsAndNotificationsSettingsFragment : DSLSettingsFragment(
     }
   )
 
-  override fun bindAdapter(adapter: DSLSettingsAdapter) {
+  override fun onResume() {
+    super.onResume()
+    viewModel.channelConsistencyCheck()
+  }
+
+  override fun bindAdapter(adapter: MappingAdapter) {
     viewModel.state.observe(viewLifecycleOwner) { state ->
-      if (state.recipientId != Recipient.UNKNOWN.id) {
+      if (state.channelConsistencyCheckComplete && state.recipientId != Recipient.UNKNOWN.id) {
         adapter.submitList(getConfiguration(state).toMappingModelList())
       }
     }
@@ -42,7 +48,6 @@ class SoundsAndNotificationsSettingsFragment : DSLSettingsFragment(
 
   private fun getConfiguration(state: SoundsAndNotificationsSettingsState): DSLConfiguration {
     return configure {
-
       val muteSummary = if (state.muteUntil > 0) {
         state.muteUntil.formatMutedUntil(requireContext())
       } else {
@@ -76,7 +81,7 @@ class SoundsAndNotificationsSettingsFragment : DSLSettingsFragment(
       )
 
       if (state.hasMentionsSupport) {
-        val mentionSelection = if (state.mentionSetting == RecipientDatabase.MentionSetting.ALWAYS_NOTIFY) {
+        val mentionSelection = if (state.mentionSetting == RecipientTable.MentionSetting.ALWAYS_NOTIFY) {
           0
         } else {
           1
@@ -90,9 +95,9 @@ class SoundsAndNotificationsSettingsFragment : DSLSettingsFragment(
           onSelected = {
             viewModel.setMentionSetting(
               if (it == 0) {
-                RecipientDatabase.MentionSetting.ALWAYS_NOTIFY
+                RecipientTable.MentionSetting.ALWAYS_NOTIFY
               } else {
-                RecipientDatabase.MentionSetting.DO_NOT_NOTIFY
+                RecipientTable.MentionSetting.DO_NOT_NOTIFY
               }
             )
           }
@@ -111,7 +116,7 @@ class SoundsAndNotificationsSettingsFragment : DSLSettingsFragment(
         summary = DSLSettingsText.from(customSoundSummary),
         onClick = {
           val action = SoundsAndNotificationsSettingsFragmentDirections.actionSoundsAndNotificationsSettingsFragmentToCustomNotificationsSettingsFragment(state.recipientId)
-          Navigation.findNavController(requireView()).navigate(action)
+          Navigation.findNavController(requireView()).safeNavigate(action)
         }
       )
     }

@@ -1,13 +1,14 @@
 package org.thoughtcrime.securesms.jobs;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.attachments.AttachmentId;
 import org.thoughtcrime.securesms.attachments.DatabaseAttachment;
-import org.thoughtcrime.securesms.database.AttachmentDatabase;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.jobmanager.Data;
+import org.thoughtcrime.securesms.database.AttachmentTable;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.jobmanager.JsonJobData;
 import org.thoughtcrime.securesms.jobmanager.Job;
 
 import java.io.IOException;
@@ -23,9 +24,8 @@ public final class AttachmentMarkUploadedJob extends BaseJob {
   @SuppressWarnings("unused")
   private static final String TAG = Log.tag(AttachmentMarkUploadedJob.class);
 
-  private static final String KEY_ROW_ID     = "row_id";
-  private static final String KEY_UNIQUE_ID  = "unique_id";
-  private static final String KEY_MESSAGE_ID = "message_id";
+  private static final String KEY_ATTACHMENT_ID = "row_id";
+  private static final String KEY_MESSAGE_ID    = "message_id";
 
   private final AttachmentId attachmentId;
   private final long         messageId;
@@ -46,11 +46,10 @@ public final class AttachmentMarkUploadedJob extends BaseJob {
   }
 
   @Override
-  public @NonNull Data serialize() {
-    return new Data.Builder().putLong(KEY_ROW_ID, attachmentId.getRowId())
-                             .putLong(KEY_UNIQUE_ID, attachmentId.getUniqueId())
-                             .putLong(KEY_MESSAGE_ID, messageId)
-                             .build();
+  public @Nullable byte[] serialize() {
+    return new JsonJobData.Builder().putLong(KEY_ATTACHMENT_ID, attachmentId.id)
+                                    .putLong(KEY_MESSAGE_ID, messageId)
+                                    .serialize();
   }
 
   @Override
@@ -60,8 +59,8 @@ public final class AttachmentMarkUploadedJob extends BaseJob {
 
   @Override
   public void onRun() throws Exception {
-    AttachmentDatabase         database           = DatabaseFactory.getAttachmentDatabase(context);
-    DatabaseAttachment         databaseAttachment = database.getAttachment(attachmentId);
+    AttachmentTable    database           = SignalDatabase.attachments();
+    DatabaseAttachment databaseAttachment = database.getAttachment(attachmentId);
 
     if (databaseAttachment == null) {
       throw new InvalidAttachmentException("Cannot find the specified attachment.");
@@ -87,10 +86,12 @@ public final class AttachmentMarkUploadedJob extends BaseJob {
 
   public static final class Factory implements Job.Factory<AttachmentMarkUploadedJob> {
     @Override
-    public @NonNull AttachmentMarkUploadedJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull AttachmentMarkUploadedJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
+      JsonJobData data = JsonJobData.deserialize(serializedData);
+
       return new AttachmentMarkUploadedJob(parameters,
                                            data.getLong(KEY_MESSAGE_ID),
-                                           new AttachmentId(data.getLong(KEY_ROW_ID), data.getLong(KEY_UNIQUE_ID)));
+                                           new AttachmentId(data.getLong(KEY_ATTACHMENT_ID)));
     }
   }
 }

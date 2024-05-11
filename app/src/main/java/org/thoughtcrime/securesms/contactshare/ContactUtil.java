@@ -11,9 +11,9 @@ import androidx.annotation.MainThread;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.WorkerThread;
-import androidx.appcompat.app.AlertDialog;
 
 import com.annimon.stream.Stream;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.i18n.phonenumbers.NumberParseException;
 import com.google.i18n.phonenumbers.PhoneNumberUtil;
 import com.google.i18n.phonenumbers.Phonenumber.PhoneNumber;
@@ -113,7 +113,7 @@ public final class ContactUtil {
     }
   }
 
-  public static @NonNull String getNormalizedPhoneNumber(@NonNull Context context, @NonNull String number) {
+  public static @NonNull String getNormalizedPhoneNumber(@NonNull Context context, @Nullable String number) {
     return PhoneNumberFormatter.get(context).format(number);
   }
 
@@ -126,7 +126,7 @@ public final class ContactUtil {
         values[i] = getPrettyPhoneNumber(choices.get(i).requireE164(), locale);
       }
 
-      new AlertDialog.Builder(context)
+      new MaterialAlertDialogBuilder(context)
                      .setItems(values, ((dialog, which) -> callback.onSelected(choices.get(which))))
                      .create()
                      .show();

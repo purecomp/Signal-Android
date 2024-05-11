@@ -7,7 +7,9 @@
     android:gravity="center_vertical"
     android:paddingStart="8dp"
     android:paddingTop="2dp"
-    android:paddingEnd="8dp">
+    android:paddingEnd="8dp"
+    android:paddingBottom="8dp"
+    tools:viewBindingIgnore="true">
 
     <org.thoughtcrime.securesms.components.AvatarImageView
         android:id="@+id/typing_avatar_1"
@@ -115,13 +117,12 @@
         app:barrierDirection="end"
         app:constraint_referenced_ids="typing_avatar_1, typing_avatar_2, typing_avatar_3, typing_count" />
 
-    <androidx.cardview.widget.CardView
+    <org.thoughtcrime.securesms.components.ClippedCardView
         android:id="@+id/indicator_card"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_marginStart="8dp"
         android:layout_marginTop="1dp"
-        android:layout_marginBottom="1dp"
         app:cardCornerRadius="@dimen/message_corner_radius"
         app:cardElevation="0dp"
         app:contentPadding="0dp"
@@ -142,6 +143,6 @@
                 app:typingIndicator_tint="@color/signal_inverse_primary" />
 
         </FrameLayout>
-    </androidx.cardview.widget.CardView>
+    </org.thoughtcrime.securesms.components.ClippedCardView>
 
 </org.thoughtcrime.securesms.components.ConversationTypingView>

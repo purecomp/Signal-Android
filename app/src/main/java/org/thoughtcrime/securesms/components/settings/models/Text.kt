@@ -8,19 +8,20 @@ import android.widget.TextView
 import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.components.settings.DSLSettingsText
 import org.thoughtcrime.securesms.components.settings.PreferenceModel
-import org.thoughtcrime.securesms.util.MappingAdapter
-import org.thoughtcrime.securesms.util.MappingViewHolder
+import org.thoughtcrime.securesms.util.adapter.mapping.LayoutFactory
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingAdapter
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingViewHolder
 
 /**
  * A Text without any padding, allowing for exact padding to be handed in at runtime.
  */
 data class Text(
-  val text: DSLSettingsText,
+  val text: DSLSettingsText
 ) {
 
   companion object {
     fun register(adapter: MappingAdapter) {
-      adapter.registerFactory(Model::class.java, MappingAdapter.LayoutFactory({ ViewHolder(it) }, R.layout.dsl_text_preference))
+      adapter.registerFactory(Model::class.java, LayoutFactory({ ViewHolder(it) }, R.layout.dsl_text_preference))
     }
   }
 

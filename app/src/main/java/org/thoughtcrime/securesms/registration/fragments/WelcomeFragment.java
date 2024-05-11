@@ -1,13 +1,8 @@
 package org.thoughtcrime.securesms.registration.fragments;
 
-import static org.thoughtcrime.securesms.registration.fragments.RegistrationViewDelegate.setDebugLogSubmitMultiTapView;
-import static org.thoughtcrime.securesms.util.CircularProgressButtonUtil.cancelSpinning;
-import static org.thoughtcrime.securesms.util.CircularProgressButtonUtil.setSpinning;
-
 import android.Manifest;
 import android.annotation.SuppressLint;
 import android.content.Context;
-import android.os.Build;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.view.LayoutInflater;
@@ -18,15 +13,14 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.annotation.RequiresApi;
-import androidx.annotation.StringRes;
+import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentActivity;
-import androidx.lifecycle.ViewModelProviders;
+import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.ActivityNavigator;
+import androidx.navigation.NavDirections;
 import androidx.navigation.Navigation;
 import androidx.navigation.fragment.NavHostFragment;
 
-import com.dd.CircularProgressButton;
 import com.google.i18n.phonenumbers.PhoneNumberUtil;
 import com.google.i18n.phonenumbers.Phonenumber;
 
@@ -43,37 +37,19 @@ import org.thoughtcrime.securesms.util.BackupUtil;
 import org.thoughtcrime.securesms.util.CommunicationActions;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
 import org.thoughtcrime.securesms.util.Util;
-import org.whispersystems.libsignal.util.guava.Optional;
+import org.thoughtcrime.securesms.util.navigation.SafeNavigation;
+import org.thoughtcrime.securesms.util.views.CircularProgressMaterialButton;
+
+import java.util.Optional;
+
+import static org.thoughtcrime.securesms.registration.fragments.RegistrationViewDelegate.setDebugLogSubmitMultiTapView;
 
 public final class WelcomeFragment extends LoggingFragment {
 
   private static final String TAG = Log.tag(WelcomeFragment.class);
 
-  private static final String[] PERMISSIONS        = { Manifest.permission.WRITE_CONTACTS,
-                                                       Manifest.permission.READ_CONTACTS,
-                                                       Manifest.permission.WRITE_EXTERNAL_STORAGE,
-                                                       Manifest.permission.READ_EXTERNAL_STORAGE,
-                                                       Manifest.permission.READ_PHONE_STATE };
-  @RequiresApi(26)
-  private static final String[] PERMISSIONS_API_26 = { Manifest.permission.WRITE_CONTACTS,
-                                                       Manifest.permission.READ_CONTACTS,
-                                                       Manifest.permission.WRITE_EXTERNAL_STORAGE,
-                                                       Manifest.permission.READ_EXTERNAL_STORAGE,
-                                                       Manifest.permission.READ_PHONE_STATE,
-                                                       Manifest.permission.READ_PHONE_NUMBERS };
-  @RequiresApi(26)
-  private static final String[] PERMISSIONS_API_29 = { Manifest.permission.WRITE_CONTACTS,
-                                                       Manifest.permission.READ_CONTACTS,
-                                                       Manifest.permission.READ_PHONE_STATE,
-                                                       Manifest.permission.READ_PHONE_NUMBERS };
-
-  private static final @StringRes int   RATIONALE        = R.string.RegistrationActivity_signal_needs_access_to_your_contacts_and_media_in_order_to_connect_with_friends;
-  private static final @StringRes int   RATIONALE_API_29 = R.string.RegistrationActivity_signal_needs_access_to_your_contacts_in_order_to_connect_with_friends;
-  private static final            int[] HEADERS          = { R.drawable.ic_contacts_white_48dp, R.drawable.ic_folder_white_48dp };
-  private static final            int[] HEADERS_API_29   = { R.drawable.ic_contacts_white_48dp };
-
-  private CircularProgressButton continueButton;
-  private RegistrationViewModel  viewModel;
+  private CircularProgressMaterialButton continueButton;
+  private RegistrationViewModel          viewModel;
 
   @Override
   public View onCreateView(LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
@@ -84,7 +60,7 @@ public final class WelcomeFragment extends LoggingFragment {
   public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
     super.onViewCreated(view, savedInstanceState);
 
-    viewModel = ViewModelProviders.of(requireActivity()).get(RegistrationViewModel.class);
+    viewModel = new ViewModelProvider(requireActivity()).get(RegistrationViewModel.class);
 
     if (viewModel.isReregister()) {
       if (viewModel.hasRestoreFlowBeenShown()) {
@@ -97,22 +73,22 @@ public final class WelcomeFragment extends LoggingFragment {
         return;
       }
 
-      initializeNumber();
+      initializeNumber(requireContext(), viewModel);
 
       Log.i(TAG, "Skipping restore because this is a reregistration.");
       viewModel.setWelcomeSkippedOnRestore();
-      Navigation.findNavController(view)
-                .navigate(WelcomeFragmentDirections.actionSkipRestore());
+      SafeNavigation.safeNavigate(NavHostFragment.findNavController(this),
+                                  WelcomeFragmentDirections.actionSkipRestore());
     } else {
 
       setDebugLogSubmitMultiTapView(view.findViewById(R.id.image));
       setDebugLogSubmitMultiTapView(view.findViewById(R.id.title));
 
       continueButton = view.findViewById(R.id.welcome_continue_button);
-      continueButton.setOnClickListener(this::continueClicked);
+      continueButton.setOnClickListener(v -> onContinueClicked());
 
       Button restoreFromBackup = view.findViewById(R.id.welcome_transfer_or_restore);
-      restoreFromBackup.setOnClickListener(this::restoreFromBackupClicked);
+      restoreFromBackup.setOnClickListener(v -> onRestoreFromBackupClicked());
 
       TextView welcomeTermsButton = view.findViewById(R.id.welcome_terms_button);
       welcomeTermsButton.setOnClickListener(v -> onTermsClicked());
@@ -133,76 +109,122 @@ public final class WelcomeFragment extends LoggingFragment {
     super.onResume();
     if (EventBus.getDefault().getStickyEvent(TransferStatus.class) != null) {
       Log.i(TAG, "Found existing transferStatus, redirect to transfer flow");
-      NavHostFragment.findNavController(this).navigate(R.id.action_welcomeFragment_to_deviceTransferSetup);
+      SafeNavigation.safeNavigate(NavHostFragment.findNavController(this), R.id.action_welcomeFragment_to_deviceTransferSetup);
     } else {
       DeviceToDeviceTransferService.stop(requireContext());
     }
   }
 
-  private void continueClicked(@NonNull View view) {
-    boolean isUserSelectionRequired = BackupUtil.isUserSelectionRequired(requireContext());
+  private void onContinueClicked() {
+    if (Permissions.isRuntimePermissionsRequired()) {
+      SafeNavigation.safeNavigate(NavHostFragment.findNavController(this),
+                                  WelcomeFragmentDirections.actionWelcomeFragmentToGrantPermissionsFragment(GrantPermissionsFragment.WelcomeAction.CONTINUE));
+    } else {
+      gatherInformationAndContinue(
+          this,
+          viewModel,
+          () -> continueButton.setSpinning(),
+          () -> continueButton.cancelSpinning(),
+          WelcomeFragmentDirections.actionSkipRestore(),
+          WelcomeFragmentDirections.actionRestore()
+      );
+    }
+  }
 
-    Permissions.with(this)
-               .request(getContinuePermissions(isUserSelectionRequired))
+  private void onRestoreFromBackupClicked() {
+    if (Permissions.isRuntimePermissionsRequired()) {
+      SafeNavigation.safeNavigate(NavHostFragment.findNavController(this),
+                                  WelcomeFragmentDirections.actionWelcomeFragmentToGrantPermissionsFragment(GrantPermissionsFragment.WelcomeAction.RESTORE_BACKUP));
+    } else {
+      gatherInformationAndChooseBackup(this, viewModel, WelcomeFragmentDirections.actionTransferOrRestore());
+    }
+  }
+
+  static void continueClicked(@NonNull Fragment fragment,
+                              @NonNull RegistrationViewModel viewModel,
+                              @NonNull Runnable onSearchForBackupStarted,
+                              @NonNull Runnable onSearchForBackupFinished,
+                              @NonNull NavDirections actionSkipRestore,
+                              @NonNull NavDirections actionRestore)
+  {
+    boolean isUserSelectionRequired = BackupUtil.isUserSelectionRequired(fragment.requireContext());
+
+    Permissions.with(fragment)
+               .request(WelcomePermissions.getWelcomePermissions(isUserSelectionRequired))
                .ifNecessary()
-               .withRationaleDialog(getString(getContinueRationale(isUserSelectionRequired)), getContinueHeaders(isUserSelectionRequired))
-               .onAnyResult(() -> gatherInformationAndContinue(continueButton))
+               .onAnyResult(() -> gatherInformationAndContinue(fragment,
+                                                               viewModel,
+                                                               onSearchForBackupStarted,
+                                                               onSearchForBackupFinished,
+                                                               actionSkipRestore,
+                                                               actionRestore))
                .execute();
   }
 
-  private void restoreFromBackupClicked(@NonNull View view) {
-    boolean isUserSelectionRequired = BackupUtil.isUserSelectionRequired(requireContext());
+  static void restoreFromBackupClicked(@NonNull Fragment fragment,
+                                       @NonNull RegistrationViewModel viewModel,
+                                       @NonNull NavDirections actionTransferOrRestore)
+  {
+    boolean isUserSelectionRequired = BackupUtil.isUserSelectionRequired(fragment.requireContext());
 
-    Permissions.with(this)
-               .request(getContinuePermissions(isUserSelectionRequired))
+    Permissions.with(fragment)
+               .request(WelcomePermissions.getWelcomePermissions(isUserSelectionRequired))
                .ifNecessary()
-               .withRationaleDialog(getString(getContinueRationale(isUserSelectionRequired)), getContinueHeaders(isUserSelectionRequired))
-               .onAnyResult(() -> gatherInformationAndChooseBackup(continueButton))
+               .onAnyResult(() -> gatherInformationAndChooseBackup(fragment, viewModel, actionTransferOrRestore))
                .execute();
   }
 
-  private void gatherInformationAndContinue(@NonNull View view) {
-    setSpinning(continueButton);
+  static void gatherInformationAndContinue(
+      @NonNull Fragment fragment,
+      @NonNull RegistrationViewModel viewModel,
+      @NonNull Runnable onSearchForBackupStarted,
+      @NonNull Runnable onSearchForBackupFinished,
+      @NonNull NavDirections actionSkipRestore,
+      @NonNull NavDirections actionRestore
+  ) {
+    onSearchForBackupStarted.run();
 
     RestoreBackupFragment.searchForBackup(backup -> {
-      Context context = getContext();
+      Context context = fragment.getContext();
       if (context == null) {
         Log.i(TAG, "No context on fragment, must have navigated away.");
         return;
       }
 
-      TextSecurePreferences.setHasSeenWelcomeScreen(requireContext(), true);
+      TextSecurePreferences.setHasSeenWelcomeScreen(fragment.requireContext(), true);
 
-      initializeNumber();
+      initializeNumber(fragment.requireContext(), viewModel);
 
-      cancelSpinning(continueButton);
+      onSearchForBackupFinished.run();
 
       if (backup == null) {
         Log.i(TAG, "Skipping backup. No backup found, or no permission to look.");
-        Navigation.findNavController(view)
-                  .navigate(WelcomeFragmentDirections.actionSkipRestore());
+        SafeNavigation.safeNavigate(NavHostFragment.findNavController(fragment),
+                                    actionSkipRestore);
       } else {
-        Navigation.findNavController(view)
-                  .navigate(WelcomeFragmentDirections.actionRestore());
+        SafeNavigation.safeNavigate(NavHostFragment.findNavController(fragment),
+                                    actionRestore);
       }
     });
   }
 
-  private void gatherInformationAndChooseBackup(@NonNull View view) {
-    TextSecurePreferences.setHasSeenWelcomeScreen(requireContext(), true);
+  static void gatherInformationAndChooseBackup(@NonNull Fragment fragment,
+                                               @NonNull RegistrationViewModel viewModel,
+                                               @NonNull NavDirections actionTransferOrRestore) {
+    TextSecurePreferences.setHasSeenWelcomeScreen(fragment.requireContext(), true);
 
-    initializeNumber();
+    initializeNumber(fragment.requireContext(), viewModel);
 
-    Navigation.findNavController(view)
-              .navigate(WelcomeFragmentDirections.actionTransferOrRestore());
+    SafeNavigation.safeNavigate(NavHostFragment.findNavController(fragment),
+                                actionTransferOrRestore);
   }
 
   @SuppressLint("MissingPermission")
-  private void initializeNumber() {
-    Optional<Phonenumber.PhoneNumber> localNumber = Optional.absent();
+  private static void initializeNumber(@NonNull Context context, @NonNull RegistrationViewModel viewModel) {
+    Optional<Phonenumber.PhoneNumber> localNumber = Optional.empty();
 
-    if (Permissions.hasAll(requireContext(), Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_PHONE_NUMBERS)) {
-      localNumber = Util.getDeviceNumber(requireContext());
+    if (Permissions.hasAll(context, Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_PHONE_NUMBERS)) {
+      localNumber = Util.getDeviceNumber(context);
     } else {
       Log.i(TAG, "No phone permission");
     }
@@ -215,7 +237,7 @@ public final class WelcomeFragment extends LoggingFragment {
       viewModel.onNumberDetected(phoneNumber.getCountryCode(), nationalNumber);
     } else {
       Log.i(TAG, "No number detected");
-      Optional<String> simCountryIso = Util.getSimCountryIso(requireContext());
+      Optional<String> simCountryIso = Util.getSimCountryIso(context);
 
       if (simCountryIso.isPresent() && !TextUtils.isEmpty(simCountryIso.get())) {
         viewModel.onNumberDetected(PhoneNumberUtil.getInstance().getCountryCodeForRegion(simCountryIso.get()), "");
@@ -231,24 +253,5 @@ public final class WelcomeFragment extends LoggingFragment {
     return BackupUtil.isUserSelectionRequired(requireContext()) &&
            !viewModel.isReregister() &&
            !SignalStore.settings().isBackupEnabled();
-  }
-
-  @SuppressLint("NewApi")
-  private static String[] getContinuePermissions(boolean isUserSelectionRequired) {
-    if (isUserSelectionRequired) {
-      return PERMISSIONS_API_29;
-    } else if (Build.VERSION.SDK_INT >= 26) {
-      return PERMISSIONS_API_26;
-    } else {
-      return PERMISSIONS;
-    }
-  }
-
-  private static @StringRes int getContinueRationale(boolean isUserSelectionRequired) {
-    return isUserSelectionRequired ? RATIONALE_API_29 : RATIONALE;
-  }
-
-  private static int[] getContinueHeaders(boolean isUserSelectionRequired) {
-    return isUserSelectionRequired ? HEADERS_API_29 : HEADERS;
   }
 }

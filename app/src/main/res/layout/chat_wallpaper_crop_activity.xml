@@ -1,14 +1,10 @@
 <?xml version="1.0" encoding="utf-8"?>
 <org.thoughtcrime.securesms.components.InsetAwareConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    tools:viewBindingIgnore="true"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent">
-
-    <org.thoughtcrime.securesms.conversation.colors.ColorizerView
-        android:id="@+id/colorizer"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent" />
 
     <androidx.constraintlayout.widget.Guideline
         android:id="@+id/status_bar_guideline"
@@ -28,10 +24,16 @@
         android:id="@+id/image_editor"
         android:layout_width="0dp"
         android:layout_height="0dp"
+        app:imageEditorView_blackoutColor="@color/signal_colorBackground"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintEnd_toEndOf="parent"
         app:layout_constraintStart_toStartOf="parent"
         app:layout_constraintTop_toTopOf="parent" />
+
+    <org.thoughtcrime.securesms.conversation.colors.ColorizerView
+        android:id="@+id/colorizer"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
 
     <androidx.appcompat.widget.Toolbar
         android:id="@+id/toolbar"
@@ -129,7 +131,7 @@
             android:text="@string/DateUtils_just_now"
             android:textAppearance="@style/Signal.Text.Caption"
             android:textColor="@color/transparent_white_80"
-            app:drawableEndCompat="@drawable/ic_delivery_status_read"
+            app:drawableEndCompat="@drawable/symbol_messagestatus_read_24"
             app:drawableTint="@color/transparent_white_80" />
 
     </LinearLayout>
@@ -176,5 +178,17 @@
         android:background="@color/wallpaper_preview_background"
         app:layout_constraintBottom_toBottomOf="parent"
         app:layout_constraintTop_toBottomOf="@id/navigation_bar_guideline" />
+
+    <org.thoughtcrime.securesms.components.ProgressCard
+        android:id="@+id/wallpaper_crop_progress_card"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:visibility="gone"
+        app:cardCornerRadius="18dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
+        tools:visibility="visible" />
 
 </org.thoughtcrime.securesms.components.InsetAwareConstraintLayout>

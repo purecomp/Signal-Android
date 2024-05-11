@@ -6,7 +6,6 @@ import android.content.Intent;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
 import android.graphics.drawable.Drawable;
-import android.os.Build;
 import android.os.Bundle;
 import android.transition.TransitionInflater;
 import android.view.View;
@@ -14,10 +13,12 @@ import android.widget.ImageView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.appcompat.app.AppCompatDelegate;
 import androidx.appcompat.widget.Toolbar;
 import androidx.core.app.ActivityOptionsCompat;
 import androidx.core.graphics.drawable.RoundedBitmapDrawableFactory;
 
+import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.DataSource;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.bumptech.glide.load.engine.GlideException;
@@ -32,7 +33,6 @@ import org.thoughtcrime.securesms.contacts.avatars.ContactPhoto;
 import org.thoughtcrime.securesms.contacts.avatars.FallbackContactPhoto;
 import org.thoughtcrime.securesms.contacts.avatars.ProfileContactPhoto;
 import org.thoughtcrime.securesms.contacts.avatars.ResourceContactPhoto;
-import org.thoughtcrime.securesms.mms.GlideApp;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.recipients.RecipientId;
 import org.thoughtcrime.securesms.util.FullscreenHelper;
@@ -59,18 +59,22 @@ public final class AvatarPreviewActivity extends PassphraseRequiredActivity {
   }
 
   @Override
+  protected void attachBaseContext(@NonNull Context newBase) {
+    getDelegate().setLocalNightMode(AppCompatDelegate.MODE_NIGHT_YES);
+    super.attachBaseContext(newBase);
+  }
+
+  @Override
   protected void onCreate(Bundle savedInstanceState, boolean ready) {
     super.onCreate(savedInstanceState, ready);
 
     setTheme(R.style.TextSecure_MediaPreview);
     setContentView(R.layout.contact_photo_preview_activity);
 
-    if (Build.VERSION.SDK_INT >= 21) {
-      postponeEnterTransition();
-      TransitionInflater inflater = TransitionInflater.from(this);
-      getWindow().setSharedElementEnterTransition(inflater.inflateTransition(R.transition.full_screen_avatar_image_enter_transition_set));
-      getWindow().setSharedElementReturnTransition(inflater.inflateTransition(R.transition.full_screen_avatar_image_return_transition_set));
-    }
+    postponeEnterTransition();
+    TransitionInflater inflater = TransitionInflater.from(this);
+    getWindow().setSharedElementEnterTransition(inflater.inflateTransition(R.transition.full_screen_avatar_image_enter_transition_set));
+    getWindow().setSharedElementReturnTransition(inflater.inflateTransition(R.transition.full_screen_avatar_image_return_transition_set));
 
     Toolbar       toolbar = findViewById(R.id.toolbar);
     EmojiTextView title   = findViewById(R.id.title);
@@ -85,14 +89,14 @@ public final class AvatarPreviewActivity extends PassphraseRequiredActivity {
     RecipientId recipientId = RecipientId.from(getIntent().getStringExtra(RECIPIENT_ID_EXTRA));
 
     Recipient.live(recipientId).observe(this, recipient -> {
-      ContactPhoto contactPhoto  = recipient.isSelf() ? new ProfileContactPhoto(recipient, recipient.getProfileAvatar())
+      ContactPhoto contactPhoto  = recipient.isSelf() ? new ProfileContactPhoto(recipient)
                                                       : recipient.getContactPhoto();
       FallbackContactPhoto fallbackPhoto = recipient.isSelf() ? new ResourceContactPhoto(R.drawable.ic_profile_outline_40, R.drawable.ic_profile_outline_20, R.drawable.ic_person_large)
                                                               : recipient.getFallbackContactPhoto();
 
       Resources resources = this.getResources();
 
-      GlideApp.with(this)
+      Glide.with(this)
               .asBitmap()
               .load(contactPhoto)
               .fallback(fallbackPhoto.asCallCard(this))
@@ -115,9 +119,7 @@ public final class AvatarPreviewActivity extends PassphraseRequiredActivity {
                 @Override
                 public void onResourceReady(@NonNull Bitmap resource, @Nullable Transition<? super Bitmap> transition) {
                   avatar.setImageDrawable(RoundedBitmapDrawableFactory.create(resources, resource));
-                  if (Build.VERSION.SDK_INT >= 21) {
-                    startPostponedEnterTransition();
-                  }
+                  startPostponedEnterTransition();
                 }
 
                 @Override
@@ -132,7 +134,7 @@ public final class AvatarPreviewActivity extends PassphraseRequiredActivity {
 
     findViewById(android.R.id.content).setOnClickListener(v -> fullscreenHelper.toggleUiVisibility());
 
-    fullscreenHelper.configureToolbarSpacer(findViewById(R.id.toolbar_cutout_spacer));
+    fullscreenHelper.configureToolbarLayout(findViewById(R.id.toolbar_cutout_spacer), toolbar);
 
     fullscreenHelper.showAndHideWithSystemUI(getWindow(), findViewById(R.id.toolbar_layout));
   }

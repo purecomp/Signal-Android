@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import com.fasterxml.jackson.annotation.JsonIgnore
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.databind.JsonNode
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.readValue
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
@@ -47,11 +48,13 @@ private const val TAG = "EmojiFiles"
 private const val EMOJI_DIRECTORY = "emoji"
 private const val VERSION_FILE = ".version"
 private const val NAME_FILE = ".names"
+private const val JUMBO_FILE = ".jumbos"
 private const val EMOJI_JSON = "emoji_data.json"
 
 private fun Context.getEmojiDirectory(): File = getDir(EMOJI_DIRECTORY, Context.MODE_PRIVATE)
 private fun Context.getVersionFile(): File = File(getEmojiDirectory(), VERSION_FILE)
 private fun Context.getNameFile(versionUuid: UUID): File = File(File(getEmojiDirectory(), versionUuid.toString()).apply { mkdir() }, NAME_FILE)
+private fun Context.getJumboFile(versionUuid: UUID): File = File(File(getEmojiDirectory(), versionUuid.toString()).apply { mkdir() }, JUMBO_FILE)
 
 @Suppress("UNUSED_PARAMETER")
 private fun getFilesUri(name: String, format: String): Uri = PartAuthority.getEmojiUri(name)
@@ -83,6 +86,13 @@ object EmojiFiles {
   fun openForReading(context: Context, name: String): InputStream {
     val version: Version = Version.readVersion(context) ?: throw IOException("No emoji version is present on disk")
     val names: NameCollection = NameCollection.read(context, version)
+    val dataUuid: UUID = names.getUUIDForName(name) ?: throw IOException("Could not get UUID for name $name")
+    val file: File = version.getFile(context, dataUuid)
+
+    return getInputStream(context, file)
+  }
+
+  fun openForReadingJumbo(context: Context, version: Version, names: JumboCollection, name: String): InputStream {
     val dataUuid: UUID = names.getUUIDForName(name) ?: throw IOException("Could not get UUID for name $name")
     val file: File = version.getFile(context, dataUuid)
 
@@ -133,21 +143,26 @@ object EmojiFiles {
     private fun getDirectory(context: Context): File = File(context.getEmojiDirectory(), this.uuid.toString()).apply { mkdir() }
 
     companion object {
-
       private val objectMapper = ObjectMapper().registerKotlinModule()
 
       @JvmStatic
-      fun readVersion(context: Context): Version? {
+      @JvmOverloads
+      fun readVersion(context: Context, skipValidation: Boolean = false): Version? {
         val version = try {
           getInputStream(context, context.getVersionFile()).use {
-            objectMapper.readValue(it, Version::class.java)
+            val tree: JsonNode = objectMapper.readTree(it)
+            Version(
+              version = tree["version"].asInt(),
+              uuid = objectMapper.convertValue(tree["uuid"], UUID::class.java),
+              density = tree["density"].asText()
+            )
           }
         } catch (e: Exception) {
-          Log.w(TAG, "Could not read current emoji version from disk.")
+          Log.w(TAG, "Could not read current emoji version from disk.", e)
           null
         }
 
-        return if (isVersionValid(context, version)) {
+        return if (skipValidation || isVersionValid(context, version)) {
           version
         } else {
           null
@@ -212,8 +227,15 @@ object EmojiFiles {
       @JvmStatic
       fun read(context: Context, version: Version): NameCollection {
         try {
-          getInputStream(context, context.getNameFile(version.uuid)).use {
-            return objectMapper.readValue(it)
+          getInputStream(context, context.getNameFile(version.uuid)).use { inputStream ->
+            val tree: JsonNode = objectMapper.readTree(inputStream)
+            val elements = tree["names"].elements().asSequence().map {
+              Name(
+                name = it["name"].asText(),
+                uuid = objectMapper.convertValue(it["uuid"], UUID::class.java)
+              )
+            }.toList()
+            return NameCollection(objectMapper.convertValue(tree["versionUuid"], UUID::class.java), elements)
           }
         } catch (e: Exception) {
           return NameCollection(version.uuid, listOf())
@@ -232,6 +254,36 @@ object EmojiFiles {
 
     @JsonIgnore
     fun getUUIDForEmojiData(): UUID? = getUUIDForName(EMOJI_JSON)
+
+    @JsonIgnore
+    fun getUUIDForName(name: String): UUID? = names.firstOrNull { it.name == name }?.uuid
+  }
+
+  class JumboCollection(@JsonProperty val versionUuid: UUID, @JsonProperty val names: List<Name>) {
+    companion object {
+
+      private val objectMapper = ObjectMapper().registerKotlinModule()
+
+      @JvmStatic
+      fun read(context: Context, version: Version): JumboCollection {
+        try {
+          getInputStream(context, context.getJumboFile(version.uuid)).use {
+            return objectMapper.readValue(it)
+          }
+        } catch (e: Exception) {
+          return JumboCollection(version.uuid, listOf())
+        }
+      }
+
+      @JvmStatic
+      fun append(context: Context, nameCollection: JumboCollection, name: Name): JumboCollection {
+        val collection = JumboCollection(nameCollection.versionUuid, nameCollection.names + name)
+        getOutputStream(context, context.getJumboFile(nameCollection.versionUuid)).use {
+          objectMapper.writeValue(it, collection)
+        }
+        return collection
+      }
+    }
 
     @JsonIgnore
     fun getUUIDForName(name: String): UUID? = names.firstOrNull { it.name == name }?.uuid

@@ -2,12 +2,12 @@ package org.thoughtcrime.securesms.jobs;
 
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.crypto.UnidentifiedAccessUtil;
-import org.thoughtcrime.securesms.database.RecipientDatabase;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.jobmanager.Data;
+import org.thoughtcrime.securesms.jobmanager.JsonJobData;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint;
 import org.thoughtcrime.securesms.net.NotPushRegisteredException;
@@ -54,7 +54,11 @@ public class MultiDeviceMessageRequestResponseJob extends BaseJob {
   }
 
   public static @NonNull MultiDeviceMessageRequestResponseJob forBlockAndReportSpam(@NonNull RecipientId threadRecipient) {
-    return new MultiDeviceMessageRequestResponseJob(threadRecipient, Type.BLOCK);
+    return new MultiDeviceMessageRequestResponseJob(threadRecipient, Type.BLOCK_AND_SPAM);
+  }
+
+  public static @NonNull MultiDeviceMessageRequestResponseJob forReportSpam(@NonNull RecipientId threadRecipient) {
+    return new MultiDeviceMessageRequestResponseJob(threadRecipient, Type.SPAM);
   }
 
   private MultiDeviceMessageRequestResponseJob(@NonNull RecipientId threadRecipient, @NonNull Type type) {
@@ -77,10 +81,10 @@ public class MultiDeviceMessageRequestResponseJob extends BaseJob {
   }
 
   @Override
-  public @NonNull Data serialize() {
-    return new Data.Builder().putString(KEY_THREAD_RECIPIENT, threadRecipient.serialize())
-                             .putInt(KEY_TYPE, type.serialize())
-                             .build();
+  public @Nullable byte[] serialize() {
+    return new JsonJobData.Builder().putString(KEY_THREAD_RECIPIENT, threadRecipient.serialize())
+                                    .putInt(KEY_TYPE, type.serialize())
+                                    .serialize();
   }
 
   @Override
@@ -102,8 +106,8 @@ public class MultiDeviceMessageRequestResponseJob extends BaseJob {
     SignalServiceMessageSender messageSender = ApplicationDependencies.getSignalServiceMessageSender();
     Recipient                  recipient     = Recipient.resolved(threadRecipient);
 
-    if (!recipient.hasServiceIdentifier()) {
-      Log.i(TAG, "Queued for recipient without service identifier");
+    if (!recipient.isGroup() && !recipient.getHasServiceId()) {
+      Log.i(TAG, "Queued for non-group recipient without ServiceId");
       return;
     }
 
@@ -112,7 +116,7 @@ public class MultiDeviceMessageRequestResponseJob extends BaseJob {
     if (recipient.isGroup()) {
       response = MessageRequestResponseMessage.forGroup(recipient.getGroupId().get().getDecodedId(), localToRemoteType(type));
     } else if (recipient.isMaybeRegistered()) {
-      response = MessageRequestResponseMessage.forIndividual(RecipientUtil.toSignalServiceAddress(context, recipient), localToRemoteType(type));
+      response = MessageRequestResponseMessage.forIndividual(RecipientUtil.getOrFetchServiceId(context, recipient), localToRemoteType(type));
     } else {
       response = null;
     }
@@ -135,6 +139,10 @@ public class MultiDeviceMessageRequestResponseJob extends BaseJob {
         return MessageRequestResponseMessage.Type.BLOCK;
       case BLOCK_AND_DELETE:
         return MessageRequestResponseMessage.Type.BLOCK_AND_DELETE;
+      case SPAM:
+        return MessageRequestResponseMessage.Type.SPAM;
+      case BLOCK_AND_SPAM:
+        return MessageRequestResponseMessage.Type.BLOCK_AND_SPAM;
       default:
         return MessageRequestResponseMessage.Type.UNKNOWN;
     }
@@ -151,7 +159,7 @@ public class MultiDeviceMessageRequestResponseJob extends BaseJob {
   }
 
   private enum Type {
-    UNKNOWN(0), ACCEPT(1), DELETE(2), BLOCK(3), BLOCK_AND_DELETE(4);
+    UNKNOWN(0), ACCEPT(1), DELETE(2), BLOCK(3), BLOCK_AND_DELETE(4), SPAM(5), BLOCK_AND_SPAM(6);
 
     private final int value;
 
@@ -175,8 +183,9 @@ public class MultiDeviceMessageRequestResponseJob extends BaseJob {
 
   public static final class Factory implements Job.Factory<MultiDeviceMessageRequestResponseJob> {
     @Override
-    public @NonNull
-    MultiDeviceMessageRequestResponseJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull MultiDeviceMessageRequestResponseJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
+      JsonJobData data = JsonJobData.deserialize(serializedData);
+
       RecipientId threadRecipient = RecipientId.from(data.getString(KEY_THREAD_RECIPIENT));
       Type        type            = Type.deserialize(data.getInt(KEY_TYPE));
 

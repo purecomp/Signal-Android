@@ -74,7 +74,7 @@ object Avatars {
     "avatar_sunset" to DefaultAvatar(R.drawable.ic_avatar_sunset, "A120"),
     "avatar_surfboard" to DefaultAvatar(R.drawable.ic_avatar_surfboard, "A110"),
     "avatar_soccerball" to DefaultAvatar(R.drawable.ic_avatar_soccerball, "A130"),
-    "avatar_football" to DefaultAvatar(R.drawable.ic_avatar_football, "A220"),
+    "avatar_football" to DefaultAvatar(R.drawable.ic_avatar_football, "A220")
   )
 
   @DrawableRes
@@ -143,11 +143,10 @@ object Avatars {
   )
 
   data class ColorPair(
-    val backgroundAvatarColor: AvatarColor,
-    val foregroundAvatarColor: ForegroundColor
+    @ColorInt val backgroundColor: Int,
+    @ColorInt val foregroundColor: Int,
+    val code: String
   ) {
-    @ColorInt val backgroundColor: Int = backgroundAvatarColor.colorInt()
-    @ColorInt val foregroundColor: Int = foregroundAvatarColor.colorInt
-    val code: String = backgroundAvatarColor.serialize()
+    constructor(backgroundAvatarColor: AvatarColor, foregroundAvatarColor: ForegroundColor) : this(backgroundAvatarColor.colorInt(), foregroundAvatarColor.colorInt, backgroundAvatarColor.serialize())
   }
 }

@@ -11,7 +11,10 @@ import androidx.appcompat.widget.Toolbar;
 import androidx.fragment.app.Fragment;
 import androidx.navigation.Navigation;
 
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+
 import org.thoughtcrime.securesms.R;
+import org.thoughtcrime.securesms.util.navigation.SafeNavigation;
 import org.thoughtcrime.securesms.util.text.AfterTextChanged;
 import org.whispersystems.signalservice.api.payments.PaymentsConstants;
 
@@ -47,12 +50,12 @@ public class PaymentsRecoveryPasteFragment extends Fragment {
         return;
       }
 
-      Navigation.findNavController(v).navigate(PaymentsRecoveryPasteFragmentDirections.actionPaymentsRecoveryEntryToPaymentsRecoveryPhrase(false).setWords(words));
+      SafeNavigation.safeNavigate(Navigation.findNavController(v), PaymentsRecoveryPasteFragmentDirections.actionPaymentsRecoveryEntryToPaymentsRecoveryPhrase(false).setWords(words));
     });
   }
 
   private void showErrorDialog() {
-    new AlertDialog.Builder(requireContext())
+    new MaterialAlertDialogBuilder(requireContext())
                    .setTitle(R.string.PaymentsRecoveryPasteFragment__invalid_recovery_phrase)
                    .setMessage(getString(R.string.PaymentsRecoveryPasteFragment__make_sure, PaymentsConstants.MNEMONIC_LENGTH))
                    .setPositiveButton(android.R.string.ok, (dialog, which) -> dialog.dismiss())

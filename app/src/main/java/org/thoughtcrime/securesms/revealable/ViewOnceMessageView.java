@@ -1,13 +1,10 @@
 package org.thoughtcrime.securesms.revealable;
 
 import android.content.Context;
-import android.content.res.ColorStateList;
 import android.content.res.TypedArray;
 import android.graphics.Color;
-import android.graphics.PorterDuff;
 import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -15,8 +12,6 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 import androidx.appcompat.widget.AppCompatImageView;
-import androidx.core.content.ContextCompat;
-import androidx.core.widget.ImageViewCompat;
 
 import com.pnikosis.materialishprogress.ProgressWheel;
 
@@ -26,13 +21,14 @@ import org.greenrobot.eventbus.ThreadMode;
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.attachments.Attachment;
-import org.thoughtcrime.securesms.database.AttachmentDatabase;
+import org.thoughtcrime.securesms.database.AttachmentTable;
 import org.thoughtcrime.securesms.database.model.MmsMessageRecord;
 import org.thoughtcrime.securesms.events.PartProgressEvent;
 import org.thoughtcrime.securesms.mms.Slide;
 import org.thoughtcrime.securesms.util.ContextUtil;
 import org.thoughtcrime.securesms.util.DrawableUtil;
 import org.thoughtcrime.securesms.util.MediaUtil;
+import org.thoughtcrime.securesms.util.MessageRecordUtil;
 import org.thoughtcrime.securesms.util.Util;
 
 public class ViewOnceMessageView extends LinearLayout {
@@ -99,8 +95,8 @@ public class ViewOnceMessageView extends LinearLayout {
     }
 
     Attachment attachment = messageRecord.getSlideDeck().getThumbnailSlide().asAttachment();
-    return attachment.getTransferState() == AttachmentDatabase.TRANSFER_PROGRESS_FAILED ||
-           attachment.getTransferState() == AttachmentDatabase.TRANSFER_PROGRESS_PENDING;
+    return attachment.transferState == AttachmentTable.TRANSFER_PROGRESS_FAILED ||
+           attachment.transferState == AttachmentTable.TRANSFER_PROGRESS_PENDING;
   }
 
   public void setMessage(@NonNull MmsMessageRecord message, boolean hasWallpaper) {
@@ -117,25 +113,25 @@ public class ViewOnceMessageView extends LinearLayout {
     int iconColor;
     boolean showProgress = false;
 
-    if (messageRecord.isOutgoing() && networkInProgress(messageRecord)) {
+    if (messageRecord.isOutgoing() && networkInProgress(messageRecord) && !MessageRecordUtil.isScheduled(messageRecord)) {
       iconColor = openedIconColor;
       text.setText(R.string.RevealableMessageView_media);
       icon.setImageResource(0);
       showProgress = true;
     } else if (messageRecord.isOutgoing()) {
-      if (messageRecord.isRemoteViewed()) {
+      if (messageRecord.isViewed()) {
         iconColor = openedIconColor;
         text.setText(R.string.RevealableMessageView_viewed);
-        icon.setImageResource(R.drawable.ic_viewed_once_24);
+        icon.setImageResource(R.drawable.symbol_view_once_dash_24);
       } else {
         iconColor = unopenedIconColor;
         text.setText(R.string.RevealableMessageView_media);
-        icon.setImageResource(R.drawable.ic_view_once_24);
+        icon.setImageResource(R.drawable.symbol_view_once_24);
       }
     } else if (ViewOnceUtil.isViewable(messageRecord)) {
       iconColor = unopenedIconColor;
       text.setText(getDescriptionId(messageRecord));
-      icon.setImageResource(R.drawable.ic_view_once_24);
+      icon.setImageResource(R.drawable.symbol_view_once_24);
     } else if (networkInProgress(messageRecord)) {
       iconColor = unopenedIconColor;
       text.setText("");
@@ -144,11 +140,11 @@ public class ViewOnceMessageView extends LinearLayout {
     } else if (requiresTapToDownload(messageRecord)) {
       iconColor = unopenedIconColor;
       text.setText(formatFileSize(messageRecord));
-      icon.setImageResource(R.drawable.ic_arrow_down_circle_outline_24);
+      icon.setImageResource(R.drawable.symbol_arrow_circle_down_24);
     } else {
       iconColor = openedIconColor;
       text.setText(R.string.RevealableMessageView_viewed);
-      icon.setImageResource(R.drawable.ic_viewed_once_24);
+      icon.setImageResource(R.drawable.symbol_view_once_dash_24);
     }
 
     text.setTextColor(textColor);
@@ -173,7 +169,7 @@ public class ViewOnceMessageView extends LinearLayout {
     if (messageRecord.getSlideDeck().getThumbnailSlide() == null) return false;
 
     Attachment attachment = messageRecord.getSlideDeck().getThumbnailSlide().asAttachment();
-    return attachment.getTransferState() == AttachmentDatabase.TRANSFER_PROGRESS_STARTED;
+    return attachment.transferState == AttachmentTable.TRANSFER_PROGRESS_STARTED;
   }
 
   private @NonNull String formatFileSize(@NonNull MmsMessageRecord messageRecord) {

@@ -1,49 +1,19 @@
 plugins {
-    id 'com.android.application'
-    id 'kotlin-android'
-    id 'kotlin-kapt'
-    id 'witness'
+    id("signal-sample-app")
+    id("com.google.devtools.ksp")
 }
-
-apply from: 'witness-verifications.gradle'
 
 android {
-    compileSdk COMPILE_SDK
+    namespace = "org.signal.imageeditor.app"
 
     defaultConfig {
-        applicationId "org.signal.imageeditor.app"
-        versionCode 1
-        versionName "1.0"
-
-        minSdk MINIMUM_SDK
-        targetSdk TARGET_SDK
+        applicationId = "org.signal.imageeditor.app"
     }
-
-    buildTypes {
-        release {
-            minifyEnabled false
-            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
-        }
-    }
-    compileOptions {
-        sourceCompatibility JAVA_VERSION
-        targetCompatibility JAVA_VERSION
-    }
-    kotlinOptions {
-        jvmTarget = '1.8'
-    }
-}
-
-dependencyVerification {
-    configuration = '(debug|release)RuntimeClasspath'
 }
 
 dependencies {
-    implementation libs.androidx.core.ktx
-    implementation libs.androidx.appcompat
-    implementation libs.material.material
-    implementation project(':image-editor')
+    implementation(project(":image-editor"))
 
-    implementation libs.glide.glide
-    kapt libs.glide.compiler
+    implementation(libs.glide.glide)
+    ksp(libs.glide.ksp)
 }

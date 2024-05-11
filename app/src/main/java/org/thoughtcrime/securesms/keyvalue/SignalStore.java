@@ -4,6 +4,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.VisibleForTesting;
 import androidx.preference.PreferenceDataStore;
 
+import org.thoughtcrime.securesms.database.KeyValueDatabase;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.util.SignalUncaughtExceptionHandler;
 
@@ -15,58 +16,87 @@ import java.util.List;
  */
 public final class SignalStore {
 
-  private static final SignalStore INSTANCE = new SignalStore();
+  private KeyValueStore store;
 
-  private final KeyValueStore            store;
-  private final KbsValues                kbsValues;
-  private final RegistrationValues       registrationValues;
-  private final PinValues                pinValues;
-  private final RemoteConfigValues       remoteConfigValues;
-  private final StorageServiceValues     storageServiceValues;
-  private final UiHints                  uiHints;
-  private final TooltipValues            tooltipValues;
-  private final MiscellaneousValues      misc;
-  private final InternalValues           internalValues;
-  private final EmojiValues              emojiValues;
-  private final SettingsValues           settingsValues;
-  private final CertificateValues        certificateValues;
-  private final PhoneNumberPrivacyValues phoneNumberPrivacyValues;
-  private final OnboardingValues         onboardingValues;
-  private final WallpaperValues          wallpaperValues;
-  private final PaymentsValues           paymentsValues;
-  private final DonationsValues          donationsValues;
-  private final ProxyValues              proxyValues;
-  private final RateLimitValues          rateLimitValues;
-  private final ChatColorsValues         chatColorsValues;
-  private final ImageEditorValues        imageEditorValues;
+  private final AccountValues             accountValues;
+  private final SvrValues                 svrValues;
+  private final RegistrationValues        registrationValues;
+  private final PinValues                 pinValues;
+  private final RemoteConfigValues        remoteConfigValues;
+  private final StorageServiceValues      storageServiceValues;
+  private final UiHints                   uiHints;
+  private final TooltipValues             tooltipValues;
+  private final MiscellaneousValues       misc;
+  private final InternalValues            internalValues;
+  private final EmojiValues               emojiValues;
+  private final SettingsValues            settingsValues;
+  private final CertificateValues         certificateValues;
+  private final PhoneNumberPrivacyValues  phoneNumberPrivacyValues;
+  private final OnboardingValues          onboardingValues;
+  private final WallpaperValues           wallpaperValues;
+  private final PaymentsValues            paymentsValues;
+  private final DonationsValues           donationsValues;
+  private final ProxyValues               proxyValues;
+  private final RateLimitValues           rateLimitValues;
+  private final ChatColorsValues          chatColorsValues;
+  private final ImageEditorValues         imageEditorValues;
+  private final NotificationProfileValues notificationProfileValues;
+  private final ReleaseChannelValues      releaseChannelValues;
+  private final StoryValues               storyValues;
+  private final ApkUpdateValues           apkUpdate;
+  private final BackupValues              backupValues;
 
-  private SignalStore() {
-    this.store                    = new KeyValueStore(ApplicationDependencies.getApplication());
-    this.kbsValues                = new KbsValues(store);
-    this.registrationValues       = new RegistrationValues(store);
-    this.pinValues                = new PinValues(store);
-    this.remoteConfigValues       = new RemoteConfigValues(store);
-    this.storageServiceValues     = new StorageServiceValues(store);
-    this.uiHints                  = new UiHints(store);
-    this.tooltipValues            = new TooltipValues(store);
-    this.misc                     = new MiscellaneousValues(store);
-    this.internalValues           = new InternalValues(store);
-    this.emojiValues              = new EmojiValues(store);
-    this.settingsValues           = new SettingsValues(store);
-    this.certificateValues        = new CertificateValues(store);
-    this.phoneNumberPrivacyValues = new PhoneNumberPrivacyValues(store);
-    this.onboardingValues         = new OnboardingValues(store);
-    this.wallpaperValues          = new WallpaperValues(store);
-    this.paymentsValues           = new PaymentsValues(store);
-    this.donationsValues          = new DonationsValues(store);
-    this.proxyValues              = new ProxyValues(store);
-    this.rateLimitValues          = new RateLimitValues(store);
-    this.chatColorsValues         = new ChatColorsValues(store);
-    this.imageEditorValues        = new ImageEditorValues(store);
+  private final PlainTextSharedPrefsDataStore plainTextValues;
+
+  private static volatile SignalStore instance;
+
+  private static @NonNull SignalStore getInstance() {
+    if (instance == null) {
+      synchronized (SignalStore.class) {
+        if (instance == null) {
+          instance = new SignalStore(new KeyValueStore(KeyValueDatabase.getInstance(ApplicationDependencies.getApplication())));
+        }
+      }
+    }
+
+    return instance;
+  }
+
+  private SignalStore(@NonNull KeyValueStore store) {
+    this.store                     = store;
+    this.accountValues             = new AccountValues(store);
+    this.svrValues                 = new SvrValues(store);
+    this.registrationValues        = new RegistrationValues(store);
+    this.pinValues                 = new PinValues(store);
+    this.remoteConfigValues        = new RemoteConfigValues(store);
+    this.storageServiceValues      = new StorageServiceValues(store);
+    this.uiHints                   = new UiHints(store);
+    this.tooltipValues             = new TooltipValues(store);
+    this.misc                      = new MiscellaneousValues(store);
+    this.internalValues            = new InternalValues(store);
+    this.emojiValues               = new EmojiValues(store);
+    this.settingsValues            = new SettingsValues(store);
+    this.certificateValues         = new CertificateValues(store);
+    this.phoneNumberPrivacyValues  = new PhoneNumberPrivacyValues(store);
+    this.onboardingValues          = new OnboardingValues(store);
+    this.wallpaperValues           = new WallpaperValues(store);
+    this.paymentsValues            = new PaymentsValues(store);
+    this.donationsValues           = new DonationsValues(store);
+    this.proxyValues               = new ProxyValues(store);
+    this.rateLimitValues           = new RateLimitValues(store);
+    this.chatColorsValues          = new ChatColorsValues(store);
+    this.imageEditorValues         = new ImageEditorValues(store);
+    this.notificationProfileValues = new NotificationProfileValues(store);
+    this.releaseChannelValues      = new ReleaseChannelValues(store);
+    this.storyValues               = new StoryValues(store);
+    this.apkUpdate                 = new ApkUpdateValues(store);
+    this.backupValues              = new BackupValues(store);
+    this.plainTextValues           = new PlainTextSharedPrefsDataStore(ApplicationDependencies.getApplication());
   }
 
   public static void onFirstEverAppLaunch() {
-    kbsValues().onFirstEverAppLaunch();
+    account().onFirstEverAppLaunch();
+    svr().onFirstEverAppLaunch();
     registrationValues().onFirstEverAppLaunch();
     pinValues().onFirstEverAppLaunch();
     remoteConfigValues().onFirstEverAppLaunch();
@@ -87,11 +117,15 @@ public final class SignalStore {
     rateLimit().onFirstEverAppLaunch();
     chatColorsValues().onFirstEverAppLaunch();
     imageEditorValues().onFirstEverAppLaunch();
+    notificationProfileValues().onFirstEverAppLaunch();
+    releaseChannelValues().onFirstEverAppLaunch();
+    storyValues().onFirstEverAppLaunch();
   }
 
   public static List<String> getKeysToIncludeInBackup() {
     List<String> keys = new ArrayList<>();
-    keys.addAll(kbsValues().getKeysToIncludeInBackup());
+    keys.addAll(account().getKeysToIncludeInBackup());
+    keys.addAll(svr().getKeysToIncludeInBackup());
     keys.addAll(registrationValues().getKeysToIncludeInBackup());
     keys.addAll(pinValues().getKeysToIncludeInBackup());
     keys.addAll(remoteConfigValues().getKeysToIncludeInBackup());
@@ -112,6 +146,9 @@ public final class SignalStore {
     keys.addAll(rateLimit().getKeysToIncludeInBackup());
     keys.addAll(chatColorsValues().getKeysToIncludeInBackup());
     keys.addAll(imageEditorValues().getKeysToIncludeInBackup());
+    keys.addAll(notificationProfileValues().getKeysToIncludeInBackup());
+    keys.addAll(releaseChannelValues().getKeysToIncludeInBackup());
+    keys.addAll(storyValues().getKeysToIncludeInBackup());
     return keys;
   }
 
@@ -121,99 +158,134 @@ public final class SignalStore {
    */
   @VisibleForTesting
   public static void resetCache() {
-    INSTANCE.store.resetCache();
+    getInstance().store.resetCache();
   }
 
-  public static @NonNull KbsValues kbsValues() {
-    return INSTANCE.kbsValues;
+  /**
+   * Restoring a backup changes the underlying disk values, so the cache needs to be reset.
+   */
+  public static void onPostBackupRestore() {
+    getInstance().store.resetCache();
+  }
+
+  public static @NonNull AccountValues account() {
+    return getInstance().accountValues;
+  }
+
+  public static @NonNull SvrValues svr() {
+    return getInstance().svrValues;
   }
 
   public static @NonNull RegistrationValues registrationValues() {
-    return INSTANCE.registrationValues;
+    return getInstance().registrationValues;
   }
 
   public static @NonNull PinValues pinValues() {
-    return INSTANCE.pinValues;
+    return getInstance().pinValues;
   }
 
   public static @NonNull RemoteConfigValues remoteConfigValues() {
-    return INSTANCE.remoteConfigValues;
+    return getInstance().remoteConfigValues;
   }
 
   public static @NonNull StorageServiceValues storageService() {
-    return INSTANCE.storageServiceValues;
+    return getInstance().storageServiceValues;
   }
 
   public static @NonNull UiHints uiHints() {
-    return INSTANCE.uiHints;
+    return getInstance().uiHints;
   }
 
   public static @NonNull TooltipValues tooltips() {
-    return INSTANCE.tooltipValues;
+    return getInstance().tooltipValues;
   }
 
   public static @NonNull MiscellaneousValues misc() {
-    return INSTANCE.misc;
+    return getInstance().misc;
   }
 
   public static @NonNull InternalValues internalValues() {
-    return INSTANCE.internalValues;
+    return getInstance().internalValues;
   }
 
   public static @NonNull EmojiValues emojiValues() {
-    return INSTANCE.emojiValues;
+    return getInstance().emojiValues;
   }
 
   public static @NonNull SettingsValues settings() {
-    return INSTANCE.settingsValues;
+    return getInstance().settingsValues;
   }
 
   public static @NonNull CertificateValues certificateValues() {
-    return INSTANCE.certificateValues;
+    return getInstance().certificateValues;
   }
 
   public static @NonNull PhoneNumberPrivacyValues phoneNumberPrivacy() {
-    return INSTANCE.phoneNumberPrivacyValues;
+    return getInstance().phoneNumberPrivacyValues;
   }
 
   public static @NonNull OnboardingValues onboarding() {
-    return INSTANCE.onboardingValues;
+    return getInstance().onboardingValues;
   }
 
   public static @NonNull WallpaperValues wallpaper() {
-    return INSTANCE.wallpaperValues;
+    return getInstance().wallpaperValues;
   }
 
   public static @NonNull PaymentsValues paymentsValues() {
-    return INSTANCE.paymentsValues;
+    return getInstance().paymentsValues;
   }
 
   public static @NonNull DonationsValues donationsValues() {
-    return INSTANCE.donationsValues;
+    return getInstance().donationsValues;
   }
 
   public static @NonNull ProxyValues proxy() {
-    return INSTANCE.proxyValues;
+    return getInstance().proxyValues;
   }
 
   public static @NonNull RateLimitValues rateLimit() {
-    return INSTANCE.rateLimitValues;
+    return getInstance().rateLimitValues;
   }
 
   public static @NonNull ChatColorsValues chatColorsValues() {
-    return INSTANCE.chatColorsValues;
+    return getInstance().chatColorsValues;
   }
 
   public static @NonNull ImageEditorValues imageEditorValues() {
-    return INSTANCE.imageEditorValues;
+    return getInstance().imageEditorValues;
   }
 
-  public static @NonNull GroupsV2AuthorizationSignalStoreCache groupsV2AuthorizationCache() {
-    return new GroupsV2AuthorizationSignalStoreCache(getStore());
+  public static @NonNull NotificationProfileValues notificationProfileValues() {
+    return getInstance().notificationProfileValues;
+  }
+
+  public static @NonNull ReleaseChannelValues releaseChannelValues() {
+    return getInstance().releaseChannelValues;
+  }
+
+  public static @NonNull StoryValues storyValues() {
+    return getInstance().storyValues;
+  }
+
+  public static @NonNull ApkUpdateValues apkUpdate() {
+    return getInstance().apkUpdate;
+  }
+
+  public static @NonNull BackupValues backup() {
+    return getInstance().backupValues;
+  }
+
+  public static @NonNull GroupsV2AuthorizationSignalStoreCache groupsV2AciAuthorizationCache() {
+    return GroupsV2AuthorizationSignalStoreCache.createAciCache(getStore());
   }
 
   public static @NonNull PreferenceDataStore getPreferenceDataStore() {
     return new SignalPreferenceDataStore(getStore());
+  }
+
+  public static @NonNull PlainTextSharedPrefsDataStore plaintext() {
+    return getInstance().plainTextValues;
   }
 
   /**
@@ -225,6 +297,19 @@ public final class SignalStore {
   }
 
   private static @NonNull KeyValueStore getStore() {
-    return INSTANCE.store;
+    return getInstance().store;
+  }
+
+  /**
+   * Allows you to set a custom KeyValueStore to read from. Only for testing!
+   */
+  @VisibleForTesting
+  public static void inject(@NonNull KeyValueStore store) {
+    instance = new SignalStore(store);
+  }
+
+  public static void clearAllDataForBackupRestore() {
+    releaseChannelValues().clearReleaseChannelRecipientId();
+    account().clearRegistrationButKeepCredentials();
   }
 }

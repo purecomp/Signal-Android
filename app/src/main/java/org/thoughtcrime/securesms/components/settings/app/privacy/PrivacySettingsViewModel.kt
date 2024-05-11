@@ -5,10 +5,7 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies
-import org.thoughtcrime.securesms.jobs.RefreshAttributesJob
-import org.thoughtcrime.securesms.keyvalue.PhoneNumberPrivacyValues
 import org.thoughtcrime.securesms.keyvalue.SignalStore
-import org.thoughtcrime.securesms.storage.StorageSyncHelper
 import org.thoughtcrime.securesms.util.TextSecurePreferences
 import org.thoughtcrime.securesms.util.livedata.Store
 
@@ -55,21 +52,13 @@ class PrivacySettingsViewModel(
     refresh()
   }
 
-  fun setPhoneNumberSharingMode(phoneNumberSharingMode: PhoneNumberPrivacyValues.PhoneNumberSharingMode) {
-    SignalStore.phoneNumberPrivacy().phoneNumberSharingMode = phoneNumberSharingMode
-    StorageSyncHelper.scheduleSyncForDataChange()
-    refresh()
-  }
-
-  fun setPhoneNumberListingMode(phoneNumberListingMode: PhoneNumberPrivacyValues.PhoneNumberListingMode) {
-    SignalStore.phoneNumberPrivacy().phoneNumberListingMode = phoneNumberListingMode
-    StorageSyncHelper.scheduleSyncForDataChange()
-    ApplicationDependencies.getJobManager().add(RefreshAttributesJob())
-    refresh()
-  }
-
   fun setIncognitoKeyboard(enabled: Boolean) {
     sharedPreferences.edit().putBoolean(TextSecurePreferences.INCOGNITO_KEYBORAD_PREF, enabled).apply()
+    refresh()
+  }
+
+  fun togglePaymentLock(enable: Boolean) {
+    SignalStore.paymentsValues().paymentLock = enable
     refresh()
   }
 
@@ -96,8 +85,7 @@ class PrivacySettingsViewModel(
       screenLockActivityTimeout = TextSecurePreferences.getScreenLockTimeout(ApplicationDependencies.getApplication()),
       screenSecurity = TextSecurePreferences.isScreenSecurityEnabled(ApplicationDependencies.getApplication()),
       incognitoKeyboard = TextSecurePreferences.isIncognitoKeyboardEnabled(ApplicationDependencies.getApplication()),
-      seeMyPhoneNumber = SignalStore.phoneNumberPrivacy().phoneNumberSharingMode,
-      findMeByPhoneNumber = SignalStore.phoneNumberPrivacy().phoneNumberListingMode,
+      paymentLock = SignalStore.paymentsValues().paymentLock,
       isObsoletePasswordEnabled = !TextSecurePreferences.isPasswordDisabled(ApplicationDependencies.getApplication()),
       isObsoletePasswordTimeoutEnabled = TextSecurePreferences.isPassphraseTimeoutEnabled(ApplicationDependencies.getApplication()),
       obsoletePasswordTimeout = TextSecurePreferences.getPassphraseTimeoutInterval(ApplicationDependencies.getApplication()),
@@ -113,7 +101,7 @@ class PrivacySettingsViewModel(
     private val sharedPreferences: SharedPreferences,
     private val repository: PrivacySettingsRepository
   ) : ViewModelProvider.Factory {
-    override fun <T : ViewModel?> create(modelClass: Class<T>): T {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
       return requireNotNull(modelClass.cast(PrivacySettingsViewModel(sharedPreferences, repository)))
     }
   }

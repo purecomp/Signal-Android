@@ -6,12 +6,10 @@ import androidx.annotation.NonNull;
 import androidx.annotation.WorkerThread;
 
 import org.signal.core.util.logging.Log;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
+import org.thoughtcrime.securesms.database.SignalDatabase;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.jobmanager.Data;
 import org.thoughtcrime.securesms.jobs.PushGroupSendJob;
-import org.thoughtcrime.securesms.jobs.PushMediaSendJob;
-import org.thoughtcrime.securesms.jobs.PushTextSendJob;
+import org.thoughtcrime.securesms.jobs.IndividualSendJob;
 
 import java.util.Set;
 
@@ -26,27 +24,21 @@ public final class RateLimitUtil {
    */
   @WorkerThread
   public static void retryAllRateLimitedMessages(@NonNull Context context) {
-    Set<Long> sms = DatabaseFactory.getSmsDatabase(context).getAllRateLimitedMessageIds();
-    Set<Long> mms = DatabaseFactory.getMmsDatabase(context).getAllRateLimitedMessageIds();
+    Set<Long> messageIds = SignalDatabase.messages().getAllRateLimitedMessageIds();
 
-    if (sms.isEmpty() && mms.isEmpty()) {
+    if (messageIds.isEmpty()) {
       return;
     }
 
-    Log.i(TAG, "Retrying " + sms.size() + " sms records and " + mms.size() + " mms records.");
+    Log.i(TAG, "Retrying " + messageIds.size() + " message records.");
 
-    DatabaseFactory.getSmsDatabase(context).clearRateLimitStatus(sms);
-    DatabaseFactory.getMmsDatabase(context).clearRateLimitStatus(mms);
+    SignalDatabase.messages().clearRateLimitStatus(messageIds);
 
-    ApplicationDependencies.getJobManager().update((job, serializer) -> {
-      Data data = serializer.deserialize(job.getSerializedData());
-
-      if (job.getFactoryKey().equals(PushTextSendJob.KEY) && sms.contains(PushTextSendJob.getMessageId(data))) {
-        return job.withNextRunAttemptTime(System.currentTimeMillis());
-      } else if (job.getFactoryKey().equals(PushMediaSendJob.KEY) && mms.contains(PushMediaSendJob.getMessageId(data))) {
-        return job.withNextRunAttemptTime(System.currentTimeMillis());
-      } else if (job.getFactoryKey().equals(PushGroupSendJob.KEY) && mms.contains(PushGroupSendJob.getMessageId(data))) {
-        return job.withNextRunAttemptTime(System.currentTimeMillis());
+    ApplicationDependencies.getJobManager().update((job) -> {
+      if (job.getFactoryKey().equals(IndividualSendJob.KEY) && messageIds.contains(IndividualSendJob.getMessageId(job.getSerializedData()))) {
+        return job.withNextBackoffInterval(0);
+      } else if (job.getFactoryKey().equals(PushGroupSendJob.KEY) && messageIds.contains(PushGroupSendJob.getMessageId(job.getSerializedData()))) {
+        return job.withNextBackoffInterval(0);
       } else {
         return job;
       }

@@ -9,19 +9,26 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.core.util.Consumer;
 
+import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
 
+import org.signal.core.util.Hex;
+import org.signal.core.util.Result;
 import org.signal.core.util.concurrent.SignalExecutors;
 import org.signal.core.util.logging.Log;
+import org.signal.libsignal.protocol.InvalidMessageException;
+import org.signal.libsignal.protocol.util.Pair;
+import org.signal.libsignal.zkgroup.VerificationFailedException;
+import org.signal.libsignal.zkgroup.groups.GroupMasterKey;
+import org.signal.ringrtc.CallLinkRootKey;
 import org.signal.storageservice.protos.groups.local.DecryptedGroupJoinInfo;
-import org.signal.zkgroup.VerificationFailedException;
-import org.signal.zkgroup.groups.GroupMasterKey;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.attachments.Attachment;
 import org.thoughtcrime.securesms.attachments.UriAttachment;
-import org.thoughtcrime.securesms.database.AttachmentDatabase;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.GroupDatabase;
+import org.thoughtcrime.securesms.calls.links.CallLinks;
+import org.thoughtcrime.securesms.database.AttachmentTable;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.database.model.GroupRecord;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.groups.GroupId;
 import org.thoughtcrime.securesms.groups.GroupManager;
@@ -29,7 +36,7 @@ import org.thoughtcrime.securesms.groups.v2.GroupInviteLinkUrl;
 import org.thoughtcrime.securesms.jobs.AvatarGroupsV2DownloadJob;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.linkpreview.LinkPreviewUtil.OpenGraph;
-import org.thoughtcrime.securesms.mms.GlideApp;
+import org.thoughtcrime.securesms.mms.PushMediaConstraints;
 import org.thoughtcrime.securesms.net.CallRequestController;
 import org.thoughtcrime.securesms.net.CompositeRequestController;
 import org.thoughtcrime.securesms.net.RequestController;
@@ -37,27 +44,32 @@ import org.thoughtcrime.securesms.net.UserAgentInterceptor;
 import org.thoughtcrime.securesms.profiles.AvatarHelper;
 import org.thoughtcrime.securesms.providers.BlobProvider;
 import org.thoughtcrime.securesms.recipients.Recipient;
+import org.thoughtcrime.securesms.service.webrtc.links.CallLinkCredentials;
+import org.thoughtcrime.securesms.service.webrtc.links.ReadCallLinkResult;
 import org.thoughtcrime.securesms.stickers.StickerRemoteUri;
 import org.thoughtcrime.securesms.stickers.StickerUrl;
 import org.thoughtcrime.securesms.util.AvatarUtil;
+import org.thoughtcrime.securesms.util.BitmapDecodingException;
 import org.thoughtcrime.securesms.util.ByteUnit;
-import org.thoughtcrime.securesms.util.Hex;
+import org.thoughtcrime.securesms.util.ImageCompressionUtil;
+import org.thoughtcrime.securesms.util.LinkUtil;
 import org.thoughtcrime.securesms.util.MediaUtil;
 import org.thoughtcrime.securesms.util.OkHttpUtil;
-import org.whispersystems.libsignal.InvalidMessageException;
-import org.whispersystems.libsignal.util.Pair;
-import org.whispersystems.libsignal.util.guava.Optional;
 import org.whispersystems.signalservice.api.SignalServiceMessageReceiver;
 import org.whispersystems.signalservice.api.groupsv2.GroupLinkNotActiveException;
 import org.whispersystems.signalservice.api.messages.SignalServiceStickerManifest;
 import org.whispersystems.signalservice.api.messages.SignalServiceStickerManifest.StickerInfo;
+import org.whispersystems.signalservice.api.util.OptionalUtil;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.IDN;
+import java.util.Optional;
 import java.util.concurrent.ExecutionException;
 
+import io.reactivex.rxjava3.core.Single;
+import io.reactivex.rxjava3.disposables.Disposable;
+import io.reactivex.rxjava3.schedulers.Schedulers;
 import okhttp3.CacheControl;
 import okhttp3.Call;
 import okhttp3.OkHttpClient;
@@ -82,6 +94,28 @@ public class LinkPreviewRepository {
                                   .build();
   }
 
+  public @NonNull Single<Result<LinkPreview, Error>> getLinkPreview(@NonNull String url) {
+    return Single.<Result<LinkPreview, Error>>create(emitter -> {
+      RequestController controller = getLinkPreview(ApplicationDependencies.getApplication(),
+                                                    url,
+                                                    new Callback() {
+                                                      @Override
+                                                      public void onSuccess(@NonNull LinkPreview linkPreview) {
+                                                        emitter.onSuccess(Result.success(linkPreview));
+                                                      }
+
+                                                      @Override
+                                                      public void onError(@NonNull Error error) {
+                                                        emitter.onSuccess(Result.failure(error));
+                                                      }
+                                                    });
+
+      if (controller != null) {
+        emitter.setCancellable(controller::cancel);
+      }
+    }).subscribeOn(Schedulers.io());
+  }
+
   @Nullable RequestController getLinkPreview(@NonNull Context context,
                                              @NonNull String url,
                                              @NonNull Callback callback)
@@ -92,7 +126,7 @@ public class LinkPreviewRepository {
 
     CompositeRequestController compositeController = new CompositeRequestController();
 
-    if (!LinkPreviewUtil.isValidPreviewUrl(url)) {
+    if (!LinkUtil.isValidPreviewUrl(url)) {
       Log.w(TAG, "Tried to get a link preview for a non-whitelisted domain.");
       callback.onError(Error.PREVIEW_NOT_AVAILABLE);
       return compositeController;
@@ -104,6 +138,8 @@ public class LinkPreviewRepository {
       metadataController = fetchStickerPackLinkPreview(context, url, callback);
     } else if (GroupInviteLinkUrl.isGroupLink(url)) {
       metadataController = fetchGroupLinkPreview(context, url, callback);
+    } else if (CallLinks.isCallLink(url)) {
+      metadataController = fetchCallLinkPreview(context, url, callback);
     } else {
       metadataController = fetchMetadata(url, metadata -> {
         if (metadata.isEmpty()) {
@@ -112,7 +148,7 @@ public class LinkPreviewRepository {
         }
 
         if (!metadata.getImageUrl().isPresent()) {
-          callback.onSuccess(new LinkPreview(url, metadata.getTitle().or(""), metadata.getDescription().or(""), metadata.getDate(), Optional.absent()));
+          callback.onSuccess(new LinkPreview(url, metadata.getTitle().orElse(""), metadata.getDescription().orElse(""), metadata.getDate(), Optional.empty()));
           return;
         }
 
@@ -120,7 +156,7 @@ public class LinkPreviewRepository {
           if (!metadata.getTitle().isPresent() && !attachment.isPresent()) {
             callback.onError(Error.PREVIEW_NOT_AVAILABLE);
           } else {
-            callback.onSuccess(new LinkPreview(url, metadata.getTitle().or(""), metadata.getDescription().or(""), metadata.getDate(), attachment));
+            callback.onSuccess(new LinkPreview(url, metadata.getTitle().orElse(""), metadata.getDescription().orElse(""), metadata.getDate(), attachment));
           }
         });
 
@@ -154,16 +190,24 @@ public class LinkPreviewRepository {
           return;
         }
 
-        String           body        = OkHttpUtil.readAsString(response.body(), FAILSAFE_MAX_TEXT_SIZE);
+        String body;
+        try {
+          body = OkHttpUtil.readAsString(response.body(), FAILSAFE_MAX_TEXT_SIZE);
+        } catch (IOException e) {
+          Log.w(TAG, "Failed to read body", e);
+          callback.accept(Metadata.empty());
+          return;
+        }
+
         OpenGraph        openGraph   = LinkPreviewUtil.parseOpenGraphFields(body);
         Optional<String> title       = openGraph.getTitle();
         Optional<String> description = openGraph.getDescription();
         Optional<String> imageUrl    = openGraph.getImageUrl();
         long             date        = openGraph.getDate();
 
-        if (imageUrl.isPresent() && !LinkPreviewUtil.isValidPreviewUrl(imageUrl.get())) {
+        if (imageUrl.isPresent() && !LinkUtil.isValidPreviewUrl(imageUrl.get())) {
           Log.i(TAG, "Image URL was invalid or for a non-whitelisted domain. Skipping.");
-          imageUrl = Optional.absent();
+          imageUrl = Optional.empty();
         }
 
         callback.accept(new Metadata(title, description, date, imageUrl));
@@ -178,26 +222,45 @@ public class LinkPreviewRepository {
     CallRequestController controller = new CallRequestController(call);
 
     SignalExecutors.UNBOUNDED.execute(() -> {
-      try {
-        Response response = call.execute();
+      try (Response response = call.execute()) {
         if (!response.isSuccessful() || response.body() == null) {
+          callback.accept(Optional.empty());
           return;
         }
 
         InputStream bodyStream = response.body().byteStream();
         controller.setStream(bodyStream);
 
-        byte[]               data      = OkHttpUtil.readAsBytes(bodyStream, FAILSAFE_MAX_IMAGE_SIZE);
-        Bitmap               bitmap    = BitmapFactory.decodeByteArray(data, 0, data.length);
-        Optional<Attachment> thumbnail = bitmapToAttachment(bitmap, Bitmap.CompressFormat.JPEG, MediaUtil.IMAGE_JPEG);
+        byte[]                           data        = OkHttpUtil.readAsBytes(bodyStream, FAILSAFE_MAX_IMAGE_SIZE);
+        Bitmap                           bitmap      = BitmapFactory.decodeByteArray(data, 0, data.length);
+        Optional<Attachment>             thumbnail   = Optional.empty();
+        PushMediaConstraints.MediaConfig mediaConfig = PushMediaConstraints.MediaConfig.getDefault(ApplicationDependencies.getApplication());
+
+        if (bitmap != null) {
+          for (final int maxDimension : mediaConfig.getImageSizeTargets()) {
+            ImageCompressionUtil.Result result = ImageCompressionUtil.compressWithinConstraints(
+                ApplicationDependencies.getApplication(),
+                MediaUtil.IMAGE_JPEG,
+                bitmap,
+                maxDimension,
+                mediaConfig.getMaxImageFileSize(),
+                mediaConfig.getImageQualitySetting()
+            );
+
+            if (result != null) {
+              thumbnail = Optional.of(bytesToAttachment(result.getData(), result.getWidth(), result.getHeight(), result.getMimeType()));
+              break;
+            }
+          }
+        }
 
         if (bitmap != null) bitmap.recycle();
 
         callback.accept(thumbnail);
-      } catch (IOException | IllegalArgumentException e) {
+      } catch (IOException | IllegalArgumentException | BitmapDecodingException e) {
         Log.w(TAG, "Exception during link preview image retrieval.", e);
         controller.cancel();
-        callback.accept(Optional.absent());
+        callback.accept(Optional.empty());
       }
     });
 
@@ -210,7 +273,7 @@ public class LinkPreviewRepository {
   {
     SignalExecutors.UNBOUNDED.execute(() -> {
       try {
-        Pair<String, String> stickerParams = StickerUrl.parseShareLink(packUrl).or(new Pair<>("", ""));
+        Pair<String, String> stickerParams = StickerUrl.parseShareLink(packUrl).orElse(new Pair<>("", ""));
         String               packIdString  = stickerParams.first();
         String               packKeyString = stickerParams.second();
         byte[]               packIdBytes   = Hex.fromStringCondensed(packIdString);
@@ -219,12 +282,12 @@ public class LinkPreviewRepository {
         SignalServiceMessageReceiver receiver = ApplicationDependencies.getSignalServiceMessageReceiver();
         SignalServiceStickerManifest manifest = receiver.retrieveStickerManifest(packIdBytes, packKeyBytes);
 
-        String                title        = manifest.getTitle().or(manifest.getAuthor()).or("");
-        Optional<StickerInfo> firstSticker = Optional.fromNullable(manifest.getStickers().size() > 0 ? manifest.getStickers().get(0) : null);
-        Optional<StickerInfo> cover        = manifest.getCover().or(firstSticker);
+        String                title        = OptionalUtil.or(manifest.getTitle(), manifest.getAuthor()).orElse("");
+        Optional<StickerInfo> firstSticker = Optional.ofNullable(manifest.getStickers().size() > 0 ? manifest.getStickers().get(0) : null);
+        Optional<StickerInfo> cover        = OptionalUtil.or(manifest.getCover(), firstSticker);
 
         if (cover.isPresent()) {
-          Bitmap bitmap = GlideApp.with(context).asBitmap()
+          Bitmap bitmap = Glide.with(context).asBitmap()
                                                 .load(new StickerRemoteUri(packIdString, packKeyString, cover.get().getId()))
                                                 .skipMemoryCache(true)
                                                 .diskCacheStrategy(DiskCacheStrategy.NONE)
@@ -247,6 +310,55 @@ public class LinkPreviewRepository {
     return () -> Log.i(TAG, "Cancelled sticker pack link preview fetch -- no effect.");
   }
 
+  private static RequestController fetchCallLinkPreview(@NonNull Context context,
+                                                        @NonNull String callLinkUrl,
+                                                        @NonNull Callback callback) {
+
+    CallLinkRootKey callLinkRootKey = CallLinks.parseUrl(callLinkUrl);
+    if (callLinkRootKey == null) {
+      callback.onError(Error.PREVIEW_NOT_AVAILABLE);
+      return () -> { };
+    }
+
+    Disposable disposable = ApplicationDependencies.getSignalCallManager()
+                                                   .getCallLinkManager()
+                                                   .readCallLink(new CallLinkCredentials(callLinkRootKey.getKeyBytes(), null))
+                                                   .observeOn(Schedulers.io())
+                                                   .subscribe(
+                                                        result -> {
+                                                          if (result instanceof ReadCallLinkResult.Success) {
+                                                            ReadCallLinkResult.Success success = (ReadCallLinkResult.Success) result;
+                                                            Log.i(TAG, "Successfully read call link.");
+
+                                                            if (((ReadCallLinkResult.Success) result).getCallLinkState().hasBeenRevoked()) {
+                                                              Log.i(TAG, "Call link has been revoked.");
+                                                              callback.onError(Error.PREVIEW_NOT_AVAILABLE);
+                                                              return;
+                                                            }
+
+                                                            // Note: thumbnails are generated recv-side using the CallLinkRootKey
+                                                            callback.onSuccess(new LinkPreview(
+                                                                callLinkUrl,
+                                                                success.getCallLinkState().getName(),
+                                                                "",
+                                                                0,
+                                                                Optional.empty()
+                                                            ));
+                                                          } else {
+                                                            ReadCallLinkResult.Failure failure = (ReadCallLinkResult.Failure) result;
+                                                            Log.w(TAG, "Failed to read call link: " + failure);
+                                                            callback.onError(Error.PREVIEW_NOT_AVAILABLE);
+                                                          }
+                                                        },
+                                                        error -> {
+                                                          Log.w(TAG, "An error occurred: ", error);
+                                                          callback.onError(Error.PREVIEW_NOT_AVAILABLE);
+                                                        }
+                                                    );
+
+    return disposable::dispose;
+  }
+
   private static RequestController fetchGroupLinkPreview(@NonNull Context context,
                                                          @NonNull String groupUrl,
                                                          @NonNull Callback callback)
@@ -259,18 +371,17 @@ public class LinkPreviewRepository {
         }
 
         GroupMasterKey                      groupMasterKey = groupInviteLinkUrl.getGroupMasterKey();
-        GroupId.V2                          groupId        = GroupId.v2(groupMasterKey);
-        Optional<GroupDatabase.GroupRecord> group          = DatabaseFactory.getGroupDatabase(context)
-                                                                            .getGroup(groupId);
+        GroupId.V2            groupId = GroupId.v2(groupMasterKey);
+        Optional<GroupRecord> group   = SignalDatabase.groups().getGroup(groupId);
 
         if (group.isPresent()) {
           Log.i(TAG, "Creating preview for locally available group");
 
-          GroupDatabase.GroupRecord groupRecord = group.get();
-          String                    title       = groupRecord.getTitle();
+          GroupRecord groupRecord = group.get();
+          String      title       = groupRecord.getTitle();
           int                       memberCount = groupRecord.getMembers().size();
           String                    description = getMemberCountDescription(context, memberCount);
-          Optional<Attachment>      thumbnail   = Optional.absent();
+          Optional<Attachment>      thumbnail   = Optional.empty();
 
           if (AvatarHelper.hasAvatar(context, groupRecord.getRecipientId())) {
             Recipient recipient = Recipient.resolved(groupRecord.getRecipientId());
@@ -284,9 +395,9 @@ public class LinkPreviewRepository {
           Log.i(TAG, "Group is not locally available for preview generation, fetching from server");
 
           DecryptedGroupJoinInfo joinInfo    = GroupManager.getGroupJoinInfoFromServer(context, groupMasterKey, groupInviteLinkUrl.getPassword());
-          String                 description = getMemberCountDescription(context, joinInfo.getMemberCount());
-          Optional<Attachment>   thumbnail   = Optional.absent();
-          byte[]                 avatarBytes = AvatarGroupsV2DownloadJob.downloadGroupAvatarBytes(context, groupMasterKey, joinInfo.getAvatar());
+          String                 description = getMemberCountDescription(context, joinInfo.memberCount);
+          Optional<Attachment>   thumbnail   = Optional.empty();
+          byte[]                 avatarBytes = AvatarGroupsV2DownloadJob.downloadGroupAvatarBytes(context, groupMasterKey, joinInfo.avatar);
 
           if (avatarBytes != null) {
             Bitmap bitmap = BitmapFactory.decodeByteArray(avatarBytes, 0, avatarBytes.length);
@@ -296,7 +407,7 @@ public class LinkPreviewRepository {
             if (bitmap != null) bitmap.recycle();
           }
 
-          callback.onSuccess(new LinkPreview(groupUrl, joinInfo.getTitle(), description, 0, thumbnail));
+          callback.onSuccess(new LinkPreview(groupUrl, joinInfo.title, description, 0, thumbnail));
         }
       } catch (ExecutionException | InterruptedException | IOException | VerificationFailedException e) {
         Log.w(TAG, "Failed to fetch group link preview.", e);
@@ -325,7 +436,7 @@ public class LinkPreviewRepository {
                                                          @NonNull String contentType)
   {
     if (bitmap == null) {
-      return Optional.absent();
+      return Optional.empty();
     }
 
     ByteArrayOutputStream baos = new ByteArrayOutputStream();
@@ -333,25 +444,33 @@ public class LinkPreviewRepository {
     bitmap.compress(format, 80, baos);
 
     byte[] bytes = baos.toByteArray();
-    Uri    uri   = BlobProvider.getInstance().forData(bytes).createForSingleSessionInMemory();
+    return Optional.of(bytesToAttachment(bytes, bitmap.getWidth(), bitmap.getHeight(), contentType));
+  }
 
-    return Optional.of(new UriAttachment(uri,
-                                         contentType,
-                                         AttachmentDatabase.TRANSFER_PROGRESS_STARTED,
-                                         bytes.length,
-                                         bitmap.getWidth(),
-                                         bitmap.getHeight(),
-                                         null,
-                                         null,
-                                         false,
-                                         false,
-                                         false,
-                                         false,
-                                         null,
-                                         null,
-                                         null,
-                                         null,
-                                         null));
+  private static Attachment bytesToAttachment(byte[] bytes,
+                                              int width,
+                                              int height,
+                                              @NonNull String contentType) {
+
+    Uri uri = BlobProvider.getInstance().forData(bytes).createForSingleSessionInMemory();
+
+    return new UriAttachment(uri,
+                             contentType,
+                             AttachmentTable.TRANSFER_PROGRESS_STARTED,
+                             bytes.length,
+                             width,
+                             height,
+                             null,
+                             null,
+                             false,
+                             false,
+                             false,
+                             false,
+                             null,
+                             null,
+                             null,
+                             null,
+                             null);
   }
 
   private static class Metadata {
@@ -368,7 +487,7 @@ public class LinkPreviewRepository {
     }
 
     static Metadata empty() {
-      return new Metadata(Optional.absent(), Optional.absent(), 0, Optional.absent());
+      return new Metadata(Optional.empty(), Optional.empty(), 0, Optional.empty());
     }
 
     Optional<String> getTitle() {

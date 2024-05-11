@@ -1,30 +1,32 @@
 package org.thoughtcrime.securesms.jobs;
 
 import androidx.annotation.NonNull;
-
-import com.google.protobuf.ByteString;
+import androidx.annotation.Nullable;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.crypto.UnidentifiedAccessUtil;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.PaymentDatabase;
+import org.thoughtcrime.securesms.database.PaymentTable;
+import org.thoughtcrime.securesms.database.SignalDatabase;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.jobmanager.Data;
 import org.thoughtcrime.securesms.jobmanager.Job;
+import org.thoughtcrime.securesms.jobmanager.JsonJobData;
 import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint;
 import org.thoughtcrime.securesms.net.NotPushRegisteredException;
 import org.thoughtcrime.securesms.payments.proto.PaymentMetaData;
 import org.thoughtcrime.securesms.recipients.Recipient;
+import org.thoughtcrime.securesms.recipients.RecipientUtil;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
-import org.whispersystems.libsignal.util.guava.Optional;
 import org.whispersystems.signalservice.api.messages.multidevice.OutgoingPaymentMessage;
 import org.whispersystems.signalservice.api.messages.multidevice.SignalServiceSyncMessage;
-import org.whispersystems.signalservice.api.push.SignalServiceAddress;
+import org.whispersystems.signalservice.api.push.ServiceId;
 import org.whispersystems.signalservice.api.push.exceptions.PushNetworkException;
 import org.whispersystems.signalservice.api.push.exceptions.ServerRejectedException;
 
+import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
+
+import okio.ByteString;
 
 /**
  * Tells a linked device about sent payments.
@@ -56,10 +58,10 @@ public final class MultiDeviceOutgoingPaymentSyncJob extends BaseJob {
   }
 
   @Override
-  public @NonNull Data serialize() {
-    return new Data.Builder()
+  public @Nullable byte[] serialize() {
+    return new JsonJobData.Builder()
                    .putString(KEY_UUID, uuid.toString())
-                   .build();
+                   .serialize();
   }
 
   @Override
@@ -78,22 +80,22 @@ public final class MultiDeviceOutgoingPaymentSyncJob extends BaseJob {
       return;
     }
 
-    PaymentDatabase.PaymentTransaction payment = DatabaseFactory.getPaymentDatabase(context).getPayment(uuid);
+    PaymentTable.PaymentTransaction payment = SignalDatabase.payments().getPayment(uuid);
 
     if (payment == null) {
       Log.w(TAG, "Payment not found " + uuid);
       return;
     }
 
-    PaymentMetaData.MobileCoinTxoIdentification txoIdentification = payment.getPaymentMetaData().getMobileCoinTxoIdentification();
+    PaymentMetaData.MobileCoinTxoIdentification txoIdentification = payment.getPaymentMetaData().mobileCoinTxoIdentification;
 
     boolean defrag = payment.isDefrag();
 
-    Optional<SignalServiceAddress> uuid;
+    Optional<ServiceId> uuid;
     if (!defrag && payment.getPayee().hasRecipientId()) {
-      uuid = Optional.of(new SignalServiceAddress(Recipient.resolved(payment.getPayee().requireRecipientId()).requireAci()));
+      uuid = Optional.of(RecipientUtil.getOrFetchServiceId(context, Recipient.resolved(payment.getPayee().requireRecipientId())));
     } else {
-      uuid = Optional.absent();
+      uuid = Optional.empty();
     }
 
     byte[] receipt = payment.getReceipt();
@@ -105,13 +107,13 @@ public final class MultiDeviceOutgoingPaymentSyncJob extends BaseJob {
     OutgoingPaymentMessage outgoingPaymentMessage = new OutgoingPaymentMessage(uuid,
                                                                                payment.getAmount().requireMobileCoin(),
                                                                                payment.getFee().requireMobileCoin(),
-                                                                               ByteString.copyFrom(receipt),
+                                                                               ByteString.of(receipt),
                                                                                payment.getBlockIndex(),
                                                                                payment.getTimestamp(),
-                                                                               defrag ? Optional.absent() : Optional.of(payment.getPayee().requirePublicAddress().serialize()),
-                                                                               defrag ? Optional.absent() : Optional.of(payment.getNote()),
-                                                                               txoIdentification.getPublicKeyList(),
-                                                                               txoIdentification.getKeyImagesList());
+                                                                               defrag ? Optional.empty() : Optional.of(payment.getPayee().requirePublicAddress().serialize()),
+                                                                               defrag ? Optional.empty() : Optional.of(payment.getNote()),
+                                                                               txoIdentification.publicKey,
+                                                                               txoIdentification.keyImages);
 
 
     ApplicationDependencies.getSignalServiceMessageSender()
@@ -133,7 +135,9 @@ public final class MultiDeviceOutgoingPaymentSyncJob extends BaseJob {
   public static class Factory implements Job.Factory<MultiDeviceOutgoingPaymentSyncJob> {
 
     @Override
-    public @NonNull MultiDeviceOutgoingPaymentSyncJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull MultiDeviceOutgoingPaymentSyncJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
+      JsonJobData data = JsonJobData.deserialize(serializedData);
+
       return new MultiDeviceOutgoingPaymentSyncJob(parameters,
                                                    UUID.fromString(data.getString(KEY_UUID)));
     }

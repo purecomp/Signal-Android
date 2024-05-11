@@ -1,20 +1,19 @@
 package org.thoughtcrime.securesms.jobs;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 
 import org.signal.core.util.logging.Log;
-import org.thoughtcrime.securesms.components.emoji.Emoji;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.EmojiSearchDatabase;
+import org.thoughtcrime.securesms.database.SignalDatabase;
 import org.thoughtcrime.securesms.database.model.EmojiSearchData;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.jobmanager.Data;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint;
 import org.thoughtcrime.securesms.keyvalue.EmojiValues;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
+import org.thoughtcrime.securesms.s3.S3;
 import org.thoughtcrime.securesms.util.dynamiclanguage.DynamicLanguageContextWrapper;
 import org.whispersystems.signalservice.api.push.exceptions.NonSuccessfulResponseCodeException;
 import org.whispersystems.signalservice.internal.util.JsonUtil;
@@ -24,16 +23,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
-import java.util.stream.Collectors;
-
-import javax.annotation.Nullable;
-
-import okhttp3.Call;
-import okhttp3.OkHttpClient;
-import okhttp3.Request;
-import okhttp3.Response;
 
 /**
  * Downloads a new emoji search index based on our current version and language, if needed.
@@ -84,8 +74,8 @@ public final class EmojiSearchIndexDownloadJob extends BaseJob {
   }
 
   @Override
-  public @NonNull Data serialize() {
-    return Data.EMPTY;
+  public @Nullable byte[] serialize() {
+    return null;
   }
 
   @Override
@@ -95,9 +85,7 @@ public final class EmojiSearchIndexDownloadJob extends BaseJob {
 
   @Override
   protected void onRun() throws Exception {
-    OkHttpClient client = ApplicationDependencies.getOkHttpClient();
-
-    Manifest manifest = downloadManifest(client);
+    Manifest manifest = downloadManifest();
 
     Locale locale         = DynamicLanguageContextWrapper.getUsersSelectedLocale(context);
     String remoteLanguage = findMatchingLanguage(locale, manifest.getLanguages());
@@ -106,14 +94,19 @@ public final class EmojiSearchIndexDownloadJob extends BaseJob {
         remoteLanguage.equals(SignalStore.emojiValues().getSearchLanguage()))
     {
       Log.i(TAG, "Already using the latest version of " + manifest.getVersion() + " with the correct language " + remoteLanguage);
+      SignalStore.emojiValues().setLastSearchIndexCheck(System.currentTimeMillis());
       return;
     }
 
     Log.i(TAG, "Need to get a new search index. Downloading version: " + manifest.getVersion() + ", language: " + remoteLanguage);
 
-    List<EmojiSearchData> searchIndex = downloadSearchIndex(client, manifest.getVersion(), remoteLanguage);
+    List<EmojiSearchData> searchIndex = downloadSearchIndex(manifest.getVersion(), remoteLanguage);
 
-    DatabaseFactory.getEmojiSearchDatabase(context).setSearchIndex(searchIndex);
+    if (searchIndex.isEmpty()) {
+      throw new IOException("Emoji search data is empty");
+    }
+
+    SignalDatabase.emojiSearch().setSearchIndex(searchIndex);
     SignalStore.emojiValues().onSearchIndexUpdated(manifest.getVersion(), remoteLanguage);
     SignalStore.emojiValues().setLastSearchIndexCheck(System.currentTimeMillis());
 
@@ -130,33 +123,14 @@ public final class EmojiSearchIndexDownloadJob extends BaseJob {
 
   }
 
-  private static @NonNull Manifest downloadManifest(@NonNull OkHttpClient client) throws IOException {
-    String url  = "https://updates.signal.org/dynamic/android/emoji/search/manifest.json";
-    String body = downloadFile(client, url);
-
-    return JsonUtil.fromJson(body, Manifest.class);
+  private static @NonNull Manifest downloadManifest() throws IOException {
+    String manifest = S3.getString(S3.DYNAMIC_PATH + "/android/emoji/search/manifest.json");
+    return JsonUtil.fromJson(manifest, Manifest.class);
   }
 
-  private static @NonNull List<EmojiSearchData> downloadSearchIndex(@NonNull OkHttpClient client, int version, @NonNull String language) throws IOException {
-    String url  = "https://updates.signal.org/static/android/emoji/search/" + version + "/" + language + ".json";
-    String body = downloadFile(client, url);
-
-    return Arrays.asList(JsonUtil.fromJson(body, EmojiSearchData[].class));
-  }
-
-  private static @NonNull String downloadFile(@NonNull OkHttpClient client, @NonNull String url) throws IOException {
-    Call     call     = client.newCall(new Request.Builder().url(url).build());
-    Response response = call.execute();
-
-    if (response.code() != 200) {
-      throw new NonSuccessfulResponseCodeException(response.code());
-    }
-
-    if (response.body() == null) {
-      throw new NonSuccessfulResponseCodeException(404, "Missing body!");
-    }
-
-    return response.body().string();
+  private static @NonNull List<EmojiSearchData> downloadSearchIndex(int version, @NonNull String language) throws IOException {
+    String data = S3.getString(S3.STATIC_PATH + "/android/emoji/search/" + version + "/" + language + ".json");
+    return Arrays.asList(JsonUtil.fromJson(data, EmojiSearchData[].class));
   }
 
   private static @NonNull String findMatchingLanguage(@NonNull Locale locale, List<String> languages) {
@@ -211,7 +185,7 @@ public final class EmojiSearchIndexDownloadJob extends BaseJob {
 
   public static final class Factory implements Job.Factory<EmojiSearchIndexDownloadJob> {
     @Override
-    public @NonNull EmojiSearchIndexDownloadJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull EmojiSearchIndexDownloadJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
       return new EmojiSearchIndexDownloadJob(parameters);
     }
   }

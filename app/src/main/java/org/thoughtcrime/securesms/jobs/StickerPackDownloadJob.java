@@ -1,20 +1,21 @@
 package org.thoughtcrime.securesms.jobs;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.core.util.Preconditions;
 
 import org.signal.core.util.logging.Log;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.StickerDatabase;
+import org.signal.libsignal.protocol.InvalidMessageException;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.database.StickerTable;
 import org.thoughtcrime.securesms.database.model.IncomingSticker;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.jobmanager.Data;
+import org.thoughtcrime.securesms.jobmanager.JsonJobData;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.jobmanager.JobManager;
 import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint;
 import org.thoughtcrime.securesms.stickers.BlessedPacks;
-import org.thoughtcrime.securesms.util.Hex;
-import org.whispersystems.libsignal.InvalidMessageException;
+import org.signal.core.util.Hex;
 import org.whispersystems.signalservice.api.SignalServiceMessageReceiver;
 import org.whispersystems.signalservice.api.messages.SignalServiceStickerManifest;
 import org.whispersystems.signalservice.api.messages.SignalServiceStickerManifest.StickerInfo;
@@ -87,12 +88,12 @@ public class StickerPackDownloadJob extends BaseJob {
   }
 
   @Override
-  public @NonNull Data serialize() {
-    return new Data.Builder().putString(KEY_PACK_ID, packId)
-                             .putString(KEY_PACK_KEY, packKey)
-                             .putBoolean(KEY_REFERENCE_PACK, isReferencePack)
-                             .putBoolean(KEY_NOTIFY, notify)
-                             .build();
+  public @Nullable byte[] serialize() {
+    return new JsonJobData.Builder().putString(KEY_PACK_ID, packId)
+                                    .putString(KEY_PACK_KEY, packKey)
+                                    .putBoolean(KEY_REFERENCE_PACK, isReferencePack)
+                                    .putBoolean(KEY_NOTIFY, notify)
+                                    .serialize();
   }
 
   @Override
@@ -102,20 +103,20 @@ public class StickerPackDownloadJob extends BaseJob {
 
   @Override
   protected void onRun() throws IOException, InvalidMessageException {
-    if (isReferencePack && !DatabaseFactory.getAttachmentDatabase(context).containsStickerPackId(packId) && !BlessedPacks.contains(packId)) {
+    if (isReferencePack && !SignalDatabase.attachments().containsStickerPackId(packId) && !BlessedPacks.contains(packId)) {
       Log.w(TAG, "There are no attachments with the requested packId present for this reference pack. Skipping.");
       return;
     }
 
-    if (isReferencePack && DatabaseFactory.getStickerDatabase(context).isPackAvailableAsReference(packId)) {
+    if (isReferencePack && SignalDatabase.stickers().isPackAvailableAsReference(packId)) {
       Log.i(TAG, "Sticker pack already available for reference. Skipping.");
       return;
     }
 
     SignalServiceMessageReceiver receiver        = ApplicationDependencies.getSignalServiceMessageReceiver();
-    JobManager                   jobManager      = ApplicationDependencies.getJobManager();
-    StickerDatabase              stickerDatabase = DatabaseFactory.getStickerDatabase(context);
-    byte[]                       packIdBytes     = Hex.fromStringCondensed(packId);
+    JobManager   jobManager      = ApplicationDependencies.getJobManager();
+    StickerTable stickerDatabase = SignalDatabase.stickers();
+    byte[]       packIdBytes     = Hex.fromStringCondensed(packId);
     byte[]                       packKeyBytes    = Hex.fromStringCondensed(packKey);
     SignalServiceStickerManifest manifest        = receiver.retrieveStickerManifest(packIdBytes, packKeyBytes);
 
@@ -128,11 +129,11 @@ public class StickerPackDownloadJob extends BaseJob {
       stickerDatabase.markPackAsInstalled(packId, notify);
     }
 
-    StickerInfo      cover = manifest.getCover().or(manifest.getStickers().get(0));
+    StickerInfo      cover = manifest.getCover().orElse(manifest.getStickers().get(0));
     JobManager.Chain chain = jobManager.startChain(new StickerDownloadJob(new IncomingSticker(packId,
                                                                                               packKey,
-                                                                                              manifest.getTitle().or(""),
-                                                                                              manifest.getAuthor().or(""),
+                                                                                              manifest.getTitle().orElse(""),
+                                                                                              manifest.getAuthor().orElse(""),
                                                                                               cover.getId(),
                                                                                               "",
                                                                                               cover.getContentType(),
@@ -148,8 +149,8 @@ public class StickerPackDownloadJob extends BaseJob {
       for (StickerInfo stickerInfo : manifest.getStickers()) {
         jobs.add(new StickerDownloadJob(new IncomingSticker(packId,
                                                             packKey,
-                                                            manifest.getTitle().or(""),
-                                                            manifest.getAuthor().or(""),
+                                                            manifest.getTitle().orElse(""),
+                                                            manifest.getAuthor().orElse(""),
                                                             stickerInfo.getId(),
                                                             stickerInfo.getEmoji(),
                                                             stickerInfo.getContentType(),
@@ -172,13 +173,15 @@ public class StickerPackDownloadJob extends BaseJob {
   @Override
   public void onFailure() {
     Log.w(TAG, "Failed to download manifest! Uninstalling pack.");
-    DatabaseFactory.getStickerDatabase(context).uninstallPack(packId);
-    DatabaseFactory.getStickerDatabase(context).deleteOrphanedPacks();
+    SignalDatabase.stickers().uninstallPack(packId);
+    SignalDatabase.stickers().deleteOrphanedPacks();
   }
 
   public static final class Factory implements Job.Factory<StickerPackDownloadJob> {
     @Override
-    public @NonNull StickerPackDownloadJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull StickerPackDownloadJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
+      JsonJobData data = JsonJobData.deserialize(serializedData);
+
       return new StickerPackDownloadJob(parameters,
                                         data.getString(KEY_PACK_ID),
                                         data.getString(KEY_PACK_KEY),

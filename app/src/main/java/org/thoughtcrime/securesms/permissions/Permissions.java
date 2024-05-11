@@ -2,7 +2,6 @@ package org.thoughtcrime.securesms.permissions;
 
 
 import android.app.Activity;
-import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -14,18 +13,21 @@ import android.view.Display;
 import android.view.ViewGroup;
 import android.view.WindowManager;
 
-import androidx.activity.result.ActivityResultCallback;
 import androidx.annotation.DrawableRes;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.core.app.ActivityCompat;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
+import androidx.fragment.app.FragmentManager;
 
 import com.annimon.stream.Stream;
 import com.annimon.stream.function.Consumer;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.R;
+import org.thoughtcrime.securesms.util.BottomSheetUtil;
 import org.thoughtcrime.securesms.util.LRUCache;
 import org.thoughtcrime.securesms.util.ServiceUtil;
 
@@ -49,6 +51,10 @@ public class Permissions {
     return new PermissionsBuilder(new FragmentPermissionObject(fragment));
   }
 
+  public static boolean isRuntimePermissionsRequired() {
+    return Build.VERSION.SDK_INT >= 23;
+  }
+
   public static class PermissionsBuilder {
 
     private final PermissionObject permissionObject;
@@ -67,6 +73,8 @@ public class Permissions {
 
     private @DrawableRes int[]   rationalDialogHeader;
     private              String  rationaleDialogMessage;
+    private              String  rationaleDialogTitle;
+    private              String  rationaleDialogDetails;
     private              boolean rationaleDialogCancelable;
 
     private boolean ifNecesary;
@@ -98,14 +106,32 @@ public class Permissions {
     }
 
     public PermissionsBuilder withRationaleDialog(@NonNull String message, boolean cancelable, @NonNull @DrawableRes int... headers) {
+      return withRationaleDialog(message, null, null, cancelable, headers);
+    }
+
+    public PermissionsBuilder withRationaleDialog(@NonNull String title, @NonNull String details, @NonNull @DrawableRes int... headers) {
+      return withRationaleDialog(null, title, details, true, headers);
+    }
+
+    public PermissionsBuilder withRationaleDialog(@Nullable String message, @Nullable String title, @Nullable String details, boolean cancelable, @NonNull @DrawableRes int... headers) {
       this.rationalDialogHeader      = headers;
       this.rationaleDialogMessage    = message;
+      this.rationaleDialogTitle      = title;
+      this.rationaleDialogDetails    = details;
       this.rationaleDialogCancelable = cancelable;
       return this;
     }
 
     public PermissionsBuilder withPermanentDenialDialog(@NonNull String message) {
-      return onAnyPermanentlyDenied(new SettingsDialogListener(permissionObject.getContext(), message));
+      return withPermanentDenialDialog(message, null);
+    }
+
+    public PermissionsBuilder withPermanentDenialDialog(@NonNull String message, @Nullable Runnable onDialogDismissed) {
+      return withPermanentDenialDialog(message, onDialogDismissed, 0, 0, null);
+    }
+
+    public PermissionsBuilder withPermanentDenialDialog(@NonNull String message, @Nullable Runnable onDialogDismissed, int titleRes, int detailsRes, @Nullable FragmentManager fragmentManager) {
+      return onAnyPermanentlyDenied(new SettingsDialogListener(permissionObject.getContext(), message, onDialogDismissed, titleRes, detailsRes, fragmentManager));
     }
 
     public PermissionsBuilder onAllGranted(Runnable allGrantedListener) {
@@ -150,7 +176,8 @@ public class Permissions {
 
       if (ifNecesary && (permissionObject.hasAll(requestedPermissions) || !condition)) {
         executePreGrantedPermissionsRequest(request);
-      } else if (rationaleDialogMessage != null && rationalDialogHeader != null) {
+      } else if ((rationaleDialogMessage != null || (rationaleDialogTitle != null && rationaleDialogDetails != null))
+                 && rationalDialogHeader != null) {
         executePermissionsRequestWithRationale(request);
       } else {
         executePermissionsRequest(request);
@@ -166,13 +193,17 @@ public class Permissions {
 
     @SuppressWarnings("ConstantConditions")
     private void executePermissionsRequestWithRationale(PermissionsRequest request) {
-      RationaleDialog.createFor(permissionObject.getContext(), rationaleDialogMessage, rationalDialogHeader)
-                     .setPositiveButton(R.string.Permissions_continue, (dialog, which) -> executePermissionsRequest(request))
-                     .setNegativeButton(R.string.Permissions_not_now, (dialog, which) -> executeNoPermissionsRequest(request))
-                     .setCancelable(rationaleDialogCancelable)
-                     .show()
-                     .getWindow()
-                     .setLayout((int)(permissionObject.getWindowWidth() * .75), ViewGroup.LayoutParams.WRAP_CONTENT);
+      MaterialAlertDialogBuilder builder = (rationaleDialogMessage != null)
+                                         ? RationaleDialog.createFor(permissionObject.getContext(), rationaleDialogMessage, rationalDialogHeader)
+                                         : RationaleDialog.createFor(permissionObject.getContext(), rationaleDialogTitle, rationaleDialogDetails, rationalDialogHeader);
+      builder.setPositiveButton(R.string.Permissions_continue, (dialog, which) -> executePermissionsRequest(request))
+             .setNegativeButton(R.string.Permissions_not_now, (dialog, which) -> executeNoPermissionsRequest(request))
+             .setCancelable(rationaleDialogCancelable);
+      if (rationaleDialogMessage != null) {
+        builder.show().getWindow().setLayout((int)(permissionObject.getWindowWidth() * .75), ViewGroup.LayoutParams.WRAP_CONTENT);
+      } else {
+        builder.show();
+      }
     }
 
     private void executePermissionsRequest(PermissionsRequest request) {
@@ -224,7 +255,7 @@ public class Permissions {
     }
 
 
-    fragment.requestPermissions(filterNotGranted(fragment.requireContext(), permissions), requestCode);
+    fragment.requestPermissions(neededPermissions, requestCode);
   }
 
   private static String[] filterNotGranted(@NonNull Context context, String... permissions) {
@@ -235,13 +266,13 @@ public class Permissions {
   }
 
   public static boolean hasAny(@NonNull Context context, String... permissions) {
-    return Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+    return !isRuntimePermissionsRequired() ||
         Stream.of(permissions).anyMatch(permission -> ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED);
 
   }
 
   public static boolean hasAll(@NonNull Context context, String... permissions) {
-    return Build.VERSION.SDK_INT < Build.VERSION_CODES.M ||
+    return !isRuntimePermissionsRequired() ||
         Stream.of(permissions).allMatch(permission -> ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED);
 
   }
@@ -360,25 +391,46 @@ public class Permissions {
 
   private static class SettingsDialogListener implements Runnable {
 
-    private final WeakReference<Context> context;
-    private final String                 message;
+    private final WeakReference<Context>          context;
+    private final WeakReference<FragmentManager>  fragmentManager;
+    private final Runnable                        onDialogDismissed;
+    private final String                          message;
+    private final int                             titleRes;
+    private final int                             detailsRes;
+    private final boolean                         useBottomSheet;
 
-    SettingsDialogListener(Context context, String message) {
-      this.message = message;
-      this.context = new WeakReference<>(context);
+    SettingsDialogListener(Context context, String message, @Nullable Runnable onDialogDismissed, int titleRes, int detailsRes, @Nullable FragmentManager fragmentManager) {
+      this.message           = message;
+      this.context           = new WeakReference<>(context);
+      this.onDialogDismissed = onDialogDismissed;
+      this.fragmentManager   = new WeakReference<>(fragmentManager);
+      this.titleRes          = titleRes;
+      this.detailsRes        = detailsRes;
+      this.useBottomSheet    = fragmentManager != null;
     }
 
     @Override
     public void run() {
       Context context = this.context.get();
+      FragmentManager fragmentManager = this.fragmentManager.get();
 
       if (context != null) {
-        new AlertDialog.Builder(context)
+        if (useBottomSheet && fragmentManager != null) {
+          PermissionDeniedBottomSheet.showPermissionFragment(titleRes, detailsRes).show(fragmentManager, BottomSheetUtil.STANDARD_BOTTOM_SHEET_FRAGMENT_TAG);
+        } else if (!useBottomSheet){
+          new MaterialAlertDialogBuilder(context)
             .setTitle(R.string.Permissions_permission_required)
             .setMessage(message)
+            .setCancelable(false)
             .setPositiveButton(R.string.Permissions_continue, (dialog, which) -> context.startActivity(getApplicationSettingsIntent(context)))
             .setNegativeButton(android.R.string.cancel, null)
+            .setOnDismissListener(d -> {
+              if (onDialogDismissed != null) {
+                onDialogDismissed.run();
+              }
+            })
             .show();
+        }
       }
     }
   }

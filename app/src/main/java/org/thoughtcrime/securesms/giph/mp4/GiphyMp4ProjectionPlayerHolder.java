@@ -1,6 +1,7 @@
 package org.thoughtcrime.securesms.giph.mp4;
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -8,14 +9,17 @@ import android.widget.FrameLayout;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.OptIn;
 import androidx.lifecycle.DefaultLifecycleObserver;
 import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.LifecycleOwner;
 
-import com.google.android.exoplayer2.MediaItem;
-import com.google.android.exoplayer2.Player;
-import com.google.android.exoplayer2.SimpleExoPlayer;
-import com.google.android.exoplayer2.ui.AspectRatioFrameLayout;
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.Player;
+import androidx.media3.common.util.UnstableApi;
+import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.ui.AspectRatioFrameLayout;
+
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.R;
@@ -29,6 +33,7 @@ import java.util.List;
 /**
  * Object which holds on to an injected video player.
  */
+@OptIn(markerClass = UnstableApi.class)
 public final class GiphyMp4ProjectionPlayerHolder implements Player.Listener, DefaultLifecycleObserver {
   private static final String TAG = Log.tag(GiphyMp4ProjectionPlayerHolder.class);
 
@@ -53,7 +58,7 @@ public final class GiphyMp4ProjectionPlayerHolder implements Player.Listener, De
     this.policyEnforcer = policyEnforcer;
 
     if (player.getExoPlayer() == null) {
-      SimpleExoPlayer fromPool = ApplicationDependencies.getExoPlayerPool().get();
+      ExoPlayer fromPool = ApplicationDependencies.getExoPlayerPool().get(TAG);
 
       if (fromPool == null) {
         Log.i(TAG, "Could not get exoplayer from pool.");
@@ -74,7 +79,7 @@ public final class GiphyMp4ProjectionPlayerHolder implements Player.Listener, De
     this.mediaItem      = null;
     this.policyEnforcer = null;
 
-    SimpleExoPlayer exoPlayer = player.getExoPlayer();
+    ExoPlayer exoPlayer = player.getExoPlayer();
     if (exoPlayer != null) {
       player.stop();
       player.setExoPlayer(null);
@@ -98,8 +103,20 @@ public final class GiphyMp4ProjectionPlayerHolder implements Player.Listener, De
     container.setVisibility(View.GONE);
   }
 
+  public boolean isVisible() {
+    return container.getVisibility() == View.VISIBLE;
+  }
+
+  public void pause() {
+    player.pause();
+  }
+
   public void show() {
     container.setVisibility(View.VISIBLE);
+  }
+
+  public void resume() {
+    player.play();
   }
 
   @Override
@@ -129,7 +146,7 @@ public final class GiphyMp4ProjectionPlayerHolder implements Player.Listener, De
   @Override
   public void onResume(@NonNull LifecycleOwner owner) {
     if (mediaItem != null) {
-      SimpleExoPlayer fromPool = ApplicationDependencies.getExoPlayerPool().get();
+      ExoPlayer fromPool = ApplicationDependencies.getExoPlayerPool().get(TAG);
       if (fromPool != null) {
         ExoPlayerKt.configureForGifPlayback(fromPool);
         fromPool.addListener(this);
@@ -176,5 +193,9 @@ public final class GiphyMp4ProjectionPlayerHolder implements Player.Listener, De
 
   public void setCorners(@Nullable Projection.Corners corners) {
     player.setCorners(corners);
+  }
+
+  public @Nullable Bitmap getBitmap() {
+    return player.getBitmap();
   }
 }

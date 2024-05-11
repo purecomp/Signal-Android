@@ -26,27 +26,30 @@ import androidx.annotation.MainThread;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresApi;
-import androidx.appcompat.app.AlertDialog;
+import androidx.annotation.StringRes;
 import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.Navigation;
 
-import com.dd.CircularProgressButton;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import net.zetetic.database.sqlcipher.SQLiteDatabase;
 
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
+import org.signal.core.util.ThreadUtil;
+import org.signal.core.util.concurrent.SimpleTask;
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.AppInitialization;
 import org.thoughtcrime.securesms.LoggingFragment;
 import org.thoughtcrime.securesms.R;
+import org.thoughtcrime.securesms.backup.BackupEvent;
 import org.thoughtcrime.securesms.backup.BackupPassphrase;
-import org.thoughtcrime.securesms.backup.FullBackupBase;
 import org.thoughtcrime.securesms.backup.FullBackupImporter;
 import org.thoughtcrime.securesms.crypto.AttachmentSecretProvider;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
 import org.thoughtcrime.securesms.database.NoExternalStorageException;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.jobmanager.impl.DataRestoreConstraint;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.notifications.NotificationChannels;
 import org.thoughtcrime.securesms.registration.viewmodel.RegistrationViewModel;
@@ -54,26 +57,25 @@ import org.thoughtcrime.securesms.service.LocalBackupListener;
 import org.thoughtcrime.securesms.util.BackupUtil;
 import org.thoughtcrime.securesms.util.DateUtils;
 import org.thoughtcrime.securesms.util.Util;
-import org.thoughtcrime.securesms.util.concurrent.SimpleTask;
+import org.thoughtcrime.securesms.util.navigation.SafeNavigation;
+import org.thoughtcrime.securesms.util.views.CircularProgressMaterialButton;
 
 import java.io.IOException;
 import java.util.Locale;
 
 import static org.thoughtcrime.securesms.registration.fragments.RegistrationViewDelegate.setDebugLogSubmitMultiTapView;
-import static org.thoughtcrime.securesms.util.CircularProgressButtonUtil.cancelSpinning;
-import static org.thoughtcrime.securesms.util.CircularProgressButtonUtil.setSpinning;
 
 public final class RestoreBackupFragment extends LoggingFragment {
 
   private static final String TAG                            = Log.tag(RestoreBackupFragment.class);
   private static final short  OPEN_DOCUMENT_TREE_RESULT_CODE = 13782;
 
-  private TextView               restoreBackupSize;
-  private TextView               restoreBackupTime;
-  private TextView               restoreBackupProgress;
-  private CircularProgressButton restoreButton;
-  private View                   skipRestoreButton;
-  private RegistrationViewModel  viewModel;
+  private TextView                       restoreBackupSize;
+  private TextView                       restoreBackupTime;
+  private TextView                       restoreBackupProgress;
+  private CircularProgressMaterialButton restoreButton;
+  private View                           skipRestoreButton;
+  private RegistrationViewModel          viewModel;
 
   @Override
   public View onCreateView(LayoutInflater inflater, ViewGroup container,
@@ -97,16 +99,16 @@ public final class RestoreBackupFragment extends LoggingFragment {
 
     skipRestoreButton.setOnClickListener((v) -> {
                        Log.i(TAG, "User skipped backup restore.");
-                       Navigation.findNavController(view)
-                                 .navigate(RestoreBackupFragmentDirections.actionSkip());
+                       SafeNavigation.safeNavigate(Navigation.findNavController(view),
+                                                   RestoreBackupFragmentDirections.actionSkip());
                      });
 
     viewModel = new ViewModelProvider(requireActivity()).get(RegistrationViewModel.class);
 
     if (viewModel.isReregister()) {
       Log.i(TAG, "Skipping backup restore during re-register.");
-      Navigation.findNavController(view)
-                .navigate(RestoreBackupFragmentDirections.actionSkipNoReturn());
+      SafeNavigation.safeNavigate(Navigation.findNavController(view),
+                                  RestoreBackupFragmentDirections.actionSkipNoReturn());
       return;
     }
 
@@ -117,8 +119,8 @@ public final class RestoreBackupFragment extends LoggingFragment {
 
     if (SignalStore.settings().isBackupEnabled()) {
       Log.i(TAG, "Backups enabled, so a backup must have been previously restored.");
-      Navigation.findNavController(view)
-                .navigate(RestoreBackupFragmentDirections.actionSkipNoReturn());
+      SafeNavigation.safeNavigate(Navigation.findNavController(view),
+                                  RestoreBackupFragmentDirections.actionSkipNoReturn());
       return;
     }
 
@@ -134,8 +136,8 @@ public final class RestoreBackupFragment extends LoggingFragment {
       initializeBackupDetection(view);
     } else {
       Log.i(TAG, "Skipping backup detection. We don't have the permission.");
-      Navigation.findNavController(view)
-                .navigate(RestoreBackupFragmentDirections.actionSkipNoReturn());
+      SafeNavigation.safeNavigate(Navigation.findNavController(view),
+                                  RestoreBackupFragmentDirections.actionSkipNoReturn());
     }
   }
 
@@ -152,8 +154,8 @@ public final class RestoreBackupFragment extends LoggingFragment {
 
       enableBackups(requireContext());
 
-      Navigation.findNavController(requireView())
-                .navigate(RestoreBackupFragmentDirections.actionBackupRestored());
+      SafeNavigation.safeNavigate(Navigation.findNavController(requireView()),
+                                  RestoreBackupFragmentDirections.actionBackupRestored());
     }
   }
 
@@ -175,8 +177,8 @@ public final class RestoreBackupFragment extends LoggingFragment {
 
     if (backup == null) {
       Log.i(TAG, "Skipping backup detection. No backup found, or permission revoked since.");
-      Navigation.findNavController(view)
-                .navigate(RestoreBackupFragmentDirections.actionNoBackupFound());
+      SafeNavigation.safeNavigate(Navigation.findNavController(view),
+                                  RestoreBackupFragmentDirections.actionNoBackupFound());
     } else {
       restoreBackupSize.setText(getString(R.string.RegistrationActivity_backup_size_s, Util.getPrettyFileSize(backup.getSize())));
       restoreBackupTime.setText(getString(R.string.RegistrationActivity_backup_timestamp_s, DateUtils.getExtendedRelativeTimeSpanString(requireContext(), Locale.getDefault(), backup.getTimestamp())));
@@ -215,8 +217,34 @@ public final class RestoreBackupFragment extends LoggingFragment {
                          @NonNull Uri backupUri,
                          @NonNull OnBackupSearchResultListener listener)
   {
-    SimpleTask.run(() -> BackupUtil.getBackupInfoFromSingleUri(context, backupUri),
+    SimpleTask.run(() -> {
+                     try {
+                       return BackupUtil.getBackupInfoFromSingleUri(context, backupUri);
+                     } catch (BackupUtil.BackupFileException e) {
+                       Log.w(TAG, "Could not restore backup.", e);
+                       postToastForBackupRestorationFailure(context, e);
+                       return null;
+                     }
+                   },
                    listener::run);
+  }
+
+  private static void postToastForBackupRestorationFailure(@NonNull Context context, @NonNull BackupUtil.BackupFileException exception) {
+    final @StringRes int errorResId;
+    switch (exception.getState()) {
+      case READABLE:
+        throw new AssertionError("Unexpected error state.");
+      case NOT_FOUND:
+        errorResId = R.string.RestoreBackupFragment__backup_not_found;
+        break;
+      case UNSUPPORTED_FILE_EXTENSION:
+        errorResId = R.string.RestoreBackupFragment__backup_has_a_bad_extension;
+        break;
+      default:
+        errorResId = R.string.RestoreBackupFragment__backup_could_not_be_read;
+    }
+
+    ThreadUtil.postToMain(() -> Toast.makeText(context, errorResId, Toast.LENGTH_LONG).show());
   }
 
   private void handleRestore(@NonNull Context context, @NonNull BackupUtil.BackupInfo backup) {
@@ -225,14 +253,14 @@ public final class RestoreBackupFragment extends LoggingFragment {
 
     prompt.addTextChangedListener(new PassphraseAsYouTypeFormatter());
 
-    new AlertDialog.Builder(context)
+    new MaterialAlertDialogBuilder(context)
                    .setTitle(R.string.RegistrationActivity_enter_backup_passphrase)
                    .setView(view)
                    .setPositiveButton(R.string.RegistrationActivity_restore, (dialog, which) -> {
                      InputMethodManager inputMethodManager = (InputMethodManager) context.getSystemService(Context.INPUT_METHOD_SERVICE);
                      inputMethodManager.hideSoftInputFromWindow(prompt.getWindowToken(), 0);
 
-                     setSpinning(restoreButton);
+                     restoreButton.setSpinning();
                      skipRestoreButton.setVisibility(View.INVISIBLE);
 
                      String passphrase = prompt.getText().toString();
@@ -255,18 +283,24 @@ public final class RestoreBackupFragment extends LoggingFragment {
       protected BackupImportResult doInBackground(Void... voids) {
         try {
           Log.i(TAG, "Starting backup restore.");
+          DataRestoreConstraint.setRestoringData(true);
 
-          SQLiteDatabase database = DatabaseFactory.getBackupDatabase(context);
+          SQLiteDatabase database = SignalDatabase.getBackupDatabase();
 
           BackupPassphrase.set(context, passphrase);
+
+          if (!FullBackupImporter.validatePassphrase(context, backup.getUri(), passphrase)) {
+            return BackupImportResult.FAILURE_UNKNOWN;
+          }
+
           FullBackupImporter.importFile(context,
                                         AttachmentSecretProvider.getInstance(context).getOrCreateAttachmentSecret(),
                                         database,
                                         backup.getUri(),
                                         passphrase);
 
-          DatabaseFactory.upgradeRestored(context, database);
-          NotificationChannels.restoreContactNotificationChannels(context);
+          SignalDatabase.runPostBackupRestoreTasks(database);
+          NotificationChannels.getInstance().restoreContactNotificationChannels();
 
           enableBackups(context);
 
@@ -277,16 +311,21 @@ public final class RestoreBackupFragment extends LoggingFragment {
         } catch (FullBackupImporter.DatabaseDowngradeException e) {
           Log.w(TAG, "Failed due to the backup being from a newer version of Signal.", e);
           return BackupImportResult.FAILURE_VERSION_DOWNGRADE;
+        } catch (FullBackupImporter.ForeignKeyViolationException e) {
+          Log.w(TAG, "Failed due to foreign key constraint violations.", e);
+          return BackupImportResult.FAILURE_FOREIGN_KEY;
         } catch (IOException e) {
           Log.w(TAG, e);
           return BackupImportResult.FAILURE_UNKNOWN;
+        } finally {
+          DataRestoreConstraint.setRestoringData(false);
         }
       }
 
       @Override
       protected void onPostExecute(@NonNull BackupImportResult result) {
         viewModel.markBackupCompleted();
-        cancelSpinning(restoreButton);
+        restoreButton.cancelSpinning();
         skipRestoreButton.setVisibility(View.VISIBLE);
 
         restoreBackupProgress.setText("");
@@ -297,6 +336,9 @@ public final class RestoreBackupFragment extends LoggingFragment {
             break;
           case FAILURE_VERSION_DOWNGRADE:
             Toast.makeText(context, R.string.RegistrationActivity_backup_failure_downgrade, Toast.LENGTH_LONG).show();
+            break;
+          case FAILURE_FOREIGN_KEY:
+            Toast.makeText(context, R.string.RegistrationActivity_backup_failure_foreign_key, Toast.LENGTH_LONG).show();
             break;
           case FAILURE_UNKNOWN:
             Toast.makeText(context, R.string.RegistrationActivity_incorrect_backup_passphrase, Toast.LENGTH_LONG).show();
@@ -327,8 +369,8 @@ public final class RestoreBackupFragment extends LoggingFragment {
   }
 
   @Subscribe(threadMode = ThreadMode.MAIN)
-  public void onEvent(@NonNull FullBackupBase.BackupEvent event) {
-    int count = event.getCount();
+  public void onEvent(@NonNull BackupEvent event) {
+    long count = event.getCount();
 
     if (count == 0) {
       restoreBackupProgress.setText(R.string.RegistrationActivity_checking);
@@ -336,10 +378,10 @@ public final class RestoreBackupFragment extends LoggingFragment {
       restoreBackupProgress.setText(getString(R.string.RegistrationActivity_d_messages_so_far, count));
     }
 
-    setSpinning(restoreButton);
+    restoreButton.setSpinning();
     skipRestoreButton.setVisibility(View.INVISIBLE);
 
-    if (event.getType() == FullBackupBase.BackupEvent.Type.FINISHED) {
+    if (event.getType() == BackupEvent.Type.FINISHED) {
       onBackupComplete();
     }
   }
@@ -348,8 +390,8 @@ public final class RestoreBackupFragment extends LoggingFragment {
     if (BackupUtil.isUserSelectionRequired(requireContext()) && !BackupUtil.canUserAccessBackupDirectory(requireContext())) {
       displayConfirmationDialog(requireContext());
     } else {
-      Navigation.findNavController(requireView())
-                .navigate(RestoreBackupFragmentDirections.actionBackupRestored());
+      SafeNavigation.safeNavigate(Navigation.findNavController(requireView()),
+                                  RestoreBackupFragmentDirections.actionBackupRestored());
     }
   }
 
@@ -363,7 +405,7 @@ public final class RestoreBackupFragment extends LoggingFragment {
 
   @RequiresApi(29)
   private void displayConfirmationDialog(@NonNull Context context) {
-    new AlertDialog.Builder(context)
+    new MaterialAlertDialogBuilder(context)
                    .setTitle(R.string.RestoreBackupFragment__restore_complete)
                    .setMessage(R.string.RestoreBackupFragment__to_continue_using_backups_please_choose_a_folder)
                    .setPositiveButton(R.string.RestoreBackupFragment__choose_folder, (dialog, which) -> {
@@ -379,8 +421,8 @@ public final class RestoreBackupFragment extends LoggingFragment {
                      BackupPassphrase.set(context, null);
                      dialog.dismiss();
 
-                     Navigation.findNavController(requireView())
-                               .navigate(RestoreBackupFragmentDirections.actionBackupRestored());
+                     SafeNavigation.safeNavigate(Navigation.findNavController(requireView()),
+                                                 RestoreBackupFragmentDirections.actionBackupRestored());
                    })
                    .setCancelable(false)
                    .show();
@@ -389,6 +431,7 @@ public final class RestoreBackupFragment extends LoggingFragment {
   private enum BackupImportResult {
     SUCCESS,
     FAILURE_VERSION_DOWNGRADE,
+    FAILURE_FOREIGN_KEY,
     FAILURE_UNKNOWN
   }
 

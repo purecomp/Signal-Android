@@ -16,39 +16,67 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.appcompat.app.AlertDialog;
 import androidx.core.app.TaskStackBuilder;
+import androidx.fragment.app.Fragment;
 import androidx.fragment.app.FragmentActivity;
+import androidx.fragment.app.FragmentManager;
 
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+
+import org.signal.core.util.concurrent.RxExtensions;
 import org.signal.core.util.concurrent.SignalExecutors;
+import org.signal.core.util.concurrent.SimpleTask;
 import org.signal.core.util.logging.Log;
+import org.signal.ringrtc.CallLinkRootKey;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.WebRtcCallActivity;
-import org.thoughtcrime.securesms.contacts.sync.DirectoryHelper;
+import org.thoughtcrime.securesms.calls.links.CallLinks;
+import org.thoughtcrime.securesms.contacts.sync.ContactDiscovery;
 import org.thoughtcrime.securesms.conversation.ConversationIntents;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.GroupDatabase;
+import org.thoughtcrime.securesms.database.CallLinkTable;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.database.model.GroupRecord;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.groups.GroupId;
 import org.thoughtcrime.securesms.groups.ui.invitesandrequests.joining.GroupJoinBottomSheetDialogFragment;
 import org.thoughtcrime.securesms.groups.ui.invitesandrequests.joining.GroupJoinUpdateRequiredBottomSheetDialogFragment;
 import org.thoughtcrime.securesms.groups.v2.GroupInviteLinkUrl;
 import org.thoughtcrime.securesms.permissions.Permissions;
+import org.thoughtcrime.securesms.profiles.manage.UsernameRepository;
+import org.thoughtcrime.securesms.profiles.manage.UsernameRepository.UsernameLinkConversionResult;
 import org.thoughtcrime.securesms.proxy.ProxyBottomSheetFragment;
 import org.thoughtcrime.securesms.recipients.Recipient;
+import org.thoughtcrime.securesms.service.webrtc.links.CallLinkRoomId;
 import org.thoughtcrime.securesms.sms.MessageSender;
-import org.thoughtcrime.securesms.util.concurrent.SimpleTask;
 import org.thoughtcrime.securesms.util.views.SimpleProgressDialog;
+import org.whispersystems.signalservice.api.push.UsernameLinkComponents;
 
 import java.io.IOException;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 
 public class CommunicationActions {
 
   private static final String TAG = Log.tag(CommunicationActions.class);
 
+  /**
+   * Start a voice call. Assumes that permission request results will be routed to a handler on the Fragment.
+   */
+  public static void startVoiceCall(@NonNull Fragment fragment, @NonNull Recipient recipient) {
+    startVoiceCall(new FragmentCallContext(fragment), recipient);
+  }
+
+  /**
+   * Start a voice call. Assumes that permission request results will be routed to a handler on the Activity.
+   */
   public static void startVoiceCall(@NonNull FragmentActivity activity, @NonNull Recipient recipient) {
-    if (TelephonyUtil.isAnyPstnLineBusy(activity)) {
-      Toast.makeText(activity,
+    startVoiceCall(new ActivityCallContext(activity), recipient);
+  }
+
+  private static void startVoiceCall(@NonNull CallContext callContext, @NonNull Recipient recipient) {
+    if (TelephonyUtil.isAnyPstnLineBusy(callContext.getContext())) {
+      Toast.makeText(callContext.getContext(),
                      R.string.CommunicationActions_a_cellular_call_is_already_in_progress,
                      Toast.LENGTH_SHORT)
            .show();
@@ -60,11 +88,11 @@ public class CommunicationActions {
         @Override
         protected void onReceiveResult(int resultCode, Bundle resultData) {
           if (resultCode == 1) {
-            startCallInternal(activity, recipient, false);
+            startCallInternal(callContext, recipient, false, false);
           } else {
-            new AlertDialog.Builder(activity)
+            new MaterialAlertDialogBuilder(callContext.getContext())
                 .setMessage(R.string.CommunicationActions_start_voice_call)
-                .setPositiveButton(R.string.CommunicationActions_call, (d, w) -> startCallInternal(activity, recipient, false))
+                .setPositiveButton(R.string.CommunicationActions_call, (d, w) -> startCallInternal(callContext, recipient, false, false))
                 .setNegativeButton(R.string.CommunicationActions_cancel, (d, w) -> d.dismiss())
                 .setCancelable(true)
                 .show();
@@ -72,13 +100,27 @@ public class CommunicationActions {
         }
       });
     } else {
-      startInsecureCall(activity, recipient);
+      startInsecureCall(callContext, recipient);
     }
   }
 
+  /**
+   * Start a video call. Assumes that permission request results will be routed to a handler on the Fragment.
+   */
+  public static void startVideoCall(@NonNull Fragment fragment, @NonNull Recipient recipient) {
+    startVideoCall(new FragmentCallContext(fragment), recipient, false);
+  }
+
+  /**
+   * Start a video call. Assumes that permission request results will be routed to a handler on the Activity.
+   */
   public static void startVideoCall(@NonNull FragmentActivity activity, @NonNull Recipient recipient) {
-    if (TelephonyUtil.isAnyPstnLineBusy(activity)) {
-      Toast.makeText(activity,
+    startVideoCall(new ActivityCallContext(activity), recipient, false);
+  }
+
+  private static void startVideoCall(@NonNull CallContext callContext, @NonNull Recipient recipient, boolean fromCallLink) {
+    if (TelephonyUtil.isAnyPstnLineBusy(callContext.getContext())) {
+      Toast.makeText(callContext.getContext(),
                      R.string.CommunicationActions_a_cellular_call_is_already_in_progress,
                      Toast.LENGTH_SHORT)
            .show();
@@ -88,7 +130,7 @@ public class CommunicationActions {
     ApplicationDependencies.getSignalCallManager().isCallActive(new ResultReceiver(new Handler(Looper.getMainLooper())) {
       @Override
       protected void onReceiveResult(int resultCode, Bundle resultData) {
-        startCallInternal(activity, recipient, resultCode != 1);
+        startCallInternal(callContext, recipient, resultCode != 1, fromCallLink);
       }
     });
   }
@@ -105,12 +147,12 @@ public class CommunicationActions {
     new AsyncTask<Void, Void, Long>() {
       @Override
       protected Long doInBackground(Void... voids) {
-        return DatabaseFactory.getThreadDatabase(context).getThreadIdFor(recipient.getId());
+        return SignalDatabase.threads().getOrCreateThreadIdFor(recipient);
       }
 
       @Override
-      protected void onPostExecute(@Nullable Long threadId) {
-        ConversationIntents.Builder builder = ConversationIntents.createBuilder(context, recipient.getId(), threadId != null ? threadId : -1);
+      protected void onPostExecute(@NonNull Long threadId) {
+        ConversationIntents.Builder builder = ConversationIntents.createBuilderSync(context, recipient.getId(), Objects.requireNonNull(threadId));
         if (!TextUtils.isEmpty(text)) {
           builder.withDraftText(text);
         }
@@ -126,23 +168,45 @@ public class CommunicationActions {
     }.execute();
   }
 
-  public static void startInsecureCall(@NonNull Activity activity, @NonNull Recipient recipient) {
-    new AlertDialog.Builder(activity)
+  public static void startInsecureCall(@NonNull FragmentActivity activity, @NonNull Recipient recipient) {
+    startInsecureCall(new ActivityCallContext(activity), recipient);
+  }
+
+  public static void startInsecureCall(@NonNull Fragment fragment, @NonNull Recipient recipient) {
+    startInsecureCall(new FragmentCallContext(fragment), recipient);
+  }
+
+  public static void startInsecureCall(@NonNull CallContext callContext, @NonNull Recipient recipient) {
+    new MaterialAlertDialogBuilder(callContext.getContext())
                    .setTitle(R.string.CommunicationActions_insecure_call)
                    .setMessage(R.string.CommunicationActions_carrier_charges_may_apply)
                    .setPositiveButton(R.string.CommunicationActions_call, (d, w) -> {
                      d.dismiss();
-                     startInsecureCallInternal(activity, recipient);
+                     startInsecureCallInternal(callContext, recipient);
                    })
                    .setNegativeButton(R.string.CommunicationActions_cancel, (d, w) -> d.dismiss())
                    .show();
   }
 
-  public static void composeSmsThroughDefaultApp(@NonNull Context context, @NonNull Recipient recipient, @Nullable String text) {
+  public static @NonNull Intent createIntentToShareTextViaShareSheet(@NonNull String text) {
+    Intent intent = new Intent(Intent.ACTION_SEND);
+    intent.setType("text/plain");
+    intent.putExtra(Intent.EXTRA_TEXT, text);
+
+    return intent;
+  }
+
+  public static @NonNull Intent createIntentToComposeSmsThroughDefaultApp(@NonNull Recipient recipient, @Nullable String text) {
     Intent intent = new Intent(Intent.ACTION_SENDTO, Uri.parse("smsto:" + recipient.requireSmsAddress()));
     if (text != null) {
       intent.putExtra("sms_body", text);
     }
+
+    return intent;
+  }
+
+  public static void composeSmsThroughDefaultApp(@NonNull Context context, @NonNull Recipient recipient, @Nullable String text) {
+    Intent intent = createIntentToComposeSmsThroughDefaultApp(recipient, text);
     context.startActivity(intent);
   }
 
@@ -197,9 +261,7 @@ public class CommunicationActions {
     GroupId.V2 groupId = GroupId.v2(groupInviteLinkUrl.getGroupMasterKey());
 
     SimpleTask.run(SignalExecutors.BOUNDED, () -> {
-      GroupDatabase.GroupRecord group = DatabaseFactory.getGroupDatabase(activity)
-                                                       .getGroup(groupId)
-                                                       .orNull();
+      GroupRecord group = SignalDatabase.groups().getGroup(groupId).orElse(null);
 
       return group != null && group.isActive() ? Recipient.resolved(group.getRecipientId())
                                                : null;
@@ -230,95 +292,262 @@ public class CommunicationActions {
   }
 
   /**
-   * If the url is a proxy link it will handle it.
-   * Otherwise returns false, indicating was not a proxy link.
+   * If the url is a signal.me link it will handle it.
    */
-  public static boolean handlePotentialSignalMeUrl(@NonNull FragmentActivity activity, @NonNull String potentialUrl) {
-    String e164 = SignalMeUtil.parseE164FromLink(activity, potentialUrl);
+  public static void handlePotentialSignalMeUrl(@NonNull FragmentActivity activity, @NonNull String potentialUrl) {
+    String                 e164     = SignalMeUtil.parseE164FromLink(activity, potentialUrl);
+    UsernameLinkComponents username = UsernameRepository.parseLink(potentialUrl);
 
     if (e164 != null) {
-      SimpleProgressDialog.DismissibleDialog dialog = SimpleProgressDialog.showDelayed(activity, 500, 500);
-
-      SimpleTask.run(() -> {
-        Recipient recipient = Recipient.external(activity, e164);
-
-        if (!recipient.isRegistered() || !recipient.hasAci()) {
-          try {
-            DirectoryHelper.refreshDirectoryFor(activity, recipient, false);
-            recipient = Recipient.resolved(recipient.getId());
-          } catch (IOException e) {
-            Log.w(TAG, "[handlePotentialMeUrl] Failed to refresh directory for new contact.");
-          }
-        }
-
-        return recipient;
-      }, recipient -> {
-        dialog.dismiss();
-        startConversation(activity, recipient, null);
-      });
-
-      return true;
-    } else {
-      return false;
+      handleE164Link(activity, e164);
+    } else if (username != null) {
+      handleUsernameLink(activity, potentialUrl);
     }
   }
 
-  private static void startInsecureCallInternal(@NonNull Activity activity, @NonNull Recipient recipient) {
+  public static void handlePotentialCallLinkUrl(@NonNull FragmentActivity activity, @NonNull String potentialUrl) {
+    if (!CallLinks.isCallLink(potentialUrl)) {
+      return;
+    }
+
+    if (!FeatureFlags.adHocCalling()) {
+      Toast.makeText(activity, R.string.CommunicationActions_cant_join_call, Toast.LENGTH_SHORT).show();
+      return;
+    }
+
+    CallLinkRootKey rootKey = CallLinks.parseUrl(potentialUrl);
+    if (rootKey == null) {
+      Log.w(TAG, "Failed to parse root key from call link");
+      new MaterialAlertDialogBuilder(activity)
+          .setTitle(R.string.CommunicationActions_invalid_link)
+          .setMessage(R.string.CommunicationActions_this_is_not_a_valid_call_link)
+          .setPositiveButton(android.R.string.ok, null)
+          .show();
+      return;
+    }
+
+    startVideoCall(new ActivityCallContext(activity), rootKey);
+  }
+
+  /**
+   * Attempts to start a video call for the given call link via root key. This will insert a call link into
+   * the user's database if one does not already exist.
+   *
+   * @param fragment The fragment, which will be used for context and permissions routing.
+   */
+  public static void startVideoCall(@NonNull Fragment fragment, @NonNull CallLinkRootKey rootKey) {
+    startVideoCall(new FragmentCallContext(fragment), rootKey);
+  }
+
+  private static void startVideoCall(@NonNull CallContext callContext, @NonNull CallLinkRootKey rootKey) {
+    if (!FeatureFlags.adHocCalling()) {
+      Toast.makeText(callContext.getContext(), R.string.CommunicationActions_cant_join_call, Toast.LENGTH_SHORT).show();
+      return;
+    }
+
+    SimpleTask.run(() -> {
+      CallLinkRoomId         roomId   = CallLinkRoomId.fromBytes(rootKey.deriveRoomId());
+      CallLinkTable.CallLink callLink = SignalDatabase.callLinks().getOrCreateCallLinkByRootKey(rootKey);
+
+      if (callLink.getState().hasBeenRevoked()) {
+        return Optional.<Recipient>empty();
+      }
+
+      return SignalDatabase.recipients().getByCallLinkRoomId(roomId).map(Recipient::resolved);
+    }, callLinkRecipient -> {
+      if (callLinkRecipient.isEmpty()) {
+        new MaterialAlertDialogBuilder(callContext.getContext())
+            .setTitle(R.string.CommunicationActions_cant_join_call)
+            .setMessage(R.string.CommunicationActions_this_call_link_is_no_longer_valid)
+            .setPositiveButton(android.R.string.ok, null)
+            .show();
+      } else {
+        startVideoCall(callContext, callLinkRecipient.get(), true);
+      }
+    });
+  }
+
+  private static void startInsecureCallInternal(@NonNull CallContext callContext, @NonNull Recipient recipient) {
     try {
       Intent dialIntent = new Intent(Intent.ACTION_DIAL, Uri.parse("tel:" + recipient.requireSmsAddress()));
-      activity.startActivity(dialIntent);
+      callContext.startActivity(dialIntent);
     } catch (ActivityNotFoundException anfe) {
       Log.w(TAG, anfe);
-      Dialogs.showAlertDialog(activity,
-                              activity.getString(R.string.ConversationActivity_calls_not_supported),
-                              activity.getString(R.string.ConversationActivity_this_device_does_not_appear_to_support_dial_actions));
+      Dialogs.showAlertDialog(callContext.getContext(),
+                              callContext.getContext().getString(R.string.ConversationActivity_calls_not_supported),
+                              callContext.getContext().getString(R.string.ConversationActivity_this_device_does_not_appear_to_support_dial_actions));
     }
   }
 
-  private static void startCallInternal(@NonNull FragmentActivity activity, @NonNull Recipient recipient, boolean isVideo) {
-    if (isVideo) startVideoCallInternal(activity, recipient);
-    else         startAudioCallInternal(activity, recipient);
+  private static void startCallInternal(@NonNull CallContext callContext, @NonNull Recipient recipient, boolean isVideo, boolean fromCallLink) {
+    if (isVideo) startVideoCallInternal(callContext, recipient, fromCallLink);
+    else         startAudioCallInternal(callContext, recipient);
   }
 
-  private static void startAudioCallInternal(@NonNull FragmentActivity activity, @NonNull Recipient recipient) {
-    Permissions.with(activity)
+  private static void startAudioCallInternal(@NonNull CallContext callContext, @NonNull Recipient recipient) {
+    callContext.getPermissionsBuilder()
                .request(Manifest.permission.RECORD_AUDIO)
                .ifNecessary()
-               .withRationaleDialog(activity.getString(R.string.ConversationActivity__to_call_s_signal_needs_access_to_your_microphone, recipient.getDisplayName(activity)),
-                   R.drawable.ic_mic_solid_24)
-               .withPermanentDenialDialog(activity.getString(R.string.ConversationActivity__to_call_s_signal_needs_access_to_your_microphone, recipient.getDisplayName(activity)))
+               .withRationaleDialog(callContext.getContext().getString(R.string.ConversationActivity_allow_access_microphone), callContext.getContext().getString(R.string.ConversationActivity__to_call_signal_needs_access_to_your_microphone), R.drawable.symbol_phone_24)
+               .withPermanentDenialDialog(callContext.getContext().getString(R.string.ConversationActivity__to_call_signal_needs_access_to_your_microphone), null, R.string.ConversationActivity_allow_access_microphone, R.string.ConversationActivity__to_start_call, callContext.getFragmentManager())
+               .onAnyDenied(() -> Toast.makeText(callContext.getContext(), R.string.ConversationActivity_signal_needs_microphone_access_voice_call, Toast.LENGTH_LONG).show())
                .onAllGranted(() -> {
                  ApplicationDependencies.getSignalCallManager().startOutgoingAudioCall(recipient);
 
                  MessageSender.onMessageSent();
 
-                 Intent activityIntent = new Intent(activity, WebRtcCallActivity.class);
+                 Intent activityIntent = new Intent(callContext.getContext(), WebRtcCallActivity.class);
 
                  activityIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
 
-                 activity.startActivity(activityIntent);
+                 callContext.startActivity(activityIntent);
                })
                .execute();
   }
 
-  private static void startVideoCallInternal(@NonNull FragmentActivity activity, @NonNull Recipient recipient) {
-    Permissions.with(activity)
+  private static void startVideoCallInternal(@NonNull CallContext callContext, @NonNull Recipient recipient, boolean fromCallLink) {
+    callContext.getPermissionsBuilder()
                .request(Manifest.permission.RECORD_AUDIO, Manifest.permission.CAMERA)
                .ifNecessary()
-               .withRationaleDialog(activity.getString(R.string.ConversationActivity_signal_needs_the_microphone_and_camera_permissions_in_order_to_call_s, recipient.getDisplayName(activity)),
+               .withRationaleDialog(callContext.getContext().getString(R.string.ConversationActivity_signal_needs_the_microphone_and_camera_permissions_in_order_to_call_s, recipient.getDisplayName(callContext.getContext())),
                                     R.drawable.ic_mic_solid_24,
                                     R.drawable.ic_video_solid_24_tinted)
-               .withPermanentDenialDialog(activity.getString(R.string.ConversationActivity_signal_needs_the_microphone_and_camera_permissions_in_order_to_call_s, recipient.getDisplayName(activity)))
+               .withPermanentDenialDialog(callContext.getContext().getString(R.string.ConversationActivity_signal_needs_the_microphone_and_camera_permissions_in_order_to_call_s, recipient.getDisplayName(callContext.getContext())))
                .onAllGranted(() -> {
                  ApplicationDependencies.getSignalCallManager().startPreJoinCall(recipient);
 
-                 Intent activityIntent = new Intent(activity, WebRtcCallActivity.class);
+                 Intent activityIntent = new Intent(callContext.getContext(), WebRtcCallActivity.class);
 
                  activityIntent.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                     .putExtra(WebRtcCallActivity.EXTRA_ENABLE_VIDEO_IF_AVAILABLE, true);
+                     .putExtra(WebRtcCallActivity.EXTRA_ENABLE_VIDEO_IF_AVAILABLE, true)
+                     .putExtra(WebRtcCallActivity.EXTRA_STARTED_FROM_CALL_LINK, fromCallLink);
 
-                 activity.startActivity(activityIntent);
+                 callContext.startActivity(activityIntent);
                })
                .execute();
+  }
+
+  private static void handleE164Link(Activity activity, String e164) {
+    SimpleProgressDialog.DismissibleDialog dialog = SimpleProgressDialog.showDelayed(activity, 500, 500);
+
+    SimpleTask.run(() -> {
+      Recipient recipient = Recipient.external(activity, e164);
+
+      if (!recipient.isRegistered() || !recipient.getHasServiceId()) {
+        try {
+          ContactDiscovery.refresh(activity, recipient, false, TimeUnit.SECONDS.toMillis(10));
+          recipient = Recipient.resolved(recipient.getId());
+        } catch (IOException e) {
+          Log.w(TAG, "[handlePotentialSignalMeUrl] Failed to refresh directory for new contact.");
+        }
+      }
+
+      return recipient;
+    }, recipient -> {
+      dialog.dismiss();
+
+      if (recipient.isRegistered() && recipient.getHasServiceId()) {
+        startConversation(activity, recipient, null);
+      } else {
+        new MaterialAlertDialogBuilder(activity)
+            .setMessage(activity.getString(R.string.NewConversationActivity__s_is_not_a_signal_user, e164))
+            .setPositiveButton(android.R.string.ok, null)
+            .show();
+      }
+    });
+  }
+
+  private static void handleUsernameLink(Activity activity, String link) {
+    SimpleProgressDialog.DismissibleDialog dialog = SimpleProgressDialog.showDelayed(activity, 500, 500);
+
+    SimpleTask.run(() -> {
+      try {
+        UsernameLinkConversionResult result = RxExtensions.safeBlockingGet(UsernameRepository.fetchUsernameAndAciFromLink(link));
+
+        // TODO we could be better here and report different types of errors to the UI
+        if (result instanceof UsernameLinkConversionResult.Success success) {
+          return Recipient.externalUsername(success.getAci(), success.getUsername().getUsername());
+        } else {
+          return null;
+        }
+      } catch (InterruptedException e) {
+        Log.w(TAG, "Interrupted?", e);
+        return null;
+      }
+    }, recipient -> {
+      dialog.dismiss();
+
+      if (recipient != null && recipient.isRegistered() && recipient.getHasServiceId()) {
+        startConversation(activity, recipient, null);
+      } else {
+        new MaterialAlertDialogBuilder(activity)
+            .setMessage(activity.getString(R.string.UsernameLinkSettings_qr_result_not_found_no_username))
+            .setPositiveButton(android.R.string.ok, null)
+            .show();
+      }
+    });
+  }
+
+  private interface CallContext {
+    @NonNull Permissions.PermissionsBuilder getPermissionsBuilder();
+    void startActivity(@NonNull Intent intent);
+    @NonNull Context getContext();
+    @NonNull FragmentManager getFragmentManager();
+  }
+
+  private static class ActivityCallContext implements CallContext {
+    private final FragmentActivity activity;
+
+    private ActivityCallContext(FragmentActivity activity) {
+      this.activity = activity;
+    }
+
+    @Override
+    public @NonNull Permissions.PermissionsBuilder getPermissionsBuilder() {
+      return Permissions.with(activity);
+    }
+
+    @Override
+    public void startActivity(@NonNull Intent intent) {
+      activity.startActivity(intent);
+    }
+
+    @Override
+    public @NonNull Context getContext() {
+      return activity;
+    }
+
+    @Override
+    public @NonNull FragmentManager getFragmentManager() {
+      return activity.getSupportFragmentManager();
+    }
+  }
+
+  private static class FragmentCallContext implements CallContext {
+    private final Fragment fragment;
+
+    private FragmentCallContext(Fragment fragment) {
+      this.fragment = fragment;
+    }
+
+    @Override
+    public @NonNull Permissions.PermissionsBuilder getPermissionsBuilder() {
+      return Permissions.with(fragment);
+    }
+
+    @Override
+    public void startActivity(@NonNull Intent intent) {
+      fragment.startActivity(intent);
+    }
+
+    @Override
+    public @NonNull Context getContext() {
+      return fragment.requireContext();
+    }
+
+    @Override
+    public @NonNull FragmentManager getFragmentManager() {
+      return fragment.getParentFragmentManager();
+    }
   }
 }

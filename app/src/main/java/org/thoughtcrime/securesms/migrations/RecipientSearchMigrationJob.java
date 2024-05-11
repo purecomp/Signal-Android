@@ -1,9 +1,9 @@
 package org.thoughtcrime.securesms.migrations;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
-import org.thoughtcrime.securesms.contacts.sync.DirectoryHelper;
-import org.thoughtcrime.securesms.jobmanager.Data;
+import org.thoughtcrime.securesms.contacts.sync.ContactDiscovery;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint;
 
@@ -37,7 +37,7 @@ public class RecipientSearchMigrationJob extends MigrationJob {
 
   @Override
   void performMigration() throws Exception {
-    DirectoryHelper.refreshDirectory(context, false);
+    ContactDiscovery.refreshAll(context, false);
   }
 
   @Override
@@ -47,7 +47,7 @@ public class RecipientSearchMigrationJob extends MigrationJob {
 
   public static class Factory implements Job.Factory<RecipientSearchMigrationJob> {
     @Override
-    public @NonNull RecipientSearchMigrationJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull RecipientSearchMigrationJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
       return new RecipientSearchMigrationJob(parameters);
     }
   }

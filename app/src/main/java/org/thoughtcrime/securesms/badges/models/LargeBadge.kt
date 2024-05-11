@@ -4,21 +4,22 @@ import android.view.View
 import android.widget.TextView
 import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.badges.BadgeImageView
-import org.thoughtcrime.securesms.util.MappingAdapter
-import org.thoughtcrime.securesms.util.MappingModel
-import org.thoughtcrime.securesms.util.MappingViewHolder
+import org.thoughtcrime.securesms.util.adapter.mapping.LayoutFactory
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingAdapter
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingModel
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingViewHolder
 
 data class LargeBadge(
   val badge: Badge
 ) {
 
-  class Model(val largeBadge: LargeBadge, val shortName: String) : MappingModel<Model> {
+  class Model(val largeBadge: LargeBadge, val shortName: String, val maxLines: Int) : MappingModel<Model> {
     override fun areItemsTheSame(newItem: Model): Boolean {
       return newItem.largeBadge.badge.id == largeBadge.badge.id
     }
 
     override fun areContentsTheSame(newItem: Model): Boolean {
-      return newItem.largeBadge == largeBadge && newItem.shortName == shortName
+      return newItem.largeBadge == largeBadge && newItem.shortName == shortName && newItem.maxLines == maxLines
     }
   }
 
@@ -41,15 +42,23 @@ data class LargeBadge(
     override fun bind(model: Model) {
       badge.setBadge(model.largeBadge.badge)
 
-      name.text = model.largeBadge.badge.name
-      description.text = model.largeBadge.badge.resolveDescription(model.shortName)
+      name.text = context.getString(R.string.ViewBadgeBottomSheetDialogFragment__s_supports_signal, model.shortName)
+      description.text = if (model.largeBadge.badge.isSubscription()) {
+        context.getString(R.string.ViewBadgeBottomSheetDialogFragment__s_supports_signal_with_a_monthly, model.shortName)
+      } else {
+        context.getString(R.string.ViewBadgeBottomSheetDialogFragment__s_supports_signal_with_a_donation, model.shortName)
+      }
+
+      description.setLines(model.maxLines)
+      description.maxLines = model.maxLines
+      description.minLines = model.maxLines
     }
   }
 
   companion object {
     fun register(mappingAdapter: MappingAdapter) {
-      mappingAdapter.registerFactory(Model::class.java, MappingAdapter.LayoutFactory({ ViewHolder(it) }, R.layout.view_badge_bottom_sheet_dialog_fragment_page))
-      mappingAdapter.registerFactory(EmptyModel::class.java, MappingAdapter.LayoutFactory({ EmptyViewHolder(it) }, R.layout.view_badge_bottom_sheet_dialog_fragment_page))
+      mappingAdapter.registerFactory(Model::class.java, LayoutFactory({ ViewHolder(it) }, R.layout.view_badge_bottom_sheet_dialog_fragment_page))
+      mappingAdapter.registerFactory(EmptyModel::class.java, LayoutFactory({ EmptyViewHolder(it) }, R.layout.view_badge_bottom_sheet_dialog_fragment_page))
     }
   }
 }

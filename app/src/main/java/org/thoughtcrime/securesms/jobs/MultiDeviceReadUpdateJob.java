@@ -1,16 +1,17 @@
 package org.thoughtcrime.securesms.jobs;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import com.annimon.stream.Stream;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import org.signal.core.util.ListUtil;
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.crypto.UnidentifiedAccessUtil;
-import org.thoughtcrime.securesms.database.MessageDatabase.SyncMessageId;
-import org.thoughtcrime.securesms.database.RecipientDatabase;
+import org.thoughtcrime.securesms.database.MessageTable.SyncMessageId;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.jobmanager.Data;
+import org.thoughtcrime.securesms.jobmanager.JsonJobData;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.jobmanager.JobManager;
 import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint;
@@ -20,7 +21,6 @@ import org.thoughtcrime.securesms.recipients.RecipientId;
 import org.thoughtcrime.securesms.recipients.RecipientUtil;
 import org.thoughtcrime.securesms.util.JsonUtils;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
-import org.thoughtcrime.securesms.util.Util;
 import org.whispersystems.signalservice.api.SignalServiceMessageSender;
 import org.whispersystems.signalservice.api.crypto.UntrustedIdentityException;
 import org.whispersystems.signalservice.api.messages.multidevice.ReadMessage;
@@ -69,7 +69,7 @@ public class MultiDeviceReadUpdateJob extends BaseJob {
    */
   public static void enqueue(@NonNull List<SyncMessageId> messageIds) {
     JobManager                jobManager      = ApplicationDependencies.getJobManager();
-    List<List<SyncMessageId>> messageIdChunks = Util.chunk(messageIds, SendReadReceiptJob.MAX_TIMESTAMPS);
+    List<List<SyncMessageId>> messageIdChunks = ListUtil.chunk(messageIds, SendReadReceiptJob.MAX_TIMESTAMPS);
 
     if (messageIdChunks.size() > 1) {
       Log.w(TAG, "Large receipt count! Had to break into multiple chunks. Total count: " + messageIds.size());
@@ -81,7 +81,7 @@ public class MultiDeviceReadUpdateJob extends BaseJob {
   }
 
   @Override
-  public @NonNull Data serialize() {
+  public @Nullable byte[] serialize() {
     String[] ids = new String[messageIds.size()];
 
     for (int i = 0; i < ids.length; i++) {
@@ -92,7 +92,7 @@ public class MultiDeviceReadUpdateJob extends BaseJob {
       }
     }
 
-    return new Data.Builder().putStringArray(KEY_MESSAGE_IDS, ids).build();
+    return new JsonJobData.Builder().putStringArray(KEY_MESSAGE_IDS, ids).serialize();
   }
 
   @Override
@@ -115,8 +115,8 @@ public class MultiDeviceReadUpdateJob extends BaseJob {
 
     for (SerializableSyncMessageId messageId : messageIds) {
       Recipient recipient = Recipient.resolved(RecipientId.from(messageId.recipientId));
-      if (!recipient.isGroup() && recipient.isMaybeRegistered()) {
-        readMessages.add(new ReadMessage(RecipientUtil.toSignalServiceAddress(context, recipient), messageId.timestamp));
+      if (!recipient.isGroup() && !recipient.isDistributionList() && recipient.isMaybeRegistered() && (recipient.getHasServiceId() || recipient.getHasE164())) {
+        readMessages.add(new ReadMessage(RecipientUtil.getOrFetchServiceId(context, recipient), messageId.timestamp));
       }
     }
 
@@ -153,7 +153,9 @@ public class MultiDeviceReadUpdateJob extends BaseJob {
 
   public static final class Factory implements Job.Factory<MultiDeviceReadUpdateJob> {
     @Override
-    public @NonNull MultiDeviceReadUpdateJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull MultiDeviceReadUpdateJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
+      JsonJobData data = JsonJobData.deserialize(serializedData);
+
       List<SyncMessageId> ids = Stream.of(data.getStringArray(KEY_MESSAGE_IDS))
                                       .map(id -> {
                                         try {

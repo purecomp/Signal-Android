@@ -16,16 +16,18 @@ class WebRtcCallParticipantsPage {
   private final boolean               isRenderInPip;
   private final boolean               isPortrait;
   private final boolean               isLandscapeEnabled;
-  private final boolean               isIncomingRing;
+  private final boolean               hideAvatar;
+  private final int                   navBarBottomInset;
 
   static WebRtcCallParticipantsPage forMultipleParticipants(@NonNull List<CallParticipant> callParticipants,
                                                             @NonNull CallParticipant focusedParticipant,
                                                             boolean isRenderInPip,
                                                             boolean isPortrait,
                                                             boolean isLandscapeEnabled,
-                                                            boolean isIncomingRing)
+                                                            boolean hideAvatar,
+                                                            int navBarBottomInset)
   {
-    return new WebRtcCallParticipantsPage(callParticipants, focusedParticipant, false, isRenderInPip, isPortrait, isLandscapeEnabled, isIncomingRing);
+    return new WebRtcCallParticipantsPage(callParticipants, focusedParticipant, false, isRenderInPip, isPortrait, isLandscapeEnabled, hideAvatar, navBarBottomInset);
   }
 
   static WebRtcCallParticipantsPage forSingleParticipant(@NonNull CallParticipant singleParticipant,
@@ -33,7 +35,7 @@ class WebRtcCallParticipantsPage {
                                                          boolean isPortrait,
                                                          boolean isLandscapeEnabled)
   {
-    return new WebRtcCallParticipantsPage(Collections.singletonList(singleParticipant), singleParticipant, true, isRenderInPip, isPortrait, isLandscapeEnabled, false);
+    return new WebRtcCallParticipantsPage(Collections.singletonList(singleParticipant), singleParticipant, true, isRenderInPip, isPortrait, isLandscapeEnabled, false, 0);
   }
 
   private WebRtcCallParticipantsPage(@NonNull List<CallParticipant> callParticipants,
@@ -42,7 +44,8 @@ class WebRtcCallParticipantsPage {
                                      boolean isRenderInPip,
                                      boolean isPortrait,
                                      boolean isLandscapeEnabled,
-                                     boolean isIncomingRing)
+                                     boolean hideAvatar,
+                                     int navBarBottomInset)
   {
     this.callParticipants   = callParticipants;
     this.focusedParticipant = focusedParticipant;
@@ -50,7 +53,8 @@ class WebRtcCallParticipantsPage {
     this.isRenderInPip      = isRenderInPip;
     this.isPortrait         = isPortrait;
     this.isLandscapeEnabled = isLandscapeEnabled;
-    this.isIncomingRing     = isIncomingRing;
+    this.hideAvatar         = hideAvatar;
+    this.navBarBottomInset  = navBarBottomInset;
   }
 
   public @NonNull List<CallParticipant> getCallParticipants() {
@@ -73,8 +77,12 @@ class WebRtcCallParticipantsPage {
     return isPortrait;
   }
 
-  public boolean isIncomingRing() {
-    return isIncomingRing;
+  public boolean shouldHideAvatar() {
+    return hideAvatar;
+  }
+
+  public int getNavBarBottomInset() {
+    return navBarBottomInset;
   }
 
   public @NonNull CallParticipantsLayout.LayoutStrategy getLayoutStrategy() {
@@ -85,16 +93,19 @@ class WebRtcCallParticipantsPage {
   public boolean equals(Object o) {
     if (this == o) return true;
     if (o == null || getClass() != o.getClass()) return false;
-    WebRtcCallParticipantsPage that = (WebRtcCallParticipantsPage) o;
+    final WebRtcCallParticipantsPage that = (WebRtcCallParticipantsPage) o;
     return isSpeaker == that.isSpeaker &&
            isRenderInPip == that.isRenderInPip &&
-           focusedParticipant.equals(that.focusedParticipant) &&
+           isPortrait == that.isPortrait &&
+           isLandscapeEnabled == that.isLandscapeEnabled &&
+           hideAvatar == that.hideAvatar &&
            callParticipants.equals(that.callParticipants) &&
-           isPortrait == that.isPortrait;
+           focusedParticipant.equals(that.focusedParticipant) &&
+           navBarBottomInset == that.navBarBottomInset;
   }
 
   @Override
   public int hashCode() {
-    return Objects.hash(callParticipants, isSpeaker, focusedParticipant, isRenderInPip, isPortrait);
+    return Objects.hash(callParticipants, focusedParticipant, isSpeaker, isRenderInPip, isPortrait, isLandscapeEnabled, hideAvatar, navBarBottomInset);
   }
 }

@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    tools:viewBindingIgnore="true"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
@@ -39,8 +40,9 @@
         android:clickable="false"
         android:focusable="false"
         android:visibility="gone"
-        app:layout_constraintBottom_toBottomOf="@+id/recipient_avatar"
-        app:layout_constraintEnd_toEndOf="@+id/recipient_avatar"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintTop_toTopOf="parent"
         tools:checked="true" />
 
     <org.thoughtcrime.securesms.components.emoji.EmojiTextView
@@ -52,7 +54,7 @@
         android:gravity="start|center_vertical"
         android:maxLines="2"
         android:textAlignment="viewStart"
-        android:textAppearance="@style/Signal.Text.Body"
+        android:textAppearance="@style/Signal.Text.BodyLarge"
         app:layout_constraintBottom_toTopOf="@+id/recipient_about"
         app:layout_constraintEnd_toStartOf="@+id/admin"
         app:layout_constraintHorizontal_bias="0"
@@ -70,7 +72,7 @@
         android:gravity="start|center_vertical"
         android:maxLines="1"
         android:textAlignment="viewStart"
-        android:textAppearance="@style/Signal.Text.Preview"
+        android:textAppearance="@style/Signal.Text.BodyMedium"
         android:textColor="@color/signal_text_secondary"
         app:emoji_forceCustom="true"
         app:layout_constraintBottom_toBottomOf="@+id/recipient_avatar"
@@ -87,7 +89,7 @@
         android:layout_marginEnd="16dp"
         android:gravity="start|center_vertical"
         android:text="@string/GroupRecipientListItem_admin"
-        android:textAppearance="@style/TextAppearance.Signal.Body2"
+        android:textAppearance="@style/Signal.Text.BodyMedium"
         android:textColor="@color/signal_text_secondary"
         android:visibility="gone"
         app:layout_constraintBottom_toBottomOf="parent"
@@ -102,10 +104,12 @@
         android:id="@+id/popupMenuProgressContainer"
         android:layout_width="24dp"
         android:layout_height="24dp"
+        android:layout_marginEnd="16dp"
         android:visibility="gone"
         app:layout_constraintBottom_toBottomOf="parent"
-        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintEnd_toStartOf="@id/recipient_selected"
         app:layout_constraintTop_toTopOf="parent"
+        app:layout_goneMarginEnd="0dp"
         tools:visibility="visible">
 
         <org.thoughtcrime.securesms.groups.ui.PopupMenuView

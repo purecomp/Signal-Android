@@ -3,6 +3,7 @@ captures/
 project.properties
 keystore.debug.properties
 keystore.staging.properties
+nightly-url.txt
 .project
 .settings
 bin/
@@ -27,3 +28,5 @@ obj/
 jni/libspeex/.deps/
 pkcs11.password
 dev.keystore
+maps.key
+local/

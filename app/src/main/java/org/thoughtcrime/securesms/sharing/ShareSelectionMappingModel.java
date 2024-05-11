@@ -6,7 +6,7 @@ import androidx.annotation.NonNull;
 
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.recipients.Recipient;
-import org.thoughtcrime.securesms.util.MappingModel;
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingModel;
 
 public class ShareSelectionMappingModel implements MappingModel<ShareSelectionMappingModel> {
 
@@ -20,10 +20,10 @@ public class ShareSelectionMappingModel implements MappingModel<ShareSelectionMa
 
   @NonNull String getName(@NonNull Context context) {
     String name = shareContact.getRecipientId()
-                              .transform(Recipient::resolved)
-                              .transform(recipient -> recipient.isSelf() ? context.getString(R.string.note_to_self)
-                                                                         : recipient.getShortDisplayNameIncludingUsername(context))
-                              .or(shareContact::getNumber);
+                              .map(Recipient::resolved)
+                              .map(recipient -> recipient.isSelf() ? context.getString(R.string.note_to_self)
+                                                                   : recipient.getShortDisplayName(context))
+                              .orElseGet(shareContact::getNumber);
 
     return isFirst ? name : context.getString(R.string.ShareActivity__comma_s, name);
   }

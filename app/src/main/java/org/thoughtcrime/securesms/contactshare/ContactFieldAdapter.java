@@ -2,6 +2,7 @@ package org.thoughtcrime.securesms.contactshare;
 
 import android.content.Context;
 import android.net.Uri;
+import android.text.TextUtils;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -14,11 +15,11 @@ import androidx.annotation.Nullable;
 import androidx.recyclerview.widget.RecyclerView;
 
 import com.annimon.stream.Stream;
+import com.bumptech.glide.RequestManager;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
 
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.contactshare.Contact.Phone;
-import org.thoughtcrime.securesms.mms.GlideRequests;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -30,16 +31,16 @@ import static org.thoughtcrime.securesms.contactshare.Contact.PostalAddress;
 
 class ContactFieldAdapter extends RecyclerView.Adapter<ContactFieldAdapter.ContactFieldViewHolder> {
 
-  private final Locale        locale;
-  private final boolean       selectable;
-  private final List<Field>   fields;
-  private final GlideRequests glideRequests;
+  private final Locale         locale;
+  private final boolean        selectable;
+  private final List<Field>    fields;
+  private final RequestManager requestManager;
 
-  public ContactFieldAdapter(@NonNull Locale locale, @NonNull GlideRequests glideRequests, boolean selectable) {
-    this.locale        = locale;
-    this.glideRequests = glideRequests;
-    this.selectable    = selectable;
-    this.fields        = new ArrayList<>();
+  public ContactFieldAdapter(@NonNull Locale locale, @NonNull RequestManager requestManager, boolean selectable) {
+    this.locale         = locale;
+    this.requestManager = requestManager;
+    this.selectable     = selectable;
+    this.fields         = new ArrayList<>();
   }
 
   @Override
@@ -49,7 +50,7 @@ class ContactFieldAdapter extends RecyclerView.Adapter<ContactFieldAdapter.Conta
 
   @Override
   public void onBindViewHolder(@NonNull ContactFieldViewHolder holder, int position) {
-    holder.bind(fields.get(position), glideRequests, selectable);
+    holder.bind(fields.get(position), requestManager, selectable);
   }
 
   @Override
@@ -85,7 +86,6 @@ class ContactFieldAdapter extends RecyclerView.Adapter<ContactFieldAdapter.Conta
 
     private final TextView  value;
     private final TextView  label;
-    private final ImageView icon;
     private final ImageView avatar;
     private final CheckBox  checkBox;
 
@@ -94,20 +94,19 @@ class ContactFieldAdapter extends RecyclerView.Adapter<ContactFieldAdapter.Conta
 
       value    = itemView.findViewById(R.id.contact_field_value);
       label    = itemView.findViewById(R.id.contact_field_label);
-      icon     = itemView.findViewById(R.id.contact_field_icon);
       avatar   = itemView.findViewById(R.id.contact_field_avatar);
       checkBox = itemView.findViewById(R.id.contact_field_checkbox);
     }
 
-    void bind(@NonNull Field field, @NonNull GlideRequests glideRequests, boolean selectable) {
+    void bind(@NonNull Field field, @NonNull RequestManager requestManager, boolean selectable) {
       value.setMaxLines(field.maxLines);
       value.setText(field.value);
       label.setText(field.label);
-      icon.setImageResource(field.iconResId);
+      label.setVisibility(TextUtils.isEmpty(field.label) ? View.GONE : View.VISIBLE);
 
       if (field.iconUri != null) {
         avatar.setVisibility(View.VISIBLE);
-        glideRequests.load(field.iconUri)
+        requestManager.load(field.iconUri)
                      .diskCacheStrategy(DiskCacheStrategy.NONE)
                      .skipMemoryCache(true)
                      .circleCrop()
@@ -118,18 +117,21 @@ class ContactFieldAdapter extends RecyclerView.Adapter<ContactFieldAdapter.Conta
 
       if (selectable) {
         checkBox.setVisibility(View.VISIBLE);
-        checkBox.setOnCheckedChangeListener(null);
         checkBox.setChecked(field.isSelected());
-        checkBox.setOnCheckedChangeListener((buttonView, isChecked) -> field.setSelected(isChecked));
-        super.itemView.setOnClickListener(v -> checkBox.toggle());
+        itemView.setOnClickListener(unused -> {
+          field.setSelected(!field.isSelected());
+          checkBox.setChecked(field.isSelected());
+        });
       } else {
         checkBox.setVisibility(View.GONE);
-        checkBox.setOnCheckedChangeListener(null);
+        itemView.setOnClickListener(null);
+        itemView.setClickable(false);
       }
     }
 
     void recycle() {
-      checkBox.setOnCheckedChangeListener(null);
+      itemView.setOnClickListener(null);
+      itemView.setClickable(false);
     }
   }
 
@@ -137,7 +139,6 @@ class ContactFieldAdapter extends RecyclerView.Adapter<ContactFieldAdapter.Conta
 
     final String     value;
     final String     label;
-    final int        iconResId;
     final int        maxLines;
     final Selectable selectable;
 
@@ -146,7 +147,6 @@ class ContactFieldAdapter extends RecyclerView.Adapter<ContactFieldAdapter.Conta
 
     Field(@NonNull Context context, @NonNull Phone phoneNumber, @NonNull Locale locale) {
       this.value      = ContactUtil.getPrettyPhoneNumber(phoneNumber, locale);
-      this.iconResId  = R.drawable.ic_phone_right_unlock_solid_24;
       this.iconUri    = null;
       this.maxLines   = 1;
       this.selectable = phoneNumber;
@@ -171,7 +171,6 @@ class ContactFieldAdapter extends RecyclerView.Adapter<ContactFieldAdapter.Conta
 
     Field(@NonNull Context context, @NonNull Email email) {
       this.value      = email.getEmail();
-      this.iconResId  = R.drawable.baseline_email_white_24;
       this.iconUri    = null;
       this.maxLines   = 1;
       this.selectable = email;
@@ -196,7 +195,6 @@ class ContactFieldAdapter extends RecyclerView.Adapter<ContactFieldAdapter.Conta
 
     Field(@NonNull Context context, @NonNull PostalAddress postalAddress) {
       this.value      = postalAddress.toString();
-      this.iconResId  = R.drawable.ic_location_on_white_24dp;
       this.iconUri    = null;
       this.maxLines   = 3;
       this.selectable = postalAddress;
@@ -218,7 +216,6 @@ class ContactFieldAdapter extends RecyclerView.Adapter<ContactFieldAdapter.Conta
 
     Field(@NonNull Avatar avatar) {
       this.value      = "";
-      this.iconResId  = R.drawable.baseline_account_circle_white_24;
       this.iconUri    = avatar.getAttachment() != null ? avatar.getAttachment().getUri() : null;
       this.maxLines   = 1;
       this.selectable = avatar;

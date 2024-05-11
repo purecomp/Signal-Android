@@ -3,18 +3,16 @@ package org.thoughtcrime.securesms.components.voice;
 import android.content.Context;
 import android.net.Uri;
 import android.os.Bundle;
-import android.support.v4.media.MediaDescriptionCompat;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.WorkerThread;
-
-import com.google.android.exoplayer2.MediaItem;
-import com.google.android.exoplayer2.MediaMetadata;
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.MediaMetadata;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.R;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
+import org.thoughtcrime.securesms.database.SignalDatabase;
 import org.thoughtcrime.securesms.database.model.MessageRecord;
 import org.thoughtcrime.securesms.database.model.MmsMessageRecord;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
@@ -52,7 +50,7 @@ class VoiceNoteMediaItemFactory {
                                   @NonNull Uri draftUri)
   {
 
-    Recipient threadRecipient = DatabaseFactory.getThreadDatabase(context).getRecipientForThreadId(threadId);
+    Recipient threadRecipient = SignalDatabase.threads().getRecipientForThreadId(threadId);
     if (threadRecipient == null) {
       threadRecipient = Recipient.UNKNOWN;
     }
@@ -80,13 +78,13 @@ class VoiceNoteMediaItemFactory {
   @Nullable static MediaItem buildMediaItem(@NonNull Context context,
                                             @NonNull MessageRecord messageRecord)
   {
-    int startingPosition = DatabaseFactory.getMmsSmsDatabase(context)
-                                          .getMessagePositionInConversation(messageRecord.getThreadId(),
-                                                                            messageRecord.getDateReceived());
+    int startingPosition = SignalDatabase.messages()
+                                         .getMessagePositionInConversation(messageRecord.getThreadId(),
+                                                                           messageRecord.getDateReceived());
 
-    Recipient threadRecipient = Objects.requireNonNull(DatabaseFactory.getThreadDatabase(context)
+    Recipient threadRecipient = Objects.requireNonNull(SignalDatabase.threads()
                                                                       .getRecipientForThreadId(messageRecord.getThreadId()));
-    Recipient  sender          = messageRecord.isOutgoing() ? Recipient.self() : messageRecord.getIndividualRecipient();
+    Recipient  sender          = messageRecord.getFromRecipient();
     Recipient  avatarRecipient = threadRecipient.isGroup() ? threadRecipient : sender;
     AudioSlide audioSlide      = ((MmsMessageRecord) messageRecord).getSlideDeck().getAudioSlide();
 
@@ -144,22 +142,21 @@ class VoiceNoteMediaItemFactory {
     }
 
     return new MediaItem.Builder()
-                        .setUri(audioUri)
-                        .setMediaMetadata(
-                            new MediaMetadata.Builder()
-                                .setTitle(title)
-                                .setSubtitle(subtitle)
-                                .setExtras(extras)
-                                .build()
-                        )
-                        .setTag(
-                            new MediaDescriptionCompat.Builder()
-                                .setMediaUri(audioUri)
-                                .setTitle(title)
-                                .setSubtitle(subtitle)
-                                .setExtras(extras)
-                                .build())
-                        .build();
+        .setUri(audioUri)
+        .setMediaMetadata(
+            new MediaMetadata.Builder()
+                .setTitle(title)
+                .setSubtitle(subtitle)
+                .setExtras(extras)
+                .build()
+        )
+        .setRequestMetadata(
+            new MediaItem.RequestMetadata.Builder()
+                .setMediaUri(audioUri)
+                .setExtras(extras)
+                .build()
+        )
+        .build();
   }
 
   public static @NonNull String getTitle(@NonNull Context context, @NonNull Recipient sender, @NonNull Recipient threadRecipient, @Nullable NotificationPrivacyPreference notificationPrivacyPreference) {
@@ -175,7 +172,8 @@ class VoiceNoteMediaItemFactory {
                                sender.getDisplayName(context),
                                threadRecipient.getDisplayName(context));
     } else if (preference.isDisplayContact()) {
-      return sender.getDisplayName(context);
+      return sender.isSelf() && threadRecipient.isSelf() ? context.getString(R.string.note_to_self)
+                                                         : sender.getDisplayName(context);
     } else {
       return context.getString(R.string.MessageNotifier_signal_message);
     }
@@ -190,18 +188,16 @@ class VoiceNoteMediaItemFactory {
   }
 
   private static MediaItem cloneMediaItem(MediaItem source, String mediaId, Uri uri) {
-    MediaDescriptionCompat description = source.playbackProperties != null ? (MediaDescriptionCompat) source.playbackProperties.tag : null;
+    Bundle requestExtras = source.requestMetadata.extras;
     return source.buildUpon()
                  .setMediaId(mediaId)
                  .setUri(uri)
-                 .setTag(
-                     description != null ?
-                     new MediaDescriptionCompat.Builder()
+                 .setMediaMetadata(source.mediaMetadata)
+                 .setRequestMetadata(
+                     new MediaItem.RequestMetadata.Builder()
                          .setMediaUri(uri)
-                         .setTitle(description.getTitle())
-                         .setSubtitle(description.getSubtitle())
-                         .setExtras(description.getExtras())
-                         .build() : null)
+                         .setExtras(requestExtras)
+                         .build())
                  .build();
   }
 }

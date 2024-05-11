@@ -20,6 +20,7 @@ import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
 import android.content.res.Resources;
+import android.os.Build;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.LayoutInflater;
@@ -37,13 +38,16 @@ import androidx.annotation.IdRes;
 import androidx.annotation.LayoutRes;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.Px;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.appcompat.view.ContextThemeWrapper;
+import androidx.core.view.ViewCompat;
+import androidx.core.view.WindowInsetsCompat;
 import androidx.interpolator.view.animation.FastOutSlowInInterpolator;
 import androidx.lifecycle.Lifecycle;
 
-import org.thoughtcrime.securesms.util.concurrent.ListenableFuture;
-import org.thoughtcrime.securesms.util.concurrent.SettableFuture;
+import org.signal.core.util.concurrent.ListenableFuture;
+import org.signal.core.util.concurrent.SettableFuture;
 import org.thoughtcrime.securesms.util.views.Stub;
 
 public final class ViewUtil {
@@ -51,18 +55,17 @@ public final class ViewUtil {
   private ViewUtil() {
   }
 
-  public static void focusAndMoveCursorToEndAndOpenKeyboard(@NonNull EditText input) {
-    input.requestFocus();
+  public static void setMinimumHeight(@NonNull View view, @Px int minimumHeight) {
+    if (view.getMinimumHeight() != minimumHeight) {
+      view.setMinimumHeight(minimumHeight);
+    }
+  }
 
+  public static void focusAndMoveCursorToEndAndOpenKeyboard(@NonNull EditText input) {
     int numberLength = input.getText().length();
     input.setSelection(numberLength, numberLength);
 
-    InputMethodManager imm = (InputMethodManager) input.getContext().getSystemService(Context.INPUT_METHOD_SERVICE);
-    imm.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
-
-    if (!imm.isAcceptingText()) {
-      imm.toggleSoftInput(InputMethodManager.SHOW_IMPLICIT, InputMethodManager.HIDE_IMPLICIT_ONLY);
-    }
+    focusAndShowKeyboard(input);
   }
 
   public static void focusAndShowKeyboard(@NonNull View view) {
@@ -97,6 +100,10 @@ public final class ViewUtil {
   }
 
   public static <T extends View> Stub<T> findStubById(@NonNull Activity parent, @IdRes int resId) {
+    return new Stub<>(parent.findViewById(resId));
+  }
+
+  public static <T extends View> Stub<T> findStubById(@NonNull View parent, @IdRes int resId) {
     return new Stub<>(parent.findViewById(resId));
   }
 
@@ -254,6 +261,10 @@ public final class ViewUtil {
     return ((ViewGroup.MarginLayoutParams) view.getLayoutParams()).topMargin;
   }
 
+  public static int getBottomMargin(@NonNull View view) {
+    return ((ViewGroup.MarginLayoutParams) view.getLayoutParams()).bottomMargin;
+  }
+
   public static void setLeftMargin(@NonNull View view, int margin) {
     if (isLtr(view)) {
       ((ViewGroup.MarginLayoutParams) view.getLayoutParams()).leftMargin = margin;
@@ -274,14 +285,41 @@ public final class ViewUtil {
     view.requestLayout();
   }
 
-  public static void setTopMargin(@NonNull View view, int margin) {
-    ((ViewGroup.MarginLayoutParams) view.getLayoutParams()).topMargin = margin;
-    view.requestLayout();
+  public static void setTopMargin(@NonNull View view, @Px int margin) {
+    setTopMargin(view, margin, true);
   }
 
-  public static void setBottomMargin(@NonNull View view, int margin) {
+  /**
+   * Sets the top margin of the view and optionally requests a new layout pass.
+   *
+   * @param view            The view to set the margin on
+   * @param margin          The margin to set
+   * @param requestLayout   Whether requestLayout should be invoked on the view
+   */
+  public static void setTopMargin(@NonNull View view, @Px int margin, boolean requestLayout) {
+    ((ViewGroup.MarginLayoutParams) view.getLayoutParams()).topMargin = margin;
+
+    if (requestLayout) {
+      view.requestLayout();
+    }
+  }
+
+  public static void setBottomMargin(@NonNull View view, @Px int margin) {
+    setBottomMargin(view, margin, true);
+  }
+
+  /**
+   * Sets the bottom margin of the view and optionally requests a new layout pass.
+   *
+   * @param view            The view to set the margin on
+   * @param margin          The margin to set
+   * @param requestLayout   Whether requestLayout should be invoked on the view
+   */
+  public static void setBottomMargin(@NonNull View view, @Px int margin, boolean requestLayout) {
     ((ViewGroup.MarginLayoutParams) view.getLayoutParams()).bottomMargin = margin;
-    view.requestLayout();
+    if (requestLayout) {
+      view.requestLayout();
+    }
   }
 
   public static int getWidth(@NonNull View view) {
@@ -329,12 +367,31 @@ public final class ViewUtil {
   }
 
   public static int getStatusBarHeight(@NonNull View view) {
-    int result = 0;
-    int resourceId = view.getResources().getIdentifier("status_bar_height", "dimen", "android");
-    if (resourceId > 0) {
-      result = view.getResources().getDimensionPixelSize(resourceId);
+    final WindowInsetsCompat rootWindowInsets = ViewCompat.getRootWindowInsets(view);
+    if (Build.VERSION.SDK_INT > 29 && rootWindowInsets != null) {
+      return rootWindowInsets.getInsets(WindowInsetsCompat.Type.statusBars()).top;
+    } else {
+      int result     = 0;
+      int resourceId = view.getResources().getIdentifier("status_bar_height", "dimen", "android");
+      if (resourceId > 0) {
+        result = view.getResources().getDimensionPixelSize(resourceId);
+      }
+      return result;
     }
-    return result;
+  }
+
+  public static int getNavigationBarHeight(@NonNull View view) {
+    final WindowInsetsCompat rootWindowInsets = ViewCompat.getRootWindowInsets(view);
+    if (Build.VERSION.SDK_INT > 29 && rootWindowInsets != null) {
+      return rootWindowInsets.getInsets(WindowInsetsCompat.Type.navigationBars()).bottom;
+    } else {
+      int result     = 0;
+      int resourceId = view.getResources().getIdentifier("navigation_bar_height", "dimen", "android");
+      if (resourceId > 0) {
+        result = view.getResources().getDimensionPixelSize(resourceId);
+      }
+      return result;
+    }
   }
 
   public static void hideKeyboard(@NonNull Context context, @NonNull View view) {

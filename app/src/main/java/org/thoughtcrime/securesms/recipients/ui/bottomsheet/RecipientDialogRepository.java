@@ -8,10 +8,10 @@ import androidx.core.util.Consumer;
 
 import org.signal.core.util.concurrent.SignalExecutors;
 import org.signal.core.util.logging.Log;
-import org.thoughtcrime.securesms.contacts.sync.DirectoryHelper;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.GroupDatabase;
-import org.thoughtcrime.securesms.database.IdentityDatabase;
+import org.thoughtcrime.securesms.contacts.sync.ContactDiscovery;
+import org.thoughtcrime.securesms.database.GroupTable;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.database.model.GroupRecord;
 import org.thoughtcrime.securesms.database.model.IdentityRecord;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.groups.GroupChangeException;
@@ -21,7 +21,7 @@ import org.thoughtcrime.securesms.groups.ui.GroupChangeErrorCallback;
 import org.thoughtcrime.securesms.groups.ui.GroupChangeFailureReason;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.recipients.RecipientId;
-import org.thoughtcrime.securesms.util.concurrent.SimpleTask;
+import org.signal.core.util.concurrent.SimpleTask;
 
 import java.io.IOException;
 import java.util.ArrayList;
@@ -55,7 +55,7 @@ final class RecipientDialogRepository {
 
   void getIdentity(@NonNull Consumer<IdentityRecord> callback) {
     SignalExecutors.BOUNDED.execute(
-      () -> callback.accept(ApplicationDependencies.getIdentityStore().getIdentityRecord(recipientId).orNull()));
+      () -> callback.accept(ApplicationDependencies.getProtocolStore().aci().identities().getIdentityRecord(recipientId).orElse(null)));
   }
 
   void getRecipient(@NonNull RecipientCallback recipientCallback) {
@@ -67,7 +67,7 @@ final class RecipientDialogRepository {
   void refreshRecipient() {
     SignalExecutors.UNBOUNDED.execute(() -> {
       try {
-        DirectoryHelper.refreshDirectoryFor(context, Recipient.resolved(recipientId), false);
+        ContactDiscovery.refresh(context, Recipient.resolved(recipientId), false);
       } catch (IOException e) {
         Log.w(TAG, "Failed to refresh user after adding to contacts.");
       }
@@ -78,7 +78,7 @@ final class RecipientDialogRepository {
     SimpleTask.run(SignalExecutors.UNBOUNDED,
                    () -> {
                      try {
-                       GroupManager.ejectFromGroup(context, Objects.requireNonNull(groupId).requireV2(), Recipient.resolved(recipientId));
+                       GroupManager.ejectAndBanFromGroup(context, Objects.requireNonNull(groupId).requireV2(), Recipient.resolved(recipientId));
                        return true;
                      } catch (GroupChangeException | IOException e) {
                        Log.w(TAG, e);
@@ -107,11 +107,11 @@ final class RecipientDialogRepository {
   void getGroupMembership(@NonNull Consumer<List<RecipientId>> onComplete) {
     SimpleTask.run(SignalExecutors.UNBOUNDED,
                    () -> {
-                     GroupDatabase                   groupDatabase   = DatabaseFactory.getGroupDatabase(context);
-                     List<GroupDatabase.GroupRecord> groupRecords    = groupDatabase.getPushGroupsContainingMember(recipientId);
-                     ArrayList<RecipientId>          groupRecipients = new ArrayList<>(groupRecords.size());
+                     GroupTable             groupDatabase   = SignalDatabase.groups();
+                     List<GroupRecord>      groupRecords    = groupDatabase.getPushGroupsContainingMember(recipientId);
+                     ArrayList<RecipientId> groupRecipients = new ArrayList<>(groupRecords.size());
 
-                     for (GroupDatabase.GroupRecord groupRecord : groupRecords) {
+                     for (GroupRecord groupRecord : groupRecords) {
                        groupRecipients.add(groupRecord.getRecipientId());
                      }
 
@@ -121,7 +121,7 @@ final class RecipientDialogRepository {
   }
 
   public void getActiveGroupCount(@NonNull Consumer<Integer> onComplete) {
-    SignalExecutors.BOUNDED.execute(() -> onComplete.accept(DatabaseFactory.getGroupDatabase(context).getActiveGroupCount()));
+    SignalExecutors.BOUNDED.execute(() -> onComplete.accept(SignalDatabase.groups().getActiveGroupCount()));
   }
 
   interface RecipientCallback {

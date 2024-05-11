@@ -20,9 +20,11 @@ import android.content.Context;
 import android.text.SpannableString;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.VisibleForTesting;
 
-import org.thoughtcrime.securesms.database.MmsSmsColumns;
-import org.thoughtcrime.securesms.database.SmsDatabase;
+import org.thoughtcrime.securesms.database.MessageTable;
+import org.thoughtcrime.securesms.database.MessageTable.Status;
+import org.thoughtcrime.securesms.database.MessageTypes;
 import org.thoughtcrime.securesms.recipients.Recipient;
 
 /**
@@ -37,30 +39,32 @@ public abstract class DisplayRecord {
 
   protected final long type;
 
-  private final Recipient  recipient;
+  private final Recipient  fromRecipient;
+  private final Recipient  toRecipient;
   private final long       dateSent;
   private final long       dateReceived;
   private final long       threadId;
   private final String     body;
   private final int        deliveryStatus;
-  private final int        deliveryReceiptCount;
-  private final int        readReceiptCount;
-  private final int        viewReceiptCount;
+  private final boolean    hasDeliveryReceipt;
+  private final boolean    hasReadReceipt;
+  private final boolean    viewed;
 
-  DisplayRecord(String body, Recipient recipient, long dateSent,
-                long dateReceived, long threadId, int deliveryStatus, int deliveryReceiptCount,
-                long type, int readReceiptCount, int viewReceiptCount)
+  DisplayRecord(String body, Recipient fromRecipient, Recipient toRecipient, long dateSent,
+                long dateReceived, long threadId, int deliveryStatus, boolean hasDeliveryReceipt,
+                long type, boolean hasReadReceipt, boolean viewed)
   {
     this.threadId             = threadId;
-    this.recipient            = recipient;
+    this.fromRecipient        = fromRecipient;
+    this.toRecipient          = toRecipient;
     this.dateSent             = dateSent;
     this.dateReceived         = dateReceived;
     this.type                 = type;
     this.body                 = body;
-    this.deliveryReceiptCount = deliveryReceiptCount;
-    this.readReceiptCount     = readReceiptCount;
+    this.hasDeliveryReceipt   = hasDeliveryReceipt;
+    this.hasReadReceipt       = hasReadReceipt;
+    this.viewed               = viewed;
     this.deliveryStatus       = deliveryStatus;
-    this.viewReceiptCount     = viewReceiptCount;
   }
 
   public @NonNull String getBody() {
@@ -69,29 +73,39 @@ public abstract class DisplayRecord {
 
   public boolean isFailed() {
     return
-        MmsSmsColumns.Types.isFailedMessageType(type)            ||
-        MmsSmsColumns.Types.isPendingSecureSmsFallbackType(type) ||
-        deliveryStatus >= SmsDatabase.Status.STATUS_FAILED;
+        MessageTypes.isFailedMessageType(type) ||
+        MessageTypes.isPendingSecureSmsFallbackType(type) ||
+        MessageTypes.isPendingInsecureSmsFallbackType(type) ||
+        deliveryStatus >= MessageTable.Status.STATUS_FAILED;
   }
 
   public boolean isPending() {
-    return MmsSmsColumns.Types.isPendingMessageType(type) &&
-           !MmsSmsColumns.Types.isIdentityVerified(type)  &&
-           !MmsSmsColumns.Types.isIdentityDefault(type);
+    return MessageTypes.isPendingMessageType(type) &&
+           !MessageTypes.isIdentityVerified(type) &&
+           !MessageTypes.isIdentityDefault(type);
+  }
+
+  @VisibleForTesting
+  public long getType() {
+    return type;
   }
 
   public boolean isSent() {
-    return MmsSmsColumns.Types.isSentType(type);
+    return MessageTypes.isSentType(type);
   }
 
   public boolean isOutgoing() {
-    return MmsSmsColumns.Types.isOutgoingMessageType(type);
+    return MessageTypes.isOutgoingMessageType(type);
   }
 
   public abstract SpannableString getDisplayBody(@NonNull Context context);
 
-  public Recipient getRecipient() {
-    return recipient.live().get();
+  public Recipient getFromRecipient() {
+    return fromRecipient.live().get();
+  }
+
+  public Recipient getToRecipient() {
+    return toRecipient.live().get();
   }
 
   public long getDateSent() {
@@ -107,23 +121,23 @@ public abstract class DisplayRecord {
   }
 
   public boolean isKeyExchange() {
-    return SmsDatabase.Types.isKeyExchangeType(type);
+    return MessageTypes.isKeyExchangeType(type);
   }
 
   public boolean isEndSession() {
-    return SmsDatabase.Types.isEndSessionType(type);
+    return MessageTypes.isEndSessionType(type);
   }
 
   public boolean isGroupUpdate() {
-    return SmsDatabase.Types.isGroupUpdate(type);
+    return MessageTypes.isGroupUpdate(type);
   }
 
   public boolean isGroupV2() {
-    return SmsDatabase.Types.isGroupV2(type);
+    return MessageTypes.isGroupV2(type);
   }
 
   public boolean isGroupQuit() {
-    return SmsDatabase.Types.isGroupQuit(type);
+    return MessageTypes.isGroupQuit(type);
   }
 
   public boolean isGroupAction() {
@@ -131,94 +145,103 @@ public abstract class DisplayRecord {
   }
 
   public boolean isExpirationTimerUpdate() {
-    return SmsDatabase.Types.isExpirationTimerUpdate(type);
+    return MessageTypes.isExpirationTimerUpdate(type);
   }
 
   public boolean isCallLog() {
-    return SmsDatabase.Types.isCallLog(type);
+    return MessageTypes.isCallLog(type);
   }
 
   public boolean isJoined() {
-    return SmsDatabase.Types.isJoinedType(type);
+    return MessageTypes.isJoinedType(type);
   }
 
   public boolean isIncomingAudioCall() {
-    return SmsDatabase.Types.isIncomingAudioCall(type);
+    return MessageTypes.isIncomingAudioCall(type);
   }
 
   public boolean isIncomingVideoCall() {
-    return SmsDatabase.Types.isIncomingVideoCall(type);
+    return MessageTypes.isIncomingVideoCall(type);
   }
 
   public boolean isOutgoingAudioCall() {
-    return SmsDatabase.Types.isOutgoingAudioCall(type);
+    return MessageTypes.isOutgoingAudioCall(type);
   }
 
   public boolean isOutgoingVideoCall() {
-    return SmsDatabase.Types.isOutgoingVideoCall(type);
+    return MessageTypes.isOutgoingVideoCall(type);
   }
 
   public final boolean isMissedAudioCall() {
-    return SmsDatabase.Types.isMissedAudioCall(type);
+    return MessageTypes.isMissedAudioCall(type);
   }
 
   public final boolean isMissedVideoCall() {
-    return SmsDatabase.Types.isMissedVideoCall(type);
+    return MessageTypes.isMissedVideoCall(type);
   }
 
   public final boolean isGroupCall() {
-    return SmsDatabase.Types.isGroupCall(type);
+    return MessageTypes.isGroupCall(type);
   }
 
   public boolean isVerificationStatusChange() {
-    return SmsDatabase.Types.isIdentityDefault(type) || SmsDatabase.Types.isIdentityVerified(type);
+    return MessageTypes.isIdentityDefault(type) || MessageTypes.isIdentityVerified(type);
   }
 
   public boolean isProfileChange() {
-    return SmsDatabase.Types.isProfileChange(type);
+    return MessageTypes.isProfileChange(type);
   }
 
   public boolean isChangeNumber() {
-    return SmsDatabase.Types.isChangeNumber(type);
+    return MessageTypes.isChangeNumber(type);
+  }
+
+  public boolean isBoostRequest() {
+    return MessageTypes.isBoostRequest(type);
   }
 
   public int getDeliveryStatus() {
     return deliveryStatus;
   }
 
-  public int getDeliveryReceiptCount() {
-    return deliveryReceiptCount;
+  public boolean hasDeliveryReceipt() {
+    return hasDeliveryReceipt;
   }
 
-  public int getReadReceiptCount() {
-    return readReceiptCount;
-  }
 
   /**
-   * For outgoing messages, this is incremented whenever a remote recipient has viewed our message
-   * and sends us a VIEWED receipt. For incoming messages, this is an indication of whether local
-   * user has viewed a piece of content.
-   *
-   * @return the number of times this has been viewed.
+   * Either the outgoing message has a viewed receipt, or an incoming message has been viewed by the local user.
    */
-  public int getViewedReceiptCount() {
-    return viewReceiptCount;
+  public boolean isViewed() {
+    return viewed;
   }
 
   public boolean isDelivered() {
-    return (deliveryStatus >= SmsDatabase.Status.STATUS_COMPLETE &&
-            deliveryStatus < SmsDatabase.Status.STATUS_PENDING) || deliveryReceiptCount > 0;
+    return (deliveryStatus >= Status.STATUS_COMPLETE &&
+            deliveryStatus < Status.STATUS_PENDING) || hasDeliveryReceipt;
   }
 
-  public boolean isRemoteViewed() {
-    return viewReceiptCount > 0;
+  public boolean hasReadReceipt() {
+    return hasReadReceipt;
   }
 
-  public boolean isRemoteRead() {
-    return readReceiptCount > 0;
+  public boolean isPaymentNotification() {
+    return MessageTypes.isPaymentsNotification(type);
   }
 
-  public boolean isPendingInsecureSmsFallback() {
-    return SmsDatabase.Types.isPendingInsecureSmsFallbackType(type);
+  public boolean isPaymentsRequestToActivate() {
+    return MessageTypes.isPaymentsRequestToActivate(type);
+  }
+
+  public boolean isPaymentsActivated() {
+    return MessageTypes.isPaymentsActivated(type);
+  }
+
+  public boolean isReportedSpam() {
+    return MessageTypes.isReportedSpam(type);
+  }
+
+  public boolean isMessageRequestAccepted() {
+    return MessageTypes.isMessageRequestAccepted(type);
   }
 }

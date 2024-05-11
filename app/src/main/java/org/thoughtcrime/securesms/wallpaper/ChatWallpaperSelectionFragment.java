@@ -13,11 +13,12 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.widget.Toolbar;
 import androidx.fragment.app.Fragment;
-import androidx.lifecycle.ViewModelProviders;
+import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.Navigation;
 import androidx.recyclerview.widget.RecyclerView;
 
 import org.thoughtcrime.securesms.R;
+import org.thoughtcrime.securesms.permissions.PermissionCompat;
 import org.thoughtcrime.securesms.permissions.Permissions;
 import org.thoughtcrime.securesms.wallpaper.crop.WallpaperImageSelectionActivity;
 
@@ -52,7 +53,7 @@ public class ChatWallpaperSelectionFragment extends Fragment {
 
     recyclerView.setAdapter(adapter);
 
-    viewModel = ViewModelProviders.of(requireActivity()).get(ChatWallpaperViewModel.class);
+    viewModel = new ViewModelProvider(requireActivity()).get(ChatWallpaperViewModel.class);
     viewModel.getWallpapers().observe(getViewLifecycleOwner(), adapter::submitList);
   }
 
@@ -76,7 +77,7 @@ public class ChatWallpaperSelectionFragment extends Fragment {
 
   private void askForPermissionIfNeededAndLaunchPhotoSelection() {
     Permissions.with(this)
-               .request(Manifest.permission.READ_EXTERNAL_STORAGE)
+               .request(PermissionCompat.forImages())
                .ifNecessary()
                .onAllGranted(() -> {
                  startActivityForResult(WallpaperImageSelectionActivity.getIntent(requireContext(), viewModel.getRecipientId()), CHOOSE_WALLPAPER);

@@ -19,11 +19,11 @@ package org.thoughtcrime.securesms.crypto;
 
 import org.signal.core.util.Conversions;
 import org.signal.core.util.logging.Log;
-import org.thoughtcrime.securesms.util.Hex;
+import org.signal.core.util.Hex;
+import org.signal.libsignal.protocol.InvalidKeyException;
+import org.signal.libsignal.protocol.ecc.Curve;
+import org.signal.libsignal.protocol.ecc.ECPublicKey;
 import org.thoughtcrime.securesms.util.Util;
-import org.whispersystems.libsignal.InvalidKeyException;
-import org.whispersystems.libsignal.ecc.Curve;
-import org.whispersystems.libsignal.ecc.ECPublicKey;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -36,13 +36,6 @@ public class PublicKey {
 
   private final ECPublicKey publicKey;
   private int id;
-	
-  public PublicKey(PublicKey publicKey) {
-    this.id        = publicKey.id;
-		
-    // FIXME :: This not strictly an accurate copy constructor.
-    this.publicKey = publicKey.publicKey;
-  }
 	
   public PublicKey(int id, ECPublicKey publicKey) {
     this.publicKey = publicKey;
@@ -59,10 +52,6 @@ public class PublicKey {
     this.publicKey = Curve.decodePoint(bytes, offset + 3);
   }
 
-  public PublicKey(byte[] bytes) throws InvalidKeyException {
-    this(bytes, 0);
-  }
-
   public int getType() {
     return publicKey.getType();
   }
@@ -77,20 +66,6 @@ public class PublicKey {
 	
   public ECPublicKey getKey() {
     return publicKey;
-  }
-	
-  public String getFingerprint() {
-    return Hex.toString(getFingerprintBytes());
-  }
-	
-  public byte[] getFingerprintBytes() {
-    try {
-      MessageDigest md = MessageDigest.getInstance("SHA-1");
-      return md.digest(serialize());
-    } catch (NoSuchAlgorithmException nsae) {
-      Log.w(TAG, "LocalKeyPair", nsae);
-      throw new IllegalArgumentException("SHA-1 isn't supported!");
-    }
   }
 	
   public byte[] serialize() {

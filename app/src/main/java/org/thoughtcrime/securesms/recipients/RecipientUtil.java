@@ -9,34 +9,46 @@ import androidx.annotation.WorkerThread;
 import com.annimon.stream.Stream;
 
 import org.signal.core.util.logging.Log;
-import org.thoughtcrime.securesms.contacts.sync.DirectoryHelper;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.GroupDatabase;
-import org.thoughtcrime.securesms.database.RecipientDatabase.RegisteredState;
-import org.thoughtcrime.securesms.database.ThreadDatabase;
+import org.thoughtcrime.securesms.contacts.sync.ContactDiscovery;
+import org.thoughtcrime.securesms.database.GroupTable;
+import org.thoughtcrime.securesms.database.RecipientTable.RegisteredState;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.database.ThreadTable;
+import org.thoughtcrime.securesms.database.model.GroupRecord;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.groups.GroupChangeBusyException;
 import org.thoughtcrime.securesms.groups.GroupChangeException;
 import org.thoughtcrime.securesms.groups.GroupChangeFailedException;
 import org.thoughtcrime.securesms.groups.GroupManager;
 import org.thoughtcrime.securesms.jobs.MultiDeviceBlockedUpdateJob;
-import org.thoughtcrime.securesms.jobs.MultiDeviceMessageRequestResponseJob;
+import org.thoughtcrime.securesms.jobs.RefreshOwnProfileJob;
 import org.thoughtcrime.securesms.jobs.RotateProfileKeyJob;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
-import org.thoughtcrime.securesms.mms.OutgoingExpirationUpdateMessage;
+import org.thoughtcrime.securesms.mms.OutgoingMessage;
 import org.thoughtcrime.securesms.sms.MessageSender;
 import org.thoughtcrime.securesms.storage.StorageSyncHelper;
-import org.whispersystems.libsignal.util.guava.Optional;
+import org.whispersystems.signalservice.api.push.ServiceId;
 import org.whispersystems.signalservice.api.push.SignalServiceAddress;
 import org.whispersystems.signalservice.api.push.exceptions.NotFoundException;
 
 import java.io.IOException;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 
 public class RecipientUtil {
 
   private static final String TAG = Log.tag(RecipientUtil.class);
+
+  /**
+   * This method will do it's best to get a {@link ServiceId} for the provided recipient. This includes performing
+   * a possible network request if no ServiceId is available. If the request to get a ServiceId fails or the user is
+   * not registered, an IOException is thrown.
+   */
+  @WorkerThread
+  public static @NonNull ServiceId getOrFetchServiceId(@NonNull Context context, @NonNull Recipient recipient) throws IOException {
+    return toSignalServiceAddress(context, recipient).getServiceId();
+  }
 
   /**
    * This method will do it's best to craft a fully-populated {@link SignalServiceAddress} based on
@@ -49,20 +61,20 @@ public class RecipientUtil {
   {
     recipient = recipient.resolve();
 
-    if (!recipient.getAci().isPresent() && !recipient.getE164().isPresent()) {
+    if (!recipient.getServiceId().isPresent() && !recipient.getE164().isPresent()) {
       throw new AssertionError(recipient.getId() + " - No UUID or phone number!");
     }
 
-    if (!recipient.getAci().isPresent()) {
+    if (!recipient.getServiceId().isPresent()) {
       Log.i(TAG, recipient.getId() + " is missing a UUID...");
-      RegisteredState state = DirectoryHelper.refreshDirectoryFor(context, recipient, false);
+      RegisteredState state = ContactDiscovery.refresh(context, recipient, false);
 
       recipient = Recipient.resolved(recipient.getId());
       Log.i(TAG, "Successfully performed a UUID fetch for " + recipient.getId() + ". Registered: " + state);
     }
 
-    if (recipient.hasAci()) {
-      return new SignalServiceAddress(recipient.requireAci(), Optional.fromNullable(recipient.resolve().getE164().orNull()));
+    if (recipient.getHasServiceId()) {
+      return new SignalServiceAddress(recipient.requireServiceId(), Optional.ofNullable(recipient.resolve().getE164().orElse(null)));
     } else {
       throw new NotFoundException(recipient.getId() + " is not registered!");
     }
@@ -81,7 +93,7 @@ public class RecipientUtil {
 
     return Stream.of(recipients)
                  .map(Recipient::resolve)
-                 .map(r -> new SignalServiceAddress(r.requireAci(), r.getE164().orNull()))
+                 .map(r -> new SignalServiceAddress(r.requireServiceId(), r.getE164().orElse(null)))
                  .toList();
   }
 
@@ -93,11 +105,11 @@ public class RecipientUtil {
   {
     List<Recipient> recipientsWithoutUuids = Stream.of(recipients)
                                                    .map(Recipient::resolve)
-                                                   .filterNot(Recipient::hasAci)
+                                                   .filterNot(Recipient::getHasServiceId)
                                                    .toList();
 
     if (recipientsWithoutUuids.size() > 0) {
-      DirectoryHelper.refreshDirectoryFor(context, recipientsWithoutUuids, false);
+      ContactDiscovery.refresh(context, recipientsWithoutUuids, false);
 
       if (recipients.stream().map(Recipient::resolve).anyMatch(Recipient::isUnregistered)) {
         throw new NotFoundException("1 or more recipients are not registered!");
@@ -117,6 +129,7 @@ public class RecipientUtil {
   public static List<Recipient> getEligibleForSending(@NonNull List<Recipient> recipients) {
     return Stream.of(recipients)
                  .filter(r -> r.getRegistered() != RegisteredState.NOT_REGISTERED)
+                 .filter(r -> !r.isBlocked())
                  .toList();
   }
 
@@ -149,6 +162,7 @@ public class RecipientUtil {
     if (!isBlockable(recipient)) {
       throw new AssertionError("Recipient is not blockable!");
     }
+    Log.w(TAG, "Blocking " + recipient.getId() + " (group: " + recipient.isGroup() + ")");
 
     recipient = recipient.resolve();
 
@@ -156,11 +170,14 @@ public class RecipientUtil {
       GroupManager.leaveGroupFromBlockOrMessageRequest(context, recipient.getGroupId().get().requirePush());
     }
 
-    DatabaseFactory.getRecipientDatabase(context).setBlocked(recipient.getId(), true);
+    SignalDatabase.recipients().setBlocked(recipient.getId(), true);
 
-    if (recipient.isSystemContact() || recipient.isProfileSharing() || isProfileSharedViaGroup(context, recipient)) {
-      ApplicationDependencies.getJobManager().add(new RotateProfileKeyJob());
-      DatabaseFactory.getRecipientDatabase(context).setProfileSharing(recipient.getId(), false);
+    if (recipient.isSystemContact() || recipient.isProfileSharing() || isProfileSharedViaGroup(recipient)) {
+      SignalDatabase.recipients().setProfileSharing(recipient.getId(), false);
+
+      ApplicationDependencies.getJobManager().startChain(new RefreshOwnProfileJob())
+                                             .then(new RotateProfileKeyJob())
+                                             .enqueue();
     }
 
     ApplicationDependencies.getJobManager().add(new MultiDeviceBlockedUpdateJob());
@@ -168,19 +185,48 @@ public class RecipientUtil {
   }
 
   @WorkerThread
-  public static void unblock(@NonNull Context context, @NonNull Recipient recipient) {
+  public static void unblock(@NonNull Recipient recipient) {
     if (!isBlockable(recipient)) {
       throw new AssertionError("Recipient is not blockable!");
     }
+    Log.i(TAG, "Unblocking " + recipient.getId() + " (group: " + recipient.isGroup() + ")", new Throwable());
 
-    DatabaseFactory.getRecipientDatabase(context).setBlocked(recipient.getId(), false);
-    DatabaseFactory.getRecipientDatabase(context).setProfileSharing(recipient.getId(), true);
+    SignalDatabase.recipients().setBlocked(recipient.getId(), false);
+    SignalDatabase.recipients().setProfileSharing(recipient.getId(), true);
     ApplicationDependencies.getJobManager().add(new MultiDeviceBlockedUpdateJob());
     StorageSyncHelper.scheduleSyncForDataChange();
+  }
 
-    if (recipient.hasServiceIdentifier()) {
-      ApplicationDependencies.getJobManager().add(MultiDeviceMessageRequestResponseJob.forAccept(recipient.getId()));
+  @WorkerThread
+  public static Recipient.HiddenState getRecipientHiddenState(long threadId) {
+    if (threadId < 0) {
+      return Recipient.HiddenState.NOT_HIDDEN;
     }
+
+    ThreadTable threadTable     = SignalDatabase.threads();
+    Recipient   threadRecipient = threadTable.getRecipientForThreadId(threadId);
+
+    if (threadRecipient == null) {
+      return Recipient.HiddenState.NOT_HIDDEN;
+    }
+
+    return threadRecipient.getHiddenState();
+  }
+
+  @WorkerThread
+  public static boolean isRecipientHidden(long threadId) {
+    if (threadId < 0) {
+      return false;
+    }
+
+    ThreadTable threadTable     = SignalDatabase.threads();
+    Recipient   threadRecipient = threadTable.getRecipientForThreadId(threadId);
+
+    if (threadRecipient == null) {
+      return false;
+    }
+
+    return threadRecipient.isHidden();
   }
 
   /**
@@ -196,14 +242,14 @@ public class RecipientUtil {
       return true;
     }
 
-    ThreadDatabase threadDatabase  = DatabaseFactory.getThreadDatabase(context);
-    Recipient      threadRecipient = threadDatabase.getRecipientForThreadId(threadId);
+    ThreadTable threadTable     = SignalDatabase.threads();
+    Recipient   threadRecipient = threadTable.getRecipientForThreadId(threadId);
 
     if (threadRecipient == null) {
       return true;
     }
 
-    return isMessageRequestAccepted(context, threadId, threadRecipient);
+    return isMessageRequestAccepted(threadId, threadRecipient);
   }
 
   /**
@@ -215,8 +261,8 @@ public class RecipientUtil {
       return true;
     }
 
-    Long threadId = DatabaseFactory.getThreadDatabase(context).getThreadIdFor(threadRecipient.getId());
-    return isMessageRequestAccepted(context, threadId, threadRecipient);
+    Long threadId = SignalDatabase.threads().getThreadIdFor(threadRecipient.getId());
+    return isMessageRequestAccepted(threadId, threadRecipient);
   }
 
   /**
@@ -224,40 +270,26 @@ public class RecipientUtil {
    * is more likely to return false.
    */
   @WorkerThread
-  public static boolean isCallRequestAccepted(@NonNull Context context, @Nullable Recipient threadRecipient) {
+  public static boolean isCallRequestAccepted(@Nullable Recipient threadRecipient) {
     if (threadRecipient == null) {
       return true;
     }
 
-    Long threadId = DatabaseFactory.getThreadDatabase(context).getThreadIdFor(threadRecipient.getId());
-    return isCallRequestAccepted(context, threadId, threadRecipient);
-  }
-
-  /**
-   * @return True if a conversation existed before we enabled message requests, otherwise false.
-   */
-  @WorkerThread
-  public static boolean isPreMessageRequestThread(@NonNull Context context, @Nullable Long threadId) {
-    long beforeTime = SignalStore.misc().getMessageRequestEnableTime();
-    return threadId != null && DatabaseFactory.getMmsSmsDatabase(context).getConversationCount(threadId, beforeTime) > 0;
+    Long threadId = SignalDatabase.threads().getThreadIdFor(threadRecipient.getId());
+    return isCallRequestAccepted(threadId, threadRecipient);
   }
 
   @WorkerThread
-  public static void shareProfileIfFirstSecureMessage(@NonNull Context context, @NonNull Recipient recipient) {
+  public static void shareProfileIfFirstSecureMessage(@NonNull Recipient recipient) {
     if (recipient.isProfileSharing()) {
       return;
     }
 
-    long threadId = DatabaseFactory.getThreadDatabase(context).getThreadIdIfExistsFor(recipient.getId());
+    long    threadId     = SignalDatabase.threads().getThreadIdIfExistsFor(recipient.getId());
+    boolean firstMessage = SignalDatabase.messages().getOutgoingSecureMessageCount(threadId) == 0;
 
-    if (isPreMessageRequestThread(context, threadId)) {
-      return;
-    }
-
-    boolean firstMessage = DatabaseFactory.getMmsSmsDatabase(context).getOutgoingSecureConversationCount(threadId) == 0;
-
-    if (firstMessage) {
-      DatabaseFactory.getRecipientDatabase(context).setProfileSharing(recipient.getId(), true);
+    if (firstMessage || recipient.isHidden()) {
+      SignalDatabase.recipients().setProfileSharing(recipient.getId(), true);
     }
   }
 
@@ -266,13 +298,13 @@ public class RecipientUtil {
            threadRecipient.isProfileSharing() ||
            threadRecipient.isSystemContact()  ||
            !threadRecipient.isRegistered()    ||
-           threadRecipient.isForceSmsSelection();
+           threadRecipient.isHidden();
   }
 
   /**
    * @return True if this recipient should already have your profile key, otherwise false.
    */
-  public static boolean shouldHaveProfileKey(@NonNull Context context, @NonNull Recipient recipient) {
+  public static boolean shouldHaveProfileKey(@NonNull Recipient recipient) {
     if (recipient.isBlocked()) {
       return false;
     }
@@ -280,10 +312,11 @@ public class RecipientUtil {
     if (recipient.isProfileSharing()) {
       return true;
     } else {
-      GroupDatabase groupDatabase = DatabaseFactory.getGroupDatabase(context);
+      GroupTable groupDatabase = SignalDatabase.groups();
       return groupDatabase.getPushGroupsContainingMember(recipient.getId())
                           .stream()
-                          .anyMatch(GroupDatabase.GroupRecord::isV2Group);
+                          .filter(GroupRecord::isV2Group)
+                          .anyMatch(group -> group.memberLevel(Recipient.self()).isInGroup());
 
     }
   }
@@ -295,58 +328,62 @@ public class RecipientUtil {
   @WorkerThread
   public static boolean setAndSendUniversalExpireTimerIfNecessary(@NonNull Context context, @NonNull Recipient recipient, long threadId) {
     int defaultTimer = SignalStore.settings().getUniversalExpireTimer();
-    if (defaultTimer == 0 || recipient.isGroup() || recipient.getExpiresInSeconds() != 0 || !recipient.isRegistered()) {
+    if (defaultTimer == 0 || recipient.isGroup() || recipient.isDistributionList() || recipient.getExpiresInSeconds() != 0 || !recipient.isRegistered()) {
       return false;
     }
 
-    if (threadId == -1 || !DatabaseFactory.getMmsSmsDatabase(context).hasMeaningfulMessage(threadId)) {
-      DatabaseFactory.getRecipientDatabase(context).setExpireMessages(recipient.getId(), defaultTimer);
-      OutgoingExpirationUpdateMessage outgoingMessage = new OutgoingExpirationUpdateMessage(recipient, System.currentTimeMillis(), defaultTimer * 1000L);
-      MessageSender.send(context, outgoingMessage, DatabaseFactory.getThreadDatabase(context).getOrCreateThreadIdFor(recipient), false, null, null);
+    if (threadId == -1 || SignalDatabase.messages().canSetUniversalTimer(threadId)) {
+      SignalDatabase.recipients().setExpireMessages(recipient.getId(), defaultTimer);
+      OutgoingMessage outgoingMessage = OutgoingMessage.expirationUpdateMessage(recipient, System.currentTimeMillis(), defaultTimer * 1000L);
+      MessageSender.send(context, outgoingMessage, SignalDatabase.threads().getOrCreateThreadIdFor(recipient), MessageSender.SendType.SIGNAL, null, null);
       return true;
     }
     return false;
   }
 
   @WorkerThread
-  public static boolean isMessageRequestAccepted(@NonNull Context context, @Nullable Long threadId, @Nullable Recipient threadRecipient) {
-    return threadRecipient == null                               ||
-           threadRecipient.isSelf()                              ||
-           threadRecipient.isProfileSharing()                    ||
-           threadRecipient.isSystemContact()                     ||
-           threadRecipient.isForceSmsSelection()                 ||
-           !threadRecipient.isRegistered()                       ||
-           hasSentMessageInThread(context, threadId)             ||
-           noSecureMessagesAndNoCallsInThread(context, threadId) ||
-           isPreMessageRequestThread(context, threadId);
+  public static boolean isMessageRequestAccepted(@Nullable Long threadId, @Nullable Recipient threadRecipient) {
+    return threadRecipient == null ||
+           threadRecipient.isSelf() ||
+           threadRecipient.isProfileSharing() ||
+           threadRecipient.isSystemContact() ||
+           !threadRecipient.isRegistered() ||
+           (!threadRecipient.isHidden() && (
+               hasSentMessageInThread(threadId) ||
+               noSecureMessagesAndNoCallsInThread(threadId))
+           );
   }
 
   @WorkerThread
-  private static boolean isCallRequestAccepted(@NonNull Context context, @Nullable Long threadId, @NonNull Recipient threadRecipient) {
-    return threadRecipient.isProfileSharing()            ||
-           threadRecipient.isSystemContact()             ||
-           hasSentMessageInThread(context, threadId)     ||
-           isPreMessageRequestThread(context, threadId);
+  private static boolean isCallRequestAccepted(@Nullable Long threadId, @NonNull Recipient threadRecipient) {
+    return threadRecipient.isProfileSharing() ||
+           threadRecipient.isSystemContact() ||
+           hasSentMessageInThread(threadId);
   }
 
   @WorkerThread
-  public static boolean hasSentMessageInThread(@NonNull Context context, @Nullable Long threadId) {
-    return threadId != null && DatabaseFactory.getMmsSmsDatabase(context).getOutgoingSecureConversationCount(threadId) != 0;
+  public static boolean hasSentMessageInThread(@Nullable Long threadId) {
+    return threadId != null && SignalDatabase.messages().getOutgoingSecureMessageCount(threadId) != 0;
+  }
+
+  public static boolean isSmsOnly(long threadId, @NonNull Recipient threadRecipient) {
+    return !threadRecipient.isRegistered() ||
+           noSecureMessagesAndNoCallsInThread(threadId);
   }
 
   @WorkerThread
-  private static boolean noSecureMessagesAndNoCallsInThread(@NonNull Context context, @Nullable Long threadId) {
+  private static boolean noSecureMessagesAndNoCallsInThread(@Nullable Long threadId) {
     if (threadId == null) {
       return true;
     }
 
-    return DatabaseFactory.getMmsSmsDatabase(context).getSecureConversationCount(threadId) == 0 &&
-           !DatabaseFactory.getThreadDatabase(context).hasReceivedAnyCallsSince(threadId, 0);
+    return SignalDatabase.messages().getSecureMessageCount(threadId) == 0 &&
+           !SignalDatabase.threads().hasReceivedAnyCallsSince(threadId, 0);
   }
 
   @WorkerThread
-  private static boolean isProfileSharedViaGroup(@NonNull Context context, @NonNull Recipient recipient) {
-    return Stream.of(DatabaseFactory.getGroupDatabase(context).getPushGroupsContainingMember(recipient.getId()))
+  private static boolean isProfileSharedViaGroup(@NonNull Recipient recipient) {
+    return Stream.of(SignalDatabase.groups().getPushGroupsContainingMember(recipient.getId()))
                  .anyMatch(group -> Recipient.resolved(group.getRecipientId()).isProfileSharing());
   }
 }

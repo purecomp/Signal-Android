@@ -8,7 +8,6 @@ import androidx.core.content.ContextCompat;
 
 import com.makeramen.roundedimageview.RoundedDrawable;
 
-import org.jetbrains.annotations.NotNull;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.conversation.colors.AvatarColor;
 
@@ -33,7 +32,7 @@ public class TransparentContactPhoto implements FallbackContactPhoto {
 
   @Override
   public Drawable asCallCard(@NonNull Context context) {
-    return ContextCompat.getDrawable(context, R.drawable.ic_contact_picture_large);
+    return ContextCompat.getDrawable(context, R.drawable.symbol_person_display_40);
   }
 
 }

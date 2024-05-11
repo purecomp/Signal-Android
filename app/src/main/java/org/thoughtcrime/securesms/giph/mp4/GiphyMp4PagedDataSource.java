@@ -14,11 +14,11 @@ import org.thoughtcrime.securesms.giph.model.GiphyImage;
 import org.thoughtcrime.securesms.giph.model.GiphyResponse;
 import org.thoughtcrime.securesms.net.ContentProxySelector;
 import org.thoughtcrime.securesms.util.JsonUtils;
-import org.whispersystems.libsignal.util.guava.Optional;
 
 import java.io.IOException;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Optional;
 
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -49,7 +49,7 @@ final class GiphyMp4PagedDataSource implements PagedDataSource<String, GiphyImag
   private final OkHttpClient client;
 
   GiphyMp4PagedDataSource(@Nullable String searchQuery) {
-    this.searchString = Optional.fromNullable(searchQuery).transform(String::trim).or("");
+    this.searchString = Optional.ofNullable(searchQuery).map(String::trim).orElse("");
     this.client       = ApplicationDependencies.getOkHttpClient().newBuilder().proxySelector(new ContentProxySelector()).build();
   }
 
@@ -66,7 +66,7 @@ final class GiphyMp4PagedDataSource implements PagedDataSource<String, GiphyImag
   }
 
   @Override
-  public @NonNull List<GiphyImage> load(int start, int length, @NonNull CancellationSignal cancellationSignal) {
+  public @NonNull List<GiphyImage> load(int start, int length, int totalSize, @NonNull CancellationSignal cancellationSignal) {
     try {
       Log.d(TAG, "Loading from " + start + " to " + (start + length));
       return new LinkedList<>(performFetch(start, length).getData());

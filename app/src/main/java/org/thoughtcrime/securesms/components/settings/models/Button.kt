@@ -6,14 +6,18 @@ import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.components.settings.DSLSettingsIcon
 import org.thoughtcrime.securesms.components.settings.DSLSettingsText
 import org.thoughtcrime.securesms.components.settings.PreferenceModel
-import org.thoughtcrime.securesms.util.MappingAdapter
-import org.thoughtcrime.securesms.util.MappingViewHolder
+import org.thoughtcrime.securesms.util.adapter.mapping.LayoutFactory
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingAdapter
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingViewHolder
 
 object Button {
 
   fun register(mappingAdapter: MappingAdapter) {
-    mappingAdapter.registerFactory(Model.Primary::class.java, MappingAdapter.LayoutFactory({ ViewHolder(it) as MappingViewHolder<Model.Primary> }, R.layout.dsl_button_primary))
-    mappingAdapter.registerFactory(Model.SecondaryNoOutline::class.java, MappingAdapter.LayoutFactory({ ViewHolder(it) as MappingViewHolder<Model.SecondaryNoOutline> }, R.layout.dsl_button_secondary))
+    mappingAdapter.registerFactory(Model.Primary::class.java, LayoutFactory({ ViewHolder(it) }, R.layout.dsl_button_primary))
+    mappingAdapter.registerFactory(Model.PrimaryWrapped::class.java, LayoutFactory({ ViewHolder(it) }, R.layout.dsl_button_primary_wrapped))
+    mappingAdapter.registerFactory(Model.Tonal::class.java, LayoutFactory({ ViewHolder(it) }, R.layout.dsl_button_tonal))
+    mappingAdapter.registerFactory(Model.TonalWrapped::class.java, LayoutFactory({ ViewHolder(it) }, R.layout.dsl_button_tonal_wrapped))
+    mappingAdapter.registerFactory(Model.SecondaryNoOutline::class.java, LayoutFactory({ ViewHolder(it) }, R.layout.dsl_button_secondary))
   }
 
   sealed class Model<T : Model<T>>(
@@ -26,12 +30,39 @@ object Button {
     icon = icon,
     isEnabled = isEnabled
   ) {
+    /**
+     * Large primary button with width set to match_parent
+     */
     class Primary(
       title: DSLSettingsText?,
       icon: DSLSettingsIcon?,
       isEnabled: Boolean,
       onClick: () -> Unit
     ) : Model<Primary>(title, icon, isEnabled, onClick)
+
+    /**
+     * Large primary button with width set to wrap_content
+     */
+    class PrimaryWrapped(
+      title: DSLSettingsText?,
+      icon: DSLSettingsIcon?,
+      isEnabled: Boolean,
+      onClick: () -> Unit
+    ) : Model<PrimaryWrapped>(title, icon, isEnabled, onClick)
+
+    class Tonal(
+      title: DSLSettingsText?,
+      icon: DSLSettingsIcon?,
+      isEnabled: Boolean,
+      onClick: () -> Unit
+    ) : Model<Tonal>(title, icon, isEnabled, onClick)
+
+    class TonalWrapped(
+      title: DSLSettingsText?,
+      icon: DSLSettingsIcon?,
+      isEnabled: Boolean,
+      onClick: () -> Unit
+    ) : Model<TonalWrapped>(title, icon, isEnabled, onClick)
 
     class SecondaryNoOutline(
       title: DSLSettingsText?,
@@ -41,11 +72,11 @@ object Button {
     ) : Model<SecondaryNoOutline>(title, icon, isEnabled, onClick)
   }
 
-  class ViewHolder(itemView: View) : MappingViewHolder<Model<*>>(itemView) {
+  class ViewHolder<T : Model<T>>(itemView: View) : MappingViewHolder<T>(itemView) {
 
-    private val button: MaterialButton = itemView as MaterialButton
+    private val button: MaterialButton = itemView.findViewById(R.id.button)
 
-    override fun bind(model: Model<*>) {
+    override fun bind(model: T) {
       button.text = model.title?.resolve(context)
       button.setOnClickListener {
         model.onClick()

@@ -5,7 +5,6 @@ import android.content.Intent;
 import android.content.res.Configuration;
 import android.os.Bundle;
 import android.view.View;
-import android.view.WindowManager;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.ActionBar;
@@ -18,7 +17,7 @@ import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.util.AppStartup;
 import org.thoughtcrime.securesms.util.ConfigurationUtil;
-import org.thoughtcrime.securesms.util.TextSecurePreferences;
+import org.thoughtcrime.securesms.util.WindowUtil;
 import org.thoughtcrime.securesms.util.dynamiclanguage.DynamicLanguageContextWrapper;
 
 import java.util.Objects;
@@ -42,7 +41,7 @@ public abstract class BaseActivity extends AppCompatActivity {
   @Override
   protected void onResume() {
     super.onResume();
-    initializeScreenshotSecurity();
+    WindowUtil.initializeScreenshotSecurity(this, getWindow());
   }
 
   @Override
@@ -62,14 +61,6 @@ public abstract class BaseActivity extends AppCompatActivity {
   protected void onDestroy() {
     logEvent("onDestroy()");
     super.onDestroy();
-  }
-
-  private void initializeScreenshotSecurity() {
-    if (TextSecurePreferences.isScreenSecurityEnabled(this)) {
-      getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
-    } else {
-      getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
-    }
   }
 
   protected void startActivitySceneTransition(Intent intent, View sharedView, String transitionName) {

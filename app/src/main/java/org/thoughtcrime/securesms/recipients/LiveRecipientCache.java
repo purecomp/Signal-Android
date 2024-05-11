@@ -1,30 +1,27 @@
 package org.thoughtcrime.securesms.recipients;
 
-import android.annotation.SuppressLint;
 import android.content.Context;
 import android.database.Cursor;
 
 import androidx.annotation.AnyThread;
 import androidx.annotation.NonNull;
-
-import net.zetetic.database.sqlcipher.SQLiteDatabase;
+import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 
 import org.signal.core.util.ThreadUtil;
 import org.signal.core.util.concurrent.SignalExecutors;
-import org.signal.core.util.concurrent.TracingExecutorService;
 import org.signal.core.util.logging.Log;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.RecipientDatabase;
-import org.thoughtcrime.securesms.database.RecipientDatabase.MissingRecipientException;
-import org.thoughtcrime.securesms.database.ThreadDatabase;
+import org.thoughtcrime.securesms.database.RecipientTable;
+import org.thoughtcrime.securesms.database.RecipientTable.MissingRecipientException;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.database.ThreadTable;
 import org.thoughtcrime.securesms.database.model.ThreadRecord;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
-import org.thoughtcrime.securesms.util.CursorUtil;
+import org.signal.core.util.CursorUtil;
 import org.thoughtcrime.securesms.util.LRUCache;
-import org.thoughtcrime.securesms.util.Stopwatch;
-import org.thoughtcrime.securesms.util.TextSecurePreferences;
+import org.signal.core.util.Stopwatch;
 import org.thoughtcrime.securesms.util.concurrent.FilteredExecutor;
-import org.whispersystems.signalservice.api.push.ACI;
+import org.whispersystems.signalservice.api.push.ServiceId.ACI;
 
 import java.util.ArrayList;
 import java.util.Collection;
@@ -43,25 +40,27 @@ public final class LiveRecipientCache {
   private static final int CONTACT_CACHE_WARM_MAX = 50;
 
   private final Context                         context;
-  private final RecipientDatabase               recipientDatabase;
+  private final RecipientTable                  recipientTable;
   private final Map<RecipientId, LiveRecipient> recipients;
   private final LiveRecipient                   unknown;
   private final Executor                        resolveExecutor;
-  private final SQLiteDatabase                  db;
 
   private final AtomicReference<RecipientId> localRecipientId;
   private final AtomicBoolean                warmedUp;
 
-  @SuppressLint("UseSparseArrays")
   public LiveRecipientCache(@NonNull Context context) {
-    this.context           = context.getApplicationContext();
-    this.recipientDatabase = DatabaseFactory.getRecipientDatabase(context);
-    this.recipients        = new LRUCache<>(CACHE_MAX);
+    this(context, new FilteredExecutor(SignalExecutors.newCachedBoundedExecutor("signal-recipients", ThreadUtil.PRIORITY_UI_BLOCKING_THREAD, 1, 4, 15), () -> !SignalDatabase.inTransaction()));
+  }
+
+  @VisibleForTesting
+  public LiveRecipientCache(@NonNull Context context, @NonNull Executor executor) {
+    this.context        = context.getApplicationContext();
+    this.recipientTable = SignalDatabase.recipients();
+    this.recipients     = new LRUCache<>(CACHE_MAX);
     this.warmedUp          = new AtomicBoolean(false);
     this.localRecipientId  = new AtomicReference<>(null);
     this.unknown           = new LiveRecipient(context, Recipient.UNKNOWN);
-    this.db                = DatabaseFactory.getInstance(context).getRawDatabase();
-    this.resolveExecutor   = ThreadUtil.trace(new FilteredExecutor(SignalExecutors.BOUNDED, () -> !db.inTransaction()));
+    this.resolveExecutor   = executor;
   }
 
   @AnyThread
@@ -75,7 +74,7 @@ public final class LiveRecipientCache {
       live = recipients.get(id);
 
       if (live == null) {
-        live = new LiveRecipient(context, new Recipient(id));
+        live = new LiveRecipient(context, RecipientCreator.forId(id));
         recipients.put(id, live);
         needsResolve = true;
       } else {
@@ -153,19 +152,25 @@ public final class LiveRecipientCache {
     }
 
     if (selfId == null) {
-      ACI    localAci  = TextSecurePreferences.getLocalAci(context);
-      String localE164 = TextSecurePreferences.getLocalNumber(context);
+      ACI    localAci  = SignalStore.account().getAci();
+      String localE164 = SignalStore.account().getE164();
 
-      if (localAci != null) {
-        selfId = recipientDatabase.getByAci(localAci).or(recipientDatabase.getByE164(localE164)).orNull();
-      } else if (localE164 != null) {
-        selfId = recipientDatabase.getByE164(localE164).orNull();
-      } else {
+      if (localAci == null && localE164 == null) {
         throw new IllegalStateException("Tried to call getSelf() before local data was set!");
       }
 
+      if (localAci != null) {
+        selfId = recipientTable.getByAci(localAci).orElse(null);
+      }
+
+      if (selfId == null && localE164 != null) {
+        selfId = recipientTable.getByE164(localE164).orElse(null);
+      }
+
       if (selfId == null) {
-        selfId = recipientDatabase.getAndPossiblyMerge(localAci, localE164, false);
+        Log.i(TAG, "Creating self for the first time.");
+        selfId = recipientTable.getAndPossiblyMerge(localAci, localE164);
+        recipientTable.updatePendingSelfData(selfId);
       }
 
       synchronized (localRecipientId) {
@@ -178,6 +183,28 @@ public final class LiveRecipientCache {
     return getLive(selfId).resolve();
   }
 
+  /** Can safely get self id. If used during early registration (backup), will return null as we don't know self yet. */
+  @Nullable RecipientId getSelfId() {
+    RecipientId selfId;
+
+    synchronized (localRecipientId) {
+      selfId = localRecipientId.get();
+    }
+
+    if (selfId != null) {
+      return selfId;
+    }
+
+    ACI    localAci  = SignalStore.account().getAci();
+    String localE164 = SignalStore.account().getE164();
+
+    if (localAci == null && localE164 == null) {
+      return null;
+    } else {
+      return getSelf().getId();
+    }
+  }
+
   @AnyThread
   public void warmUp() {
     if (warmedUp.getAndSet(true)) {
@@ -187,10 +214,10 @@ public final class LiveRecipientCache {
     Stopwatch stopwatch = new Stopwatch("recipient-warm-up");
 
     SignalExecutors.BOUNDED.execute(() -> {
-      ThreadDatabase  threadDatabase = DatabaseFactory.getThreadDatabase(context);
-      List<Recipient> recipients     = new ArrayList<>();
+      ThreadTable     threadTable = SignalDatabase.threads();
+      List<Recipient> recipients  = new ArrayList<>();
 
-      try (ThreadDatabase.Reader reader = threadDatabase.readerFor(threadDatabase.getRecentConversationList(THREAD_CACHE_WARM_MAX, false, false))) {
+      try (ThreadTable.Reader reader = threadTable.readerFor(threadTable.getRecentConversationList(THREAD_CACHE_WARM_MAX, false, false))) {
         int          i      = 0;
         ThreadRecord record = null;
 
@@ -205,11 +232,11 @@ public final class LiveRecipientCache {
 
       stopwatch.split("thread");
 
-      if (SignalStore.registrationValues().isRegistrationComplete()) {
-        try (Cursor cursor = DatabaseFactory.getRecipientDatabase(context).getNonGroupContacts(false)) {
+      if (SignalStore.registrationValues().isRegistrationComplete() && SignalStore.account().getAci() != null) {
+        try (Cursor cursor = SignalDatabase.recipients().getNonGroupContacts(false)) {
           int count = 0;
           while (cursor != null && cursor.moveToNext() && count < CONTACT_CACHE_WARM_MAX) {
-            RecipientId id = RecipientId.from(CursorUtil.requireLong(cursor, RecipientDatabase.ID));
+            RecipientId id = RecipientId.from(CursorUtil.requireLong(cursor, RecipientTable.ID));
             Recipient.resolved(id);
             count++;
           }
@@ -239,6 +266,6 @@ public final class LiveRecipientCache {
   }
 
   private boolean isValidForCache(@NonNull Recipient recipient) {
-    return !recipient.getId().isUnknown() && (recipient.hasServiceIdentifier() || recipient.getGroupId().isPresent() || recipient.hasSmsAddress());
+    return !recipient.getId().isUnknown() && (recipient.getHasServiceId() || recipient.getGroupId().isPresent() || recipient.getHasSmsAddress());
   }
 }

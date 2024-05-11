@@ -1,17 +1,14 @@
 package org.thoughtcrime.securesms.jobs;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
-import org.signal.zkgroup.profiles.ProfileKey;
+import org.signal.libsignal.zkgroup.profiles.ProfileKey;
 import org.thoughtcrime.securesms.crypto.ProfileKeyUtil;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.groups.GroupId;
-import org.thoughtcrime.securesms.jobmanager.Data;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.jobmanager.JsonJobData;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.recipients.Recipient;
-
-import java.util.List;
 
 public class RotateProfileKeyJob extends BaseJob {
 
@@ -29,8 +26,8 @@ public class RotateProfileKeyJob extends BaseJob {
   }
 
   @Override
-  public @NonNull Data serialize() {
-    return Data.EMPTY;
+  public @Nullable byte[] serialize() {
+    return null;
   }
 
   @Override
@@ -43,21 +40,7 @@ public class RotateProfileKeyJob extends BaseJob {
     ProfileKey newProfileKey = ProfileKeyUtil.createNew();
     Recipient  self          = Recipient.self();
 
-    DatabaseFactory.getRecipientDatabase(context).setProfileKey(self.getId(), newProfileKey);
-
-    ApplicationDependencies.getJobManager().add(new ProfileUploadJob());
-    ApplicationDependencies.getJobManager().add(new RefreshAttributesJob());
-    ApplicationDependencies.getJobManager().add(new MultiDeviceProfileKeyUpdateJob());
-
-    updateProfileKeyOnAllV2Groups();
-  }
-
-  private void updateProfileKeyOnAllV2Groups() {
-    List<GroupId.V2> allGv2Groups = DatabaseFactory.getGroupDatabase(context).getAllGroupV2Ids();
-
-    for (GroupId.V2 groupId : allGv2Groups) {
-      ApplicationDependencies.getJobManager().add(GroupV2UpdateSelfProfileKeyJob.withoutLimits(groupId));
-    }
+    SignalDatabase.recipients().setProfileKey(self.getId(), newProfileKey);
   }
 
   @Override
@@ -71,7 +54,7 @@ public class RotateProfileKeyJob extends BaseJob {
 
   public static final class Factory implements Job.Factory<RotateProfileKeyJob> {
     @Override
-    public @NonNull RotateProfileKeyJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull RotateProfileKeyJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
       return new RotateProfileKeyJob(parameters);
     }
   }

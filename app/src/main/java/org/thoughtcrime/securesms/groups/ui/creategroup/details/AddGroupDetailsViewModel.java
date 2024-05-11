@@ -16,10 +16,8 @@ import com.annimon.stream.Stream;
 import org.thoughtcrime.securesms.groups.ui.GroupMemberEntry;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.mediasend.Media;
-import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.recipients.RecipientId;
 import org.thoughtcrime.securesms.util.DefaultValueLiveData;
-import org.thoughtcrime.securesms.util.FeatureFlags;
 import org.thoughtcrime.securesms.util.SingleLiveEvent;
 import org.thoughtcrime.securesms.util.livedata.LiveDataUtil;
 
@@ -41,7 +39,6 @@ public final class AddGroupDetailsViewModel extends ViewModel {
   private final LiveData<Boolean>                                  isMms;
   private final LiveData<Boolean>                                  canSubmitForm;
   private final AddGroupDetailsRepository                          repository;
-  private final LiveData<List<Recipient>>                          nonGv2CapableMembers;
 
   private Media avatarMedia;
 
@@ -53,21 +50,9 @@ public final class AddGroupDetailsViewModel extends ViewModel {
     MutableLiveData<List<GroupMemberEntry.NewGroupCandidate>> initialMembers = new MutableLiveData<>();
     LiveData<Boolean>                                         isValidName    = Transformations.map(name, name -> !TextUtils.isEmpty(name));
 
-    members = LiveDataUtil.combineLatest(initialMembers, deleted, AddGroupDetailsViewModel::filterDeletedMembers);
-    isMms   = Transformations.map(members, AddGroupDetailsViewModel::isAnyForcedSms);
-
-    LiveData<List<GroupMemberEntry.NewGroupCandidate>> membersToCheckGv2CapabilityOf = LiveDataUtil.combineLatest(isMms, members, (forcedMms, memberList) -> {
-      if (SignalStore.internalValues().gv2DoNotCreateGv2Groups() || forcedMms) {
-        return Collections.emptyList();
-      } else {
-        return memberList;
-      }
-    });
-
-    nonGv2CapableMembers = LiveDataUtil.mapAsync(membersToCheckGv2CapabilityOf, memberList -> repository.checkCapabilities(Stream.of(memberList).map(newGroupCandidate -> newGroupCandidate.getMember().getId()).toList()));
-    canSubmitForm        = LiveDataUtil.combineLatest(LiveDataUtil.combineLatest(isMms, isValidName, (mms, validName) -> mms || validName),
-                                                      nonGv2CapableMembers,
-                                                      (canSubmit, nonGv2) -> canSubmit && nonGv2.isEmpty());
+    members       = LiveDataUtil.combineLatest(initialMembers, deleted, AddGroupDetailsViewModel::filterDeletedMembers);
+    isMms         = Transformations.map(members, AddGroupDetailsViewModel::isAnyForcedSms);
+    canSubmitForm = LiveDataUtil.combineLatest(isMms, isValidName, (mms, validName) -> mms || validName);
 
     repository.resolveMembers(recipientIds, initialMembers::postValue);
   }
@@ -90,10 +75,6 @@ public final class AddGroupDetailsViewModel extends ViewModel {
 
   @NonNull LiveData<Boolean> getIsMms() {
     return isMms;
-  }
-
-  @NonNull LiveData<List<Recipient>> getNonGv2CapableMembers() {
-    return nonGv2CapableMembers;
   }
 
   @NonNull LiveData<Integer> getDisappearingMessagesTimer() {
@@ -123,11 +104,10 @@ public final class AddGroupDetailsViewModel extends ViewModel {
     List<GroupMemberEntry.NewGroupCandidate> members           = Objects.requireNonNull(this.members.getValue());
     Set<RecipientId>                         memberIds         = Stream.of(members).map(member -> member.getMember().getId()).collect(Collectors.toSet());
     byte[]                                   avatarBytes       = avatar.getValue();
-    boolean                                  isGroupMms        = isMms.getValue() == Boolean.TRUE;
     String                                   groupName         = name.getValue();
     Integer                                  disappearingTimer = disappearingMessagesTimer.getValue();
 
-    if (!isGroupMms && TextUtils.isEmpty(groupName)) {
+    if (TextUtils.isEmpty(groupName)) {
       groupCreateResult.postValue(GroupCreateResult.error(GroupCreateResult.Error.Type.ERROR_INVALID_NAME));
       return;
     }
@@ -135,7 +115,6 @@ public final class AddGroupDetailsViewModel extends ViewModel {
     repository.createGroup(memberIds,
                            avatarBytes,
                            groupName,
-                           isGroupMms,
                            disappearingTimer,
                            groupCreateResult::postValue);
   }

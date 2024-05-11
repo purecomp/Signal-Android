@@ -3,7 +3,8 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
-    android:layout_height="match_parent">
+    android:layout_height="match_parent"
+    tools:viewBindingIgnore="true">
 
     <androidx.viewpager2.widget.ViewPager2
         android:id="@+id/media_pager"
@@ -13,19 +14,28 @@
     <androidx.constraintlayout.widget.ConstraintLayout
         android:id="@+id/controls"
         android:layout_width="match_parent"
-        android:layout_height="match_parent">
+        android:layout_height="match_parent"
+        android:clipChildren="false">
 
         <View
             android:id="@+id/controls_shade"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:alpha="0"
-            android:background="@color/transparent_black_80"
+            android:background="@color/signal_dark_colorSurface"
             android:visibility="gone"
             app:layout_constraintBottom_toBottomOf="parent"
-            app:layout_constraintTop_toTopOf="@id/add_a_message_barrier"
+            app:layout_constraintTop_toTopOf="@id/timeline_placeholder"
             tools:alpha="1"
+            tools:background="@color/black"
             tools:visibility="visible" />
+
+        <View
+            android:id="@+id/timeline_placeholder"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/video_timeline_height_collapsed"
+            android:background="@color/transparent"
+            app:layout_constraintBottom_toBottomOf="@id/timeline_guideline" />
 
         <org.thoughtcrime.securesms.components.emoji.SimpleEmojiTextView
             android:id="@+id/recipient"
@@ -42,9 +52,10 @@
             android:paddingEnd="14dp"
             android:paddingBottom="8dp"
             android:textAppearance="@style/TextAppearance.Signal.Body2"
-            android:textColor="@color/core_white"
+            android:textColor="@color/signal_dark_colorOnSurface"
             android:visibility="gone"
-            app:drawableStartCompat="@drawable/ic_arrow_right_16"
+            app:drawableStartCompat="@drawable/symbol_arrow_right_24"
+            app:drawableTint="@color/signal_dark_colorOnSurface"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintTop_toTopOf="parent"
             tools:alpha="1"
@@ -55,238 +66,245 @@
             android:id="@+id/selection_recycler"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
+            android:layout_marginBottom="15dp"
+            android:alpha="0"
+            android:clipToPadding="false"
+            android:orientation="horizontal"
             android:paddingStart="8dp"
             android:paddingEnd="8dp"
-            android:layout_marginBottom="2dp"
-            android:alpha="0"
-            android:orientation="horizontal"
             android:visibility="gone"
-            android:clipToPadding="false"
             app:layoutManager="androidx.recyclerview.widget.LinearLayoutManager"
             app:layout_constraintBottom_toTopOf="@id/controls_shade"
             tools:alpha="1"
             tools:listitem="@layout/v2_media_review_selected_item"
             tools:visibility="visible" />
 
-        <androidx.appcompat.widget.AppCompatImageView
+        <com.google.android.material.imageview.ShapeableImageView
             android:id="@+id/add_media"
             android:layout_width="48dp"
             android:layout_height="48dp"
             android:layout_marginStart="10dp"
-            android:layout_marginBottom="2dp"
+            android:layout_marginBottom="15dp"
             android:alpha="0"
-            android:background="?selectableItemBackgroundBorderless"
-            android:padding="6dp"
-            android:scaleType="fitCenter"
+            android:background="@drawable/media_gallery_button_background"
+            android:padding="4dp"
+            android:scaleType="centerInside"
             android:visibility="gone"
-            app:layout_constraintBottom_toTopOf="@+id/controls_shade"
+            app:layout_constraintBottom_toTopOf="@id/controls_shade"
             app:layout_constraintStart_toStartOf="parent"
-            app:srcCompat="@drawable/add_media"
+            app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.Signal.Circle"
+            app:srcCompat="@drawable/ic_add_media_22"
             tools:alpha="1"
             tools:visibility="visible" />
 
+        <org.thoughtcrime.securesms.components.emoji.EmojiTextView
+            android:id="@+id/add_a_message"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:layout_marginBottom="16dp"
+            android:alpha="0"
+            android:background="@drawable/rounded_rectangle_surface_variant_32"
+            android:ellipsize="end"
+            android:gravity="center_vertical"
+            android:maxLines="1"
+            android:minHeight="48dp"
+            android:paddingStart="48dp"
+            android:paddingEnd="48dp"
+            android:text="@string/MediaReviewFragment__add_a_message"
+            android:textAppearance="@style/Signal.Text.Body"
+            android:textColor="@color/signal_colorOnSurfaceVariant"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toStartOf="@id/send"
+            app:layout_constraintStart_toStartOf="parent"
+            tools:alpha="1" />
+
         <ViewSwitcher
             android:id="@+id/view_once_toggle"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
-            android:layout_marginEnd="16dp"
-            android:layout_marginBottom="8dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
             android:alpha="0"
             android:animateFirstView="false"
             android:inAnimation="@anim/fade_in"
             android:outAnimation="@anim/fade_out"
             android:visibility="gone"
-            app:layout_constraintBottom_toTopOf="@+id/controls_shade"
-            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintBottom_toBottomOf="@id/add_a_message"
+            app:layout_constraintTop_toTopOf="@id/add_a_message"
+            app:layout_constraintEnd_toEndOf="@id/add_a_message"
             tools:alpha="1"
             tools:visibility="visible">
 
-            <androidx.appcompat.widget.AppCompatImageView
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:background="@drawable/circle_tintable"
-                android:padding="6dp"
-                android:scaleType="fitCenter"
-                app:backgroundTint="@color/transparent_black_60"
-                app:srcCompat="@drawable/ic_view_infinite_28"
-                app:tint="@color/core_white" />
+            <com.google.android.material.imageview.ShapeableImageView
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_gravity="center"
+                android:scaleType="centerInside"
+                app:srcCompat="@drawable/symbol_view_once_infinite_24"
+                app:tint="@color/signal_colorOnSurface" />
 
-            <androidx.appcompat.widget.AppCompatImageView
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:background="@drawable/circle_tintable"
-                android:padding="6dp"
-                android:scaleType="fitCenter"
-                app:backgroundTint="@color/transparent_black_60"
-                app:srcCompat="@drawable/ic_view_once_28"
-                app:tint="@color/core_white" />
+            <com.google.android.material.imageview.ShapeableImageView
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_gravity="center"
+                android:scaleType="centerInside"
+                app:srcCompat="@drawable/symbol_view_once_24"
+                app:tint="@color/signal_colorOnSurface" />
 
         </ViewSwitcher>
 
-        <org.thoughtcrime.securesms.components.emoji.EmojiTextView
-            android:id="@+id/view_once_message"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:alpha="0"
-            android:gravity="center"
-            android:minHeight="48dp"
-            android:text="@string/MediaReviewFragment__view_once_message"
-            android:textAppearance="@style/Signal.Text.Body"
-            android:textColor="@color/transparent_white_60"
-            app:layout_constraintBottom_toTopOf="@id/button_barrier"
-            tools:alpha="1" />
-
-        <org.thoughtcrime.securesms.components.emoji.EmojiTextView
-            android:id="@+id/add_a_message"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="16dp"
-            android:alpha="0"
-            android:gravity="center"
-            android:minHeight="48dp"
-            android:text="@string/MediaReviewFragment__add_a_message"
-            android:textAppearance="@style/Signal.Text.Body"
-            android:textColor="@color/core_white"
-            app:layout_constraintBottom_toTopOf="@id/button_barrier"
-            tools:alpha="1" />
-
-        <org.thoughtcrime.securesms.components.emoji.EmojiTextView
-            android:id="@+id/add_a_message_entry"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginTop="12dp"
-            android:layout_marginEnd="16dp"
-            android:layout_marginBottom="20dp"
-            android:background="@drawable/rounded_rectangle_secondary_dark"
-            android:gravity="start|center_vertical"
-            android:minHeight="36dp"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:paddingTop="6dp"
-            android:paddingBottom="6dp"
-            android:textAppearance="@style/Signal.Text.Body"
-            android:textColor="@color/core_white"
+        <com.google.android.material.imageview.ShapeableImageView
+            android:id="@+id/emoji_button"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="center"
+            android:background="@color/transparent"
+            android:scaleType="centerInside"
+            android:src="@drawable/symbol_emoji_24"
             android:visibility="gone"
-            android:inputType="none"
-            android:enabled="false"
-            android:focusable="false"
-            android:cursorVisible="false"
-            android:maxLines="3"
-            app:layout_constraintBottom_toTopOf="@id/button_barrier"
-            app:layout_constraintTop_toTopOf="@id/add_a_message_barrier"
+            app:layout_constraintBottom_toBottomOf="@id/add_a_message"
+            app:layout_constraintStart_toStartOf="@id/add_a_message"
+            app:layout_constraintTop_toTopOf="@id/add_a_message"
+            app:tint="@color/signal_colorOnSurface"
             tools:visibility="visible" />
 
-        <androidx.constraintlayout.widget.Barrier
-            android:id="@+id/add_a_message_barrier"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            app:barrierDirection="top"
-            app:constraint_referenced_ids="add_a_message,add_a_message_entry,view_once_message" />
-
-        <androidx.constraintlayout.widget.Barrier
-            android:id="@+id/button_barrier"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            app:barrierDirection="top"
-            app:constraint_referenced_ids="crop_and_rotate_tool,draw_tool,quality_selector,save_to_media,send"
+        <org.thoughtcrime.securesms.video.videoconverter.VideoThumbnailsRangeSelectorView
+            android:id="@+id/video_timeline"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:layout_marginStart="16dp"
+            android:layout_marginEnd="16dp"
+            android:alpha="0"
+            android:paddingTop="8dp"
+            android:visibility="gone"
+            app:layout_constraintBottom_toTopOf="@id/timeline_guideline"
             app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintStart_toStartOf="parent" />
+            app:layout_constraintHorizontal_bias="0.5"
+            app:layout_constraintStart_toStartOf="parent"
+            app:thumbColor="@color/signal_light_colorOnPrimary"
+            app:thumbColorEdited="#ff0"
+            app:thumbHintBackgroundColor="@color/signal_dark_colorSurfaceVariant"
+            app:thumbHintTextColor="@color/signal_light_colorOnPrimary"
+            app:thumbHintTextSize="14sp"
+            app:thumbTouchRadius="24dp"
+            app:thumbWidth="6dp"
+            tools:visibility="visible" />
 
-        <androidx.appcompat.widget.AppCompatImageView
+        <TextView
+            android:id="@+id/video_size_hint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:textAppearance="@style/Signal.Text.BodySmall"
+            android:textColor="@color/signal_colorOnSurfaceVariant"
+            app:layout_constraintEnd_toEndOf="@id/video_timeline"
+            app:layout_constraintTop_toBottomOf="@id/video_timeline"
+            tools:text="0:04 · 399 KB" />
+
+        <androidx.constraintlayout.widget.Guideline
+            android:id="@+id/timeline_guideline"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            app:layout_constraintGuide_end="148dp" />
+
+        <com.google.android.material.imageview.ShapeableImageView
             android:id="@+id/draw_tool"
             android:layout_width="48dp"
             android:layout_height="48dp"
             android:layout_marginStart="10dp"
             android:layout_marginBottom="16dp"
             android:alpha="0"
-            android:background="?selectableItemBackgroundBorderless"
+            android:background="@drawable/media_gallery_button_background"
             android:padding="6dp"
-            android:translationY="48dp"
+            android:scaleType="centerInside"
             android:visibility="gone"
-            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintBottom_toTopOf="@id/add_a_message"
             app:layout_constraintStart_toStartOf="parent"
-            app:srcCompat="@drawable/ic_draw_36"
-            app:tint="@color/core_white"
+            app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.Signal.Circle"
+            app:srcCompat="@drawable/symbol_brush_pen_24"
+            app:tint="@color/signal_dark_colorOnSurface"
             tools:alpha="1"
-            tools:translationY="0dp"
             tools:visibility="visible" />
 
-        <androidx.appcompat.widget.AppCompatImageView
+        <com.google.android.material.imageview.ShapeableImageView
             android:id="@+id/crop_and_rotate_tool"
             android:layout_width="48dp"
             android:layout_height="48dp"
             android:layout_marginStart="12dp"
             android:layout_marginBottom="16dp"
             android:alpha="0"
-            android:background="?selectableItemBackgroundBorderless"
-            android:padding="6dp"
-            android:translationY="48dp"
+            android:background="@drawable/media_gallery_button_background"
+            android:padding="4dp"
+            android:scaleType="centerInside"
             android:visibility="gone"
-            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintBottom_toTopOf="@id/add_a_message"
             app:layout_constraintStart_toEndOf="@id/draw_tool"
             app:layout_goneMarginStart="10dp"
-            app:srcCompat="@drawable/ic_crop_rotate_36"
-            app:tint="@color/core_white"
+            app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.Signal.Circle"
+            app:srcCompat="@drawable/symbol_crop_rotate_24"
+            app:tint="@color/signal_dark_colorOnSurface"
             tools:alpha="1"
-            tools:translationY="0dp"
             tools:visibility="visible" />
 
-        <androidx.appcompat.widget.AppCompatImageView
+        <com.google.android.material.imageview.ShapeableImageView
             android:id="@+id/quality_selector"
             android:layout_width="48dp"
             android:layout_height="48dp"
             android:layout_marginStart="12dp"
             android:layout_marginBottom="16dp"
             android:alpha="0"
-            android:background="?selectableItemBackgroundBorderless"
-            android:padding="6dp"
-            android:translationY="48dp"
+            android:background="@drawable/media_gallery_button_background"
+            android:padding="4dp"
+            android:scaleType="centerInside"
             android:visibility="gone"
-            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintBottom_toTopOf="@id/add_a_message"
             app:layout_constraintStart_toEndOf="@id/crop_and_rotate_tool"
             app:layout_goneMarginStart="10dp"
-            app:srcCompat="@drawable/ic_sq_36"
-            app:tint="@color/core_white"
+            app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.Signal.Circle"
+            app:srcCompat="@drawable/symbol_quality_high_slash_24"
+            app:tint="@color/signal_dark_colorOnSurface"
             tools:alpha="1"
-            tools:translationY="0dp"
             tools:visibility="visible" />
 
-        <androidx.appcompat.widget.AppCompatImageView
+        <com.google.android.material.imageview.ShapeableImageView
             android:id="@+id/save_to_media"
             android:layout_width="48dp"
             android:layout_height="48dp"
             android:layout_marginStart="12dp"
             android:layout_marginBottom="16dp"
-            android:background="?selectableItemBackgroundBorderless"
-            android:padding="6dp"
-            android:translationY="48dp"
-            app:layout_constraintBottom_toBottomOf="parent"
+            android:background="@drawable/media_gallery_button_background"
+            android:padding="4dp"
+            android:scaleType="centerInside"
+            android:visibility="gone"
+            app:layout_constraintBottom_toTopOf="@id/add_a_message"
             app:layout_constraintStart_toEndOf="@id/quality_selector"
             app:layout_goneMarginStart="10dp"
-            app:srcCompat="@drawable/ic_save_36"
-            app:tint="@color/core_white"
-            tools:translationY="0dp" />
+            app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.Signal.Circle"
+            app:srcCompat="@drawable/symbol_save_android_24"
+            app:tint="@color/signal_dark_colorOnSurface"
+            tools:visibility="visible" />
 
-        <androidx.appcompat.widget.AppCompatImageView
+        <com.google.android.material.imageview.ShapeableImageView
             android:id="@+id/send"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
             android:layout_marginStart="12dp"
             android:layout_marginEnd="10dp"
-            android:layout_marginBottom="22dp"
-            android:background="@drawable/circle_tintable"
-            android:padding="8dp"
-            android:translationY="48dp"
-            app:backgroundTint="@color/core_ultramarine"
+            android:layout_marginBottom="16dp"
+            android:background="@color/signal_light_colorPrimary"
+            android:padding="4dp"
+            android:scaleType="centerInside"
+            android:visibility="gone"
             app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintHorizontal_bias="1"
             app:layout_constraintStart_toEndOf="@id/save_to_media"
             app:layout_goneMarginStart="10dp"
-            app:srcCompat="@drawable/ic_send_24"
-            tools:translationY="0dp" />
+            app:shapeAppearanceOverlay="@style/ShapeAppearanceOverlay.Signal.Circle"
+            app:srcCompat="@drawable/symbol_send_fill_24"
+            app:tint="@color/signal_colorOnSurface"
+            tools:visibility="visible"/>
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 
@@ -297,8 +315,8 @@
         android:alpha="0"
         android:background="@color/transparent_black_60"
         android:visibility="gone"
-        tools:alpha="1"
-        tools:visibility="visible">
+        tools:alpha="0"
+        tools:visibility="gone">
 
         <ProgressBar
             android:id="@+id/progress"

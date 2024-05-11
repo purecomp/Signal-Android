@@ -25,11 +25,9 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.R;
-import org.thoughtcrime.securesms.conversation.ConversationFragment;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.notifications.NotificationChannels;
 import org.thoughtcrime.securesms.util.DeviceProperties;
-import org.thoughtcrime.securesms.util.TextSecurePreferences;
 
 /**
  * Provide basic steps to fix potential call notification issues based on what we can detect on the system
@@ -70,7 +68,7 @@ public final class EnableCallNotificationSettingsDialog extends DialogFragment {
 
   @Override
   public Dialog onCreateDialog(Bundle savedInstanceState) {
-    MaterialAlertDialogBuilder dialogBuilder = new MaterialAlertDialogBuilder(requireContext(), R.style.Signal_ThemeOverlay_Dialog_Rounded);
+    MaterialAlertDialogBuilder dialogBuilder = new MaterialAlertDialogBuilder(requireContext(), R.style.ThemeOverlay_Signal_MaterialAlertDialog);
 
     Runnable action = null;
     switch (getCallNotificationSettingsBitmask(requireContext())) {
@@ -124,8 +122,8 @@ public final class EnableCallNotificationSettingsDialog extends DialogFragment {
   @Override
   public void onDismiss(@NonNull DialogInterface dialog) {
     super.onDismiss(dialog);
-    if (getParentFragment() instanceof ConversationFragment) {
-      ((ConversationFragment) getParentFragment()).refreshList();
+    if (getParentFragment() instanceof Callback) {
+      ((Callback) getParentFragment()).onCallNotificationSettingsDialogDismissed();
     }
   }
 
@@ -185,7 +183,7 @@ public final class EnableCallNotificationSettingsDialog extends DialogFragment {
   }
 
   private void showNotificationChannelSettings() {
-    NotificationChannels.openChannelSettings(requireContext(), NotificationChannels.CALLS);
+    NotificationChannels.getInstance().openChannelSettings(requireActivity(), NotificationChannels.getInstance().CALLS, null);
   }
 
   private void showAppSettings() {
@@ -195,7 +193,7 @@ public final class EnableCallNotificationSettingsDialog extends DialogFragment {
   }
 
   private static boolean areNotificationsDisabled(@NonNull Context context) {
-    return !NotificationChannels.areNotificationsEnabled(context);
+    return !NotificationChannels.getInstance().areNotificationsEnabled();
   }
 
   private static boolean areCallNotificationsDisabled(Context context) {
@@ -203,7 +201,7 @@ public final class EnableCallNotificationSettingsDialog extends DialogFragment {
   }
 
   private static boolean isCallChannelInvalid(Context context) {
-    return !NotificationChannels.isCallsChannelValid(context);
+    return !NotificationChannels.getInstance().isCallsChannelValid();
   }
 
   private static boolean isBackgroundRestricted(Context context) {
@@ -230,5 +228,9 @@ public final class EnableCallNotificationSettingsDialog extends DialogFragment {
     }
 
     return bitmask;
+  }
+
+  public interface Callback {
+    void onCallNotificationSettingsDialogDismissed();
   }
 }

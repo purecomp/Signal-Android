@@ -3,20 +3,17 @@ package org.thoughtcrime.securesms.storage;
 import com.annimon.stream.Stream;
 
 import org.junit.Before;
+import org.junit.Rule;
 import org.junit.Test;
-import org.junit.runner.RunWith;
-import org.junit.runners.JUnit4;
-import org.powermock.core.classloader.annotations.PowerMockIgnore;
-import org.powermock.core.classloader.annotations.PrepareForTest;
-import org.powermock.modules.junit4.PowerMockRunner;
-import org.powermock.modules.junit4.PowerMockRunnerDelegate;
+import org.mockito.Mock;
+import org.mockito.MockedStatic;
+import org.mockito.junit.MockitoJUnit;
+import org.mockito.junit.MockitoRule;
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.storage.StorageSyncHelper.IdDifferenceResult;
 import org.thoughtcrime.securesms.util.FeatureFlags;
-import org.whispersystems.libsignal.util.guava.Optional;
-import org.whispersystems.signalservice.api.push.ACI;
-import org.whispersystems.signalservice.api.push.SignalServiceAddress;
+import org.whispersystems.signalservice.api.push.ServiceId.ACI;
 import org.whispersystems.signalservice.api.storage.SignalAccountRecord;
 import org.whispersystems.signalservice.api.storage.SignalContactRecord;
 import org.whispersystems.signalservice.api.storage.SignalGroupV1Record;
@@ -27,26 +24,20 @@ import org.whispersystems.signalservice.api.storage.StorageId;
 
 import java.util.Arrays;
 import java.util.HashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
+import java.util.Optional;
 
 import static junit.framework.TestCase.assertTrue;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotEquals;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
-import static org.powermock.api.mockito.PowerMockito.mock;
-import static org.powermock.api.mockito.PowerMockito.mockStatic;
 import static org.thoughtcrime.securesms.testutil.TestHelpers.assertContentsEqual;
 import static org.thoughtcrime.securesms.testutil.TestHelpers.byteArray;
 import static org.thoughtcrime.securesms.testutil.TestHelpers.byteListOf;
 
-@RunWith(PowerMockRunner.class)
-@PrepareForTest({ Recipient.class, FeatureFlags.class})
-@PowerMockIgnore("javax.crypto.*")
-@PowerMockRunnerDelegate(JUnit4.class)
 public final class StorageSyncHelperTest {
 
   private static final ACI ACI_A    = ACI.parseOrThrow("ebef429e-695e-4f51-bcc4-526a60ac68c7");
@@ -57,17 +48,24 @@ public final class StorageSyncHelperTest {
 
   private static final Recipient SELF = mock(Recipient.class);
   static {
-    when(SELF.getAci()).thenReturn(Optional.of(ACI_SELF));
+    when(SELF.getServiceId()).thenReturn(Optional.of(ACI_SELF));
     when(SELF.getE164()).thenReturn(Optional.of(E164_SELF));
     when(SELF.resolve()).thenReturn(SELF);
   }
 
+  @Rule
+  public MockitoRule rule = MockitoJUnit.rule();
+
+  @Mock
+  private MockedStatic<Recipient> recipientMockedStatic;
+
+  @Mock
+  private MockedStatic<FeatureFlags> featureFlagsMockedStatic;
+
   @Before
   public void setup() {
-    mockStatic(Recipient.class);
-    when(Recipient.self()).thenReturn(SELF);
+    recipientMockedStatic.when(Recipient::self).thenReturn(SELF);
     Log.initialize(new Log.Logger[0]);
-    mockStatic(FeatureFlags.class);
     StorageSyncHelper.setTestKeyGenerator(null);
   }
 
@@ -177,8 +175,9 @@ public final class StorageSyncHelperTest {
                                                             String e164,
                                                             String profileName)
   {
-    return new SignalContactRecord.Builder(byteArray(key), new SignalServiceAddress(aci, e164))
-                                  .setGivenName(profileName);
+    return new SignalContactRecord.Builder(byteArray(key), aci, null)
+                                  .setE164(e164)
+                                  .setProfileGivenName(profileName);
   }
 
   private static <E extends SignalRecord> StorageRecordUpdate<E> update(E oldRecord, E newRecord) {

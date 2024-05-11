@@ -17,6 +17,9 @@ import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 import androidx.recyclerview.widget.RecyclerView;
 
+import com.google.android.material.card.MaterialCardView;
+
+import org.signal.core.util.DimensionUnit;
 import org.thoughtcrime.securesms.R;
 
 import java.util.List;
@@ -27,7 +30,7 @@ import java.util.List;
 public final class ReminderView extends FrameLayout {
   private ProgressBar           progressBar;
   private TextView              progressText;
-  private ViewGroup             container;
+  private MaterialCardView      container;
   private ImageButton           closeButton;
   private TextView              title;
   private TextView              text;
@@ -35,6 +38,7 @@ public final class ReminderView extends FrameLayout {
   private Space                 space;
   private RecyclerView          actionsRecycler;
   private OnActionClickListener actionClickListener;
+  private OnHideListener        onHideListener;
 
   public ReminderView(Context context) {
     super(context);
@@ -64,39 +68,41 @@ public final class ReminderView extends FrameLayout {
   }
 
   public void showReminder(final Reminder reminder) {
-    if (!TextUtils.isEmpty(reminder.getTitle())) {
-      title.setText(reminder.getTitle());
+    if (!TextUtils.isEmpty(reminder.getTitle(getContext()))) {
+      title.setText(reminder.getTitle(getContext()));
       title.setVisibility(VISIBLE);
       space.setVisibility(GONE);
     } else {
       title.setText("");
       title.setVisibility(GONE);
       space.setVisibility(VISIBLE);
+      text.setTextColor(ContextCompat.getColor(getContext(), R.color.signal_colorOnSurface));
     }
 
     if (!reminder.isDismissable()) {
       space.setVisibility(GONE);
     }
 
-    text.setText(reminder.getText());
-    text.setTextColor(ContextCompat.getColor(getContext(), R.color.signal_button_primary_text));
-
+    text.setText(reminder.getText(getContext()));
     switch (reminder.getImportance()) {
       case NORMAL:
-        container.setBackgroundResource(R.drawable.reminder_background_normal);
+        title.setTextColor(ContextCompat.getColor(getContext(), R.color.signal_colorOnSurface));
+        text.setTextColor(ContextCompat.getColor(getContext(), R.color.signal_colorOnSurfaceVariant));
         break;
       case ERROR:
-        container.setBackgroundResource(R.drawable.reminder_background_error);
-        text.setTextColor(ContextCompat.getColor(getContext(), R.color.core_black));
-        break;
       case TERMINAL:
-        container.setBackgroundResource(R.drawable.reminder_background_terminal);
+        container.setStrokeWidth(0);
+        container.setCardBackgroundColor(ContextCompat.getColor(getContext(), R.color.reminder_background));
+        title.setTextColor(ContextCompat.getColor(getContext(), R.color.signal_light_colorOnSurface));
+        text.setTextColor(ContextCompat.getColor(getContext(), R.color.signal_light_colorOnSurface));
         break;
       default:
         throw new IllegalStateException();
     }
 
-    setOnClickListener(reminder.getOkListener());
+    if (reminder.getOkListener() != null) {
+      setOnClickListener(reminder.getOkListener());
+    }
 
     closeButton.setVisibility(reminder.isDismissable() ? View.VISIBLE : View.GONE);
     closeButton.setOnClickListener(new OnClickListener() {
@@ -107,6 +113,10 @@ public final class ReminderView extends FrameLayout {
         if (dismissListener != null) dismissListener.onDismiss();
       }
     });
+
+    if (reminder.getImportance() == Reminder.Importance.NORMAL) {
+      closeButton.setColorFilter(ContextCompat.getColor(getContext(), R.color.signal_colorOnSurfaceVariant));
+    }
 
     int progress = reminder.getProgress();
     if (progress != -1) {
@@ -121,10 +131,12 @@ public final class ReminderView extends FrameLayout {
 
     List<Reminder.Action> actions = reminder.getActions();
     if (actions.isEmpty()) {
+      text.setPadding(0, 0, 0, ((int) DimensionUnit.DP.toPixels(16f)));
       actionsRecycler.setVisibility(GONE);
     } else {
+      text.setPadding(0, 0, 0, 0);
       actionsRecycler.setVisibility(VISIBLE);
-      actionsRecycler.setAdapter(new ReminderActionsAdapter(actions, this::handleActionClicked));
+      actionsRecycler.setAdapter(new ReminderActionsAdapter(reminder.getImportance(), actions, this::handleActionClicked));
     }
 
     container.setVisibility(View.VISIBLE);
@@ -142,11 +154,19 @@ public final class ReminderView extends FrameLayout {
     this.actionClickListener = actionClickListener;
   }
 
+  public void setOnHideListener(@Nullable OnHideListener onHideListener) {
+    this.onHideListener = onHideListener;
+  }
+
   public void requestDismiss() {
     closeButton.performClick();
   }
 
   public void hide() {
+    if (onHideListener != null && onHideListener.onHide()) {
+      return;
+    }
+
     container.setVisibility(View.GONE);
   }
 
@@ -156,5 +176,9 @@ public final class ReminderView extends FrameLayout {
 
   public interface OnActionClickListener {
     void onActionClick(@IdRes int actionId);
+  }
+
+  public interface OnHideListener {
+    boolean onHide();
   }
 }

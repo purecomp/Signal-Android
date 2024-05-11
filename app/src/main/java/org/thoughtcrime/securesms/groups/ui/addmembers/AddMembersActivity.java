@@ -6,10 +6,15 @@ import android.os.Bundle;
 import android.view.View;
 import android.widget.Toast;
 
+import androidx.activity.result.ActivityResultLauncher;
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
-import androidx.lifecycle.ViewModelProviders;
+import androidx.lifecycle.ViewModelProvider;
 
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+
+import org.signal.core.util.DimensionUnit;
+import org.signal.core.util.concurrent.SimpleTask;
 import org.thoughtcrime.securesms.ContactSelectionActivity;
 import org.thoughtcrime.securesms.ContactSelectionListFragment;
 import org.thoughtcrime.securesms.PushContactSelectionActivity;
@@ -18,20 +23,26 @@ import org.thoughtcrime.securesms.groups.GroupId;
 import org.thoughtcrime.securesms.groups.SelectionLimits;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.recipients.RecipientId;
+import org.thoughtcrime.securesms.recipients.RecipientRepository;
+import org.thoughtcrime.securesms.recipients.ui.findby.FindByActivity;
+import org.thoughtcrime.securesms.recipients.ui.findby.FindByMode;
 import org.thoughtcrime.securesms.util.Util;
-import org.whispersystems.libsignal.util.guava.Optional;
+import org.thoughtcrime.securesms.util.views.SimpleProgressDialog;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 import java.util.function.Consumer;
 
-public class AddMembersActivity extends PushContactSelectionActivity {
+public class AddMembersActivity extends PushContactSelectionActivity implements ContactSelectionListFragment.FindByCallback {
 
   public static final String GROUP_ID           = "group_id";
   public static final String ANNOUNCEMENT_GROUP = "announcement_group";
 
-  private View                done;
-  private AddMembersViewModel viewModel;
+  private View                               done;
+  private AddMembersViewModel                viewModel;
+  private ActivityResultLauncher<FindByMode> findByActivityLauncher;
 
   public static @NonNull Intent createIntent(@NonNull Context context,
                                              @NonNull GroupId groupId,
@@ -47,6 +58,8 @@ public class AddMembersActivity extends PushContactSelectionActivity {
     intent.putExtra(ContactSelectionListFragment.DISPLAY_MODE, displayModeFlags);
     intent.putExtra(ContactSelectionListFragment.SELECTION_LIMITS, new SelectionLimits(selectionWarning, selectionLimit));
     intent.putParcelableArrayListExtra(ContactSelectionListFragment.CURRENT_SELECTION, new ArrayList<>(membersWithoutSelf));
+    intent.putExtra(ContactSelectionListFragment.RV_PADDING_BOTTOM, (int) DimensionUnit.DP.toPixels(64f));
+    intent.putExtra(ContactSelectionListFragment.RV_CLIP, false);
 
     return intent;
   }
@@ -59,14 +72,19 @@ public class AddMembersActivity extends PushContactSelectionActivity {
     AddMembersViewModel.Factory factory = new AddMembersViewModel.Factory(getGroupId());
 
     done      = findViewById(R.id.done);
-    viewModel = ViewModelProviders.of(this, factory)
-                                  .get(AddMembersViewModel.class);
+    viewModel = new ViewModelProvider(this, factory).get(AddMembersViewModel.class);
 
     done.setOnClickListener(v ->
       viewModel.getDialogStateForSelectedContacts(contactsFragment.getSelectedContacts(), this::displayAlertMessage)
     );
 
     disableDone();
+
+    findByActivityLauncher = registerForActivityResult(new FindByActivity.Contract(), result -> {
+      if (result != null) {
+        contactsFragment.addRecipientToSelectionIfAble(result);
+      }
+    });
   }
 
   @Override
@@ -79,8 +97,8 @@ public class AddMembersActivity extends PushContactSelectionActivity {
   }
 
   @Override
-  public void onBeforeContactSelected(Optional<RecipientId> recipientId, String number, Consumer<Boolean> callback) {
-    if (getGroupId().isV1() && recipientId.isPresent() && !Recipient.resolved(recipientId.get()).hasE164()) {
+  public void onBeforeContactSelected(boolean isFromUnknownSearchKey, @NonNull Optional<RecipientId> recipientId, String number, @NonNull Consumer<Boolean> callback) {
+    if (getGroupId().isV1() && recipientId.isPresent() && !Recipient.resolved(recipientId.get()).getHasE164()) {
       Toast.makeText(this, R.string.AddMembersActivity__this_person_cant_be_added_to_legacy_groups, Toast.LENGTH_SHORT).show();
       callback.accept(false);
       return;
@@ -90,13 +108,38 @@ public class AddMembersActivity extends PushContactSelectionActivity {
       getContactFilterView().clear();
     }
 
-    enableDone();
+    if (recipientId.isPresent()) {
+      callback.accept(true);
+      enableDone();
+      return;
+    }
 
-    callback.accept(true);
+    AlertDialog progress = SimpleProgressDialog.show(this);
+
+    SimpleTask.run(getLifecycle(), () -> RecipientRepository.lookupNewE164(this, number), result -> {
+      progress.dismiss();
+
+      if (result instanceof RecipientRepository.LookupResult.Success) {
+        enableDone();
+        callback.accept(true);
+      } else if (result instanceof RecipientRepository.LookupResult.NotFound || result instanceof RecipientRepository.LookupResult.InvalidEntry) {
+        new MaterialAlertDialogBuilder(this)
+            .setMessage(getString(R.string.NewConversationActivity__s_is_not_a_signal_user, number))
+            .setPositiveButton(android.R.string.ok, null)
+            .show();
+        callback.accept(false);
+      } else {
+        new MaterialAlertDialogBuilder(this)
+            .setMessage(R.string.NetworkFailure__network_error_check_your_connection_and_try_again)
+            .setPositiveButton(android.R.string.ok, null)
+            .show();
+        callback.accept(false);
+      }
+    });
   }
 
   @Override
-  public void onContactDeselected(Optional<RecipientId> recipientId, String number) {
+  public void onContactDeselected(@NonNull Optional<RecipientId> recipientId, String number) {
     if (contactsFragment.hasQueryFilter()) {
       getContactFilterView().clear();
     }
@@ -114,6 +157,16 @@ public class AddMembersActivity extends PushContactSelectionActivity {
     } else {
       getToolbar().setTitle(getResources().getQuantityString(R.plurals.CreateGroupActivity__d_members, selectedContactsCount, selectedContactsCount));
     }
+  }
+
+  @Override
+  public void onFindByPhoneNumber() {
+    findByActivityLauncher.launch(FindByMode.PHONE_NUMBER);
+  }
+
+  @Override
+  public void onFindByUsername() {
+    findByActivityLauncher.launch(FindByMode.USERNAME);
   }
 
   private void enableDone() {
@@ -140,7 +193,7 @@ public class AddMembersActivity extends PushContactSelectionActivity {
     String message = getResources().getQuantityString(R.plurals.AddMembersActivity__add_d_members_to_s, state.getSelectionCount(),
                                                       recipient.getDisplayName(this), state.getGroupTitle(), state.getSelectionCount());
 
-    new AlertDialog.Builder(this)
+    new MaterialAlertDialogBuilder(this)
                    .setMessage(message)
                    .setNegativeButton(android.R.string.cancel, (dialog, which) -> dialog.cancel())
                    .setPositiveButton(R.string.AddMembersActivity__add, (dialog, which) -> {

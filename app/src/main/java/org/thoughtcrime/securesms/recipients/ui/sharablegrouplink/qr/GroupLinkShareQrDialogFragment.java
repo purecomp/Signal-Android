@@ -16,14 +16,14 @@ import androidx.appcompat.widget.Toolbar;
 import androidx.core.app.ShareCompat;
 import androidx.fragment.app.DialogFragment;
 import androidx.fragment.app.FragmentManager;
-import androidx.lifecycle.ViewModelProviders;
+import androidx.lifecycle.ViewModelProvider;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.components.qr.QrView;
 import org.thoughtcrime.securesms.groups.GroupId;
 import org.thoughtcrime.securesms.providers.BlobProvider;
-import org.thoughtcrime.securesms.qr.QrCode;
+import org.thoughtcrime.securesms.qr.QrCodeUtil;
 import org.thoughtcrime.securesms.util.BottomSheetUtil;
 import org.thoughtcrime.securesms.util.ThemeUtil;
 
@@ -78,7 +78,7 @@ public class GroupLinkShareQrDialogFragment extends DialogFragment {
     GroupId.V2                        groupId   = GroupId.parseOrThrow(Objects.requireNonNull(arguments.getString(ARG_GROUP_ID))).requireV2();
     GroupLinkShareQrViewModel.Factory factory   = new GroupLinkShareQrViewModel.Factory(groupId);
 
-    viewModel = ViewModelProviders.of(this, factory).get(GroupLinkShareQrViewModel.class);
+    viewModel = new ViewModelProvider(this, factory).get(GroupLinkShareQrViewModel.class);
   }
 
   private void initializeViews(@NonNull View view) {
@@ -123,7 +123,7 @@ public class GroupLinkShareQrDialogFragment extends DialogFragment {
   }
 
   private static Uri createTemporaryPng(@Nullable String url) throws IOException {
-    Bitmap qrBitmap = QrCode.create(url, Color.BLACK, Color.WHITE);
+    Bitmap qrBitmap = QrCodeUtil.create(url, Color.BLACK, Color.WHITE);
 
     try (ByteArrayOutputStream byteArrayOutputStream = new ByteArrayOutputStream()) {
       qrBitmap.compress(Bitmap.CompressFormat.PNG, 100, byteArrayOutputStream);

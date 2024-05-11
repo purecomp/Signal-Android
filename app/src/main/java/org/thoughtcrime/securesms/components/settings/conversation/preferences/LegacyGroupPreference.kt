@@ -4,21 +4,20 @@ import android.view.View
 import androidx.core.content.ContextCompat
 import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.components.settings.PreferenceModel
-import org.thoughtcrime.securesms.util.FeatureFlags
-import org.thoughtcrime.securesms.util.MappingAdapter
-import org.thoughtcrime.securesms.util.MappingViewHolder
+import org.thoughtcrime.securesms.util.adapter.mapping.LayoutFactory
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingAdapter
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingViewHolder
 import org.thoughtcrime.securesms.util.views.LearnMoreTextView
 
 object LegacyGroupPreference {
 
   fun register(adapter: MappingAdapter) {
-    adapter.registerFactory(Model::class.java, MappingAdapter.LayoutFactory(::ViewHolder, R.layout.conversation_settings_legacy_group_preference))
+    adapter.registerFactory(Model::class.java, LayoutFactory(::ViewHolder, R.layout.conversation_settings_legacy_group_preference))
   }
 
   class Model(
     val state: State,
     val onLearnMoreClick: () -> Unit,
-    val onUpgradeClick: () -> Unit,
     val onMmsWarningClick: () -> Unit
   ) : PreferenceModel<Model>() {
     override fun areItemsTheSame(newItem: Model): Boolean {
@@ -41,15 +40,6 @@ object LegacyGroupPreference {
           groupInfoText.setOnLinkClickListener { model.onLearnMoreClick() }
           groupInfoText.setLearnMoreVisible(true)
         }
-        State.UPGRADE -> {
-          groupInfoText.setText(R.string.ManageGroupActivity_legacy_group_upgrade)
-          groupInfoText.setOnLinkClickListener { model.onUpgradeClick() }
-          groupInfoText.setLearnMoreVisible(true, R.string.ManageGroupActivity_upgrade_this_group)
-        }
-        State.TOO_LARGE -> {
-          groupInfoText.text = context.getString(R.string.ManageGroupActivity_legacy_group_too_large, FeatureFlags.groupLimits().hardLimit - 1)
-          groupInfoText.setLearnMoreVisible(false)
-        }
         State.MMS_WARNING -> {
           groupInfoText.setText(R.string.ManageGroupActivity_this_is_an_insecure_mms_group)
           groupInfoText.setOnLinkClickListener { model.onMmsWarningClick() }
@@ -62,8 +52,6 @@ object LegacyGroupPreference {
 
   enum class State {
     LEARN_MORE,
-    UPGRADE,
-    TOO_LARGE,
     MMS_WARNING,
     NONE
   }

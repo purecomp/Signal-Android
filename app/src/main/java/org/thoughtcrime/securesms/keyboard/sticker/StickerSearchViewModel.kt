@@ -1,6 +1,5 @@
 package org.thoughtcrime.securesms.keyboard.sticker
 
-import android.content.Context
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import androidx.lifecycle.ViewModel
@@ -20,10 +19,10 @@ class StickerSearchViewModel(private val searchRepository: StickerSearchReposito
     searchQuery.postValue(query)
   }
 
-  class Factory(context: Context) : ViewModelProvider.Factory {
-    val repository = StickerSearchRepository(context)
+  class Factory : ViewModelProvider.Factory {
+    val repository = StickerSearchRepository()
 
-    override fun <T : ViewModel?> create(modelClass: Class<T>): T {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
       return requireNotNull(modelClass.cast(StickerSearchViewModel(repository)))
     }
   }

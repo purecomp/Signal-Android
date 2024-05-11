@@ -6,8 +6,8 @@ import android.database.Cursor;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.MediaDatabase;
+import org.thoughtcrime.securesms.database.MediaTable;
+import org.thoughtcrime.securesms.database.SignalDatabase;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.recipients.RecipientId;
 
@@ -17,13 +17,13 @@ import org.thoughtcrime.securesms.recipients.RecipientId;
 public final class RecipientMediaLoader extends MediaLoader {
 
   @Nullable private final RecipientId           recipientId;
-  @NonNull  private final MediaType             mediaType;
-  @NonNull  private final MediaDatabase.Sorting sorting;
+  @NonNull  private final MediaType          mediaType;
+  @NonNull  private final MediaTable.Sorting sorting;
 
   public RecipientMediaLoader(@NonNull Context context,
                               @Nullable RecipientId recipientId,
                               @NonNull MediaType mediaType,
-                              @NonNull MediaDatabase.Sorting sorting)
+                              @NonNull MediaTable.Sorting sorting)
   {
     super(context);
     this.recipientId = recipientId;
@@ -35,8 +35,7 @@ public final class RecipientMediaLoader extends MediaLoader {
   public Cursor getCursor() {
     if (recipientId == null || recipientId.isUnknown()) return null;
 
-    long threadId = DatabaseFactory.getThreadDatabase(getContext())
-                                   .getOrCreateThreadIdFor(Recipient.resolved(recipientId));
+    long threadId = SignalDatabase.threads().getOrCreateThreadIdFor(Recipient.resolved(recipientId));
 
     return ThreadMediaLoader.createThreadMediaCursor(context, threadId, mediaType, sorting);
   }

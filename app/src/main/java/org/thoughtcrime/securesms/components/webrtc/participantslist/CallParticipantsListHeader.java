@@ -5,7 +5,7 @@ import android.content.Context;
 import androidx.annotation.NonNull;
 
 import org.thoughtcrime.securesms.R;
-import org.thoughtcrime.securesms.util.MappingModel;
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingModel;
 
 public class CallParticipantsListHeader implements MappingModel<CallParticipantsListHeader> {
 
@@ -16,7 +16,7 @@ public class CallParticipantsListHeader implements MappingModel<CallParticipants
   }
 
   @NonNull String getHeader(@NonNull Context context) {
-    return context.getResources().getQuantityString(R.plurals.CallParticipantsListDialog_in_this_call_d_people, participantCount, participantCount);
+    return context.getResources().getQuantityString(R.plurals.CallParticipantsListDialog_in_this_call, participantCount, participantCount);
   }
 
   @Override

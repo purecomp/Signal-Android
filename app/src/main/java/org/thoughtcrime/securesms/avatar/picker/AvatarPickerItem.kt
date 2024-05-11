@@ -8,15 +8,16 @@ import android.widget.TextView
 import androidx.appcompat.content.res.AppCompatResources
 import androidx.core.view.setPadding
 import com.airbnb.lottie.SimpleColorFilter
+import com.bumptech.glide.Glide
 import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.avatar.Avatar
 import org.thoughtcrime.securesms.avatar.AvatarRenderer
 import org.thoughtcrime.securesms.avatar.Avatars
 import org.thoughtcrime.securesms.mms.DecryptableStreamUriLoader
-import org.thoughtcrime.securesms.mms.GlideApp
-import org.thoughtcrime.securesms.util.MappingAdapter
-import org.thoughtcrime.securesms.util.MappingModel
-import org.thoughtcrime.securesms.util.MappingViewHolder
+import org.thoughtcrime.securesms.util.adapter.mapping.LayoutFactory
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingAdapter
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingModel
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingViewHolder
 import org.thoughtcrime.securesms.util.visible
 
 typealias OnAvatarClickListener = (Avatar, Boolean) -> Unit
@@ -27,7 +28,7 @@ object AvatarPickerItem {
   private val SELECTION_CHANGED = Any()
 
   fun register(adapter: MappingAdapter, onAvatarClickListener: OnAvatarClickListener, onAvatarLongClickListener: OnAvatarLongClickListener) {
-    adapter.registerFactory(Model::class.java, MappingAdapter.LayoutFactory({ ViewHolder(it, onAvatarClickListener, onAvatarLongClickListener) }, R.layout.avatar_picker_item))
+    adapter.registerFactory(Model::class.java, LayoutFactory({ ViewHolder(it, onAvatarClickListener, onAvatarLongClickListener) }, R.layout.avatar_picker_item))
   }
 
   class Model(val avatar: Avatar, val isSelected: Boolean) : MappingModel<Model> {
@@ -131,12 +132,12 @@ object AvatarPickerItem {
         }
         is Avatar.Photo -> {
           textView.visible = false
-          GlideApp.with(imageView).load(DecryptableStreamUriLoader.DecryptableUri(model.avatar.uri)).into(imageView)
+          Glide.with(imageView).load(DecryptableStreamUriLoader.DecryptableUri(model.avatar.uri)).into(imageView)
         }
         is Avatar.Resource -> {
           imageView.setPadding((imageView.width * 0.2).toInt())
           textView.visible = false
-          GlideApp.with(imageView).clear(imageView)
+          Glide.with(imageView).clear(imageView)
           imageView.setImageResource(model.avatar.resourceId)
           imageView.colorFilter = SimpleColorFilter(model.avatar.color.foregroundColor)
           imageView.background.colorFilter = SimpleColorFilter(model.avatar.color.backgroundColor)

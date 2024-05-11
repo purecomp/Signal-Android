@@ -45,8 +45,9 @@ class ExpireTimerSettingsViewModel(val config: Config, private val repository: E
     } else if (config.forResultMode) {
       store.update { it.copy(saveState = ProcessState.Success(userSetTimer)) }
     } else {
-      SignalStore.settings().universalExpireTimer = userSetTimer
-      store.update { it.copy(saveState = ProcessState.Success(userSetTimer)) }
+      repository.setUniversalExpireTimerSeconds(userSetTimer) {
+        store.update { it.copy(saveState = ProcessState.Success(userSetTimer)) }
+      }
     }
   }
 
@@ -57,7 +58,7 @@ class ExpireTimerSettingsViewModel(val config: Config, private val repository: E
   class Factory(context: Context, private val config: Config) : ViewModelProvider.Factory {
     val repository = ExpireTimerSettingsRepository(context.applicationContext)
 
-    override fun <T : ViewModel?> create(modelClass: Class<T>): T {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
       return requireNotNull(modelClass.cast(ExpireTimerSettingsViewModel(config, repository)))
     }
   }

@@ -7,16 +7,15 @@ import android.view.View;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.cardview.widget.CardView;
 
 import com.google.android.flexbox.AlignItems;
 import com.google.android.flexbox.FlexboxLayout;
+import com.google.android.material.card.MaterialCardView;
 
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.events.CallParticipant;
 import org.thoughtcrime.securesms.util.Util;
 import org.thoughtcrime.securesms.util.ViewUtil;
-import org.webrtc.RendererCommon;
 
 import java.util.Collections;
 import java.util.List;
@@ -29,12 +28,14 @@ public class CallParticipantsLayout extends FlexboxLayout {
 
   private static final int MULTIPLE_PARTICIPANT_SPACING = ViewUtil.dpToPx(3);
   private static final int CORNER_RADIUS                = ViewUtil.dpToPx(10);
+  private static final int RAISE_HAND_MINIMUM_COUNT     = 2;
 
   private List<CallParticipant> callParticipants   = Collections.emptyList();
   private CallParticipant       focusedParticipant = null;
   private boolean               shouldRenderInPip;
   private boolean               isPortrait;
-  private boolean               isIncomingRing;
+  private boolean               hideAvatar;
+  private int                   navBarBottomInset;
   private LayoutStrategy        layoutStrategy;
 
   public CallParticipantsLayout(@NonNull Context context) {
@@ -53,14 +54,16 @@ public class CallParticipantsLayout extends FlexboxLayout {
               @NonNull CallParticipant focusedParticipant,
               boolean shouldRenderInPip,
               boolean isPortrait,
-              boolean isIncomingRing,
+              boolean hideAvatar,
+              int navBarBottomInset,
               @NonNull LayoutStrategy layoutStrategy)
   {
     this.callParticipants   = callParticipants;
     this.focusedParticipant = focusedParticipant;
     this.shouldRenderInPip  = shouldRenderInPip;
     this.isPortrait         = isPortrait;
-    this.isIncomingRing     = isIncomingRing;
+    this.hideAvatar         = hideAvatar;
+    this.navBarBottomInset  = navBarBottomInset;
     this.layoutStrategy     = layoutStrategy;
 
     setFlexDirection(layoutStrategy.getFlexDirection());
@@ -114,7 +117,7 @@ public class CallParticipantsLayout extends FlexboxLayout {
 
   private void update(int index, int count, @NonNull CallParticipant participant) {
     View                view                = getChildAt(index);
-    CardView            cardView            = view.findViewById(R.id.group_call_participant_card_wrapper);
+    MaterialCardView    cardView            = view.findViewById(R.id.group_call_participant_card_wrapper);
     CallParticipantView callParticipantView = view.findViewById(R.id.group_call_participant);
 
     callParticipantView.setCallParticipant(participant);
@@ -124,12 +127,14 @@ public class CallParticipantsLayout extends FlexboxLayout {
     if (count > 1) {
       view.setPadding(MULTIPLE_PARTICIPANT_SPACING, MULTIPLE_PARTICIPANT_SPACING, MULTIPLE_PARTICIPANT_SPACING, MULTIPLE_PARTICIPANT_SPACING);
       cardView.setRadius(CORNER_RADIUS);
+      callParticipantView.setBottomInset(0);
     } else {
       view.setPadding(0, 0, 0, 0);
       cardView.setRadius(0);
+      callParticipantView.setBottomInset(navBarBottomInset);
     }
 
-    if (isIncomingRing) {
+    if (hideAvatar) {
       callParticipantView.hideAvatar();
     } else {
       callParticipantView.showAvatar();
@@ -140,6 +145,8 @@ public class CallParticipantsLayout extends FlexboxLayout {
     } else {
       callParticipantView.useLargeAvatar();
     }
+
+    callParticipantView.setRaiseHandAllowed(count >= RAISE_HAND_MINIMUM_COUNT);
 
     layoutStrategy.setChildLayoutParams(view, index, getChildCount());
   }

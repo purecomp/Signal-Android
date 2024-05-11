@@ -1,7 +1,6 @@
 package org.thoughtcrime.securesms.keyvalue;
 
 import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
@@ -9,11 +8,11 @@ import org.thoughtcrime.securesms.lock.SignalPinReminders;
 import org.thoughtcrime.securesms.lock.v2.PinKeyboardType;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
 
-import java.util.Collections;
+import java.util.Arrays;
 import java.util.List;
 
 /**
- * Specifically handles just the UI/UX state around PINs. For actual keys, see {@link KbsValues}.
+ * Specifically handles just the UI/UX state around PINs. For actual keys, see {@link SvrValues}.
  */
 public final class PinValues extends SignalStoreValues {
 
@@ -22,7 +21,6 @@ public final class PinValues extends SignalStoreValues {
   private static final String LAST_SUCCESSFUL_ENTRY = "pin.last_successful_entry";
   private static final String NEXT_INTERVAL         = "pin.interval_index";
   private static final String KEYBOARD_TYPE         = "kbs.keyboard_type";
-  private static final String PIN_STATE             = "pin.pin_state";
   public  static final String PIN_REMINDERS_ENABLED = "pin.pin_reminders_enabled";
 
   PinValues(KeyValueStore store) {
@@ -35,7 +33,7 @@ public final class PinValues extends SignalStoreValues {
 
   @Override
   @NonNull List<String> getKeysToIncludeInBackup() {
-    return Collections.singletonList(PIN_REMINDERS_ENABLED);
+    return Arrays.asList(PIN_REMINDERS_ENABLED, KEYBOARD_TYPE);
   }
 
   public void onEntrySuccess(@NonNull String pin) {
@@ -47,7 +45,7 @@ public final class PinValues extends SignalStoreValues {
               .putLong(NEXT_INTERVAL, nextInterval)
               .apply();
 
-    SignalStore.kbsValues().setPinIfNotPresent(pin);
+    SignalStore.svr().setPinIfNotPresent(pin);
   }
 
   public void onEntrySuccessWithWrongGuess(@NonNull String pin) {
@@ -59,7 +57,7 @@ public final class PinValues extends SignalStoreValues {
               .putLong(NEXT_INTERVAL, nextInterval)
               .apply();
 
-    SignalStore.kbsValues().setPinIfNotPresent(pin);
+    SignalStore.svr().setPinIfNotPresent(pin);
   }
 
   public void onEntrySkipWithWrongGuess() {
@@ -100,21 +98,24 @@ public final class PinValues extends SignalStoreValues {
   }
 
   public @NonNull PinKeyboardType getKeyboardType() {
-    return PinKeyboardType.fromCode(getStore().getString(KEYBOARD_TYPE, null));
+    String pin = SignalStore.svr().getPin();
+
+    if (pin == null) {
+      return PinKeyboardType.fromCode(getStore().getString(KEYBOARD_TYPE, null));
+    }
+
+    for (char c : pin.toCharArray()) {
+      if (!Character.isDigit(c)) {
+        return PinKeyboardType.ALPHA_NUMERIC;
+      }
+    }
+
+    return PinKeyboardType.NUMERIC;
   }
 
   public void setNextReminderIntervalToAtMost(long maxInterval) {
     if (getStore().getLong(NEXT_INTERVAL, 0) > maxInterval) {
       putLong(NEXT_INTERVAL, maxInterval);
     }
-  }
-
-  /** Should only be set by {@link org.thoughtcrime.securesms.pin.PinState} */
-  public void setPinState(@NonNull String pinState) {
-    getStore().beginWrite().putString(PIN_STATE, pinState).commit();
-  }
-
-  public @Nullable String getPinState() {
-    return getString(PIN_STATE, null);
   }
 }

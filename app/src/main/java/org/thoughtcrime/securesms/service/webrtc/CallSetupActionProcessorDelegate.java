@@ -10,7 +10,6 @@ import org.thoughtcrime.securesms.events.WebRtcViewModel;
 import org.thoughtcrime.securesms.ringrtc.Camera;
 import org.thoughtcrime.securesms.ringrtc.RemotePeer;
 import org.thoughtcrime.securesms.service.webrtc.state.WebRtcServiceState;
-import org.thoughtcrime.securesms.util.NetworkUtil;
 import org.thoughtcrime.securesms.webrtc.audio.SignalAudioManager;
 import org.thoughtcrime.securesms.webrtc.locks.LockManager;
 
@@ -38,8 +37,15 @@ public class CallSetupActionProcessorDelegate extends WebRtcActionProcessor {
 
     RemotePeer activePeer = currentState.getCallInfoState().requireActivePeer();
 
+    webRtcInteractor.sendAcceptedCallEventSyncMessage(
+      activePeer,
+      currentState.getCallInfoState().getCallState() == WebRtcViewModel.State.CALL_RINGING,
+      currentState.getCallSetupState(activePeer).isAcceptWithVideo() || currentState.getLocalDeviceState().getCameraState().isEnabled()
+    );
+
     ApplicationDependencies.getAppForegroundObserver().removeListener(webRtcInteractor.getForegroundListener());
     webRtcInteractor.startAudioCommunication();
+    webRtcInteractor.activateCall(activePeer.getId());
 
     activePeer.connected();
 
@@ -58,27 +64,27 @@ public class CallSetupActionProcessorDelegate extends WebRtcActionProcessor {
                                .changeLocalDeviceState()
                                .build();
 
-    webRtcInteractor.setCallInProgressNotification(TYPE_ESTABLISHED, activePeer);
+    boolean isRemoteVideoOffer = currentState.getCallSetupState(activePeer).isRemoteVideoOffer();
+
+    webRtcInteractor.setCallInProgressNotification(TYPE_ESTABLISHED, activePeer, isRemoteVideoOffer);
     webRtcInteractor.unregisterPowerButtonReceiver();
 
     try {
       CallManager callManager = webRtcInteractor.getCallManager();
-      callManager.setCommunicationMode();
       callManager.setAudioEnable(currentState.getLocalDeviceState().isMicrophoneEnabled());
       callManager.setVideoEnable(currentState.getLocalDeviceState().getCameraState().isEnabled());
-      callManager.updateBandwidthMode(NetworkUtil.getCallingBandwidthMode(context));
     } catch (CallException e) {
       return callFailure(currentState, "Enabling audio/video failed: ", e);
     }
 
-    if (currentState.getCallSetupState().isAcceptWithVideo()) {
+    if (currentState.getCallSetupState(activePeer).isAcceptWithVideo()) {
       currentState = currentState.getActionProcessor().handleSetEnableVideo(currentState, true);
     }
 
-    if (currentState.getCallSetupState().isAcceptWithVideo() || currentState.getLocalDeviceState().getCameraState().isEnabled()) {
-      webRtcInteractor.setDefaultAudioDevice(SignalAudioManager.AudioDevice.SPEAKER_PHONE, false);
+    if (currentState.getCallSetupState(activePeer).isAcceptWithVideo() || currentState.getLocalDeviceState().getCameraState().isEnabled()) {
+      webRtcInteractor.setDefaultAudioDevice(activePeer.getId(), SignalAudioManager.AudioDevice.SPEAKER_PHONE, false);
     } else {
-      webRtcInteractor.setDefaultAudioDevice(SignalAudioManager.AudioDevice.EARPIECE, false);
+      webRtcInteractor.setDefaultAudioDevice(activePeer.getId(), SignalAudioManager.AudioDevice.EARPIECE, false);
     }
 
     return currentState;
@@ -95,12 +101,19 @@ public class CallSetupActionProcessorDelegate extends WebRtcActionProcessor {
     }
 
     currentState = currentState.builder()
-                               .changeCallSetupState()
-                               .enableVideoOnCreate(enable)
-                               .commit()
                                .changeLocalDeviceState()
                                .cameraState(camera.getCameraState())
                                .build();
+
+    //noinspection SimplifiableBooleanExpression
+    if ((enable && camera.isInitialized()) || !enable) {
+      try {
+        CallManager callManager = webRtcInteractor.getCallManager();
+        callManager.setVideoEnable(enable);
+      } catch (CallException e) {
+        Log.w(tag, "Unable change video enabled state to " + enable, e);
+      }
+    }
 
     WebRtcUtil.enableSpeakerPhoneIfNeeded(webRtcInteractor, currentState);
 

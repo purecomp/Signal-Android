@@ -19,9 +19,9 @@ import android.widget.ImageView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.core.view.ViewCompat;
 
 import org.thoughtcrime.securesms.R;
+import org.thoughtcrime.securesms.audio.AudioRecordingHandler;
 import org.thoughtcrime.securesms.permissions.Permissions;
 import org.thoughtcrime.securesms.util.ViewUtil;
 
@@ -35,10 +35,10 @@ public final class MicrophoneRecorderView extends FrameLayout implements View.On
 
   public static final int ANIMATION_DURATION = 200;
 
-  private           FloatingRecordButton floatingRecordButton;
-  private           LockDropTarget       lockDropTarget;
-  private @Nullable Listener             listener;
-  private @NonNull  State                state = State.NOT_RUNNING;
+  private           FloatingRecordButton   floatingRecordButton;
+  private           LockDropTarget        lockDropTarget;
+  private @Nullable AudioRecordingHandler handler;
+  private @NonNull  State                 state = State.NOT_RUNNING;
 
   public MicrophoneRecorderView(Context context) {
     super(context);
@@ -59,12 +59,14 @@ public final class MicrophoneRecorderView extends FrameLayout implements View.On
     recordButton.setOnTouchListener(this);
   }
 
-  public void cancelAction() {
+  public void cancelAction(boolean byUser) {
     if (state != State.NOT_RUNNING) {
       state = State.NOT_RUNNING;
       hideUi();
 
-      if (listener != null) listener.onRecordCanceled();
+      if (handler != null) {
+        handler.onRecordCanceled(byUser);
+      }
     }
   }
 
@@ -77,7 +79,7 @@ public final class MicrophoneRecorderView extends FrameLayout implements View.On
       state = State.RUNNING_LOCKED;
       hideUi();
 
-      if (listener != null) listener.onRecordLocked();
+      if (handler != null) handler.onRecordLocked();
     }
   }
 
@@ -86,7 +88,7 @@ public final class MicrophoneRecorderView extends FrameLayout implements View.On
       state = State.NOT_RUNNING;
       hideUi();
 
-      if (listener != null) listener.onRecordReleased();
+      if (handler != null) handler.onRecordReleased();
     }
   }
 
@@ -100,12 +102,12 @@ public final class MicrophoneRecorderView extends FrameLayout implements View.On
     switch (event.getAction()) {
       case MotionEvent.ACTION_DOWN:
         if (!Permissions.hasAll(getContext(), Manifest.permission.RECORD_AUDIO)) {
-          if (listener != null) listener.onRecordPermissionRequired();
-        } else {
+          if (handler != null) handler.onRecordPermissionRequired();
+        } else if (state == State.NOT_RUNNING) {
           state = State.RUNNING_HELD;
           floatingRecordButton.display(event.getX(), event.getY());
           lockDropTarget.display();
-          if (listener != null) listener.onRecordPressed();
+          if (handler != null) handler.onRecordPressed();
         }
         break;
       case MotionEvent.ACTION_CANCEL:
@@ -113,13 +115,13 @@ public final class MicrophoneRecorderView extends FrameLayout implements View.On
         if (this.state == State.RUNNING_HELD) {
           state = State.NOT_RUNNING;
           hideUi();
-          if (listener != null) listener.onRecordReleased();
+          if (handler != null) handler.onRecordReleased();
         }
         break;
       case MotionEvent.ACTION_MOVE:
         if (this.state == State.RUNNING_HELD) {
           this.floatingRecordButton.moveTo(event.getX(), event.getY());
-          if (listener != null) listener.onRecordMoved(floatingRecordButton.lastOffsetX, event.getRawX());
+          if (handler != null) handler.onRecordMoved(floatingRecordButton.lastOffsetX, event.getRawX());
 
           int dimensionPixelSize = getResources().getDimensionPixelSize(R.dimen.recording_voice_lock_target);
           if (floatingRecordButton.lastOffsetY <= dimensionPixelSize) {
@@ -132,17 +134,8 @@ public final class MicrophoneRecorderView extends FrameLayout implements View.On
     return false;
   }
 
-  public void setListener(@Nullable Listener listener) {
-    this.listener = listener;
-  }
-
-  public interface Listener {
-    void onRecordPressed();
-    void onRecordReleased();
-    void onRecordCanceled();
-    void onRecordLocked();
-    void onRecordMoved(float offsetX, float absoluteX);
-    void onRecordPermissionRequired();
+  public void setHandler(@Nullable AudioRecordingHandler handler) {
+    this.handler = handler;
   }
 
   private static class FloatingRecordButton {

@@ -1,8 +1,7 @@
 package org.thoughtcrime.securesms.components.voice
 
 import android.net.Uri
-import org.thoughtcrime.securesms.database.DraftDatabase
-import java.lang.IllegalArgumentException
+import org.thoughtcrime.securesms.database.DraftTable
 
 private const val SIZE = "size"
 
@@ -12,8 +11,8 @@ class VoiceNoteDraft(
 ) {
   companion object {
     @JvmStatic
-    fun fromDraft(draft: DraftDatabase.Draft): VoiceNoteDraft {
-      if (draft.type != DraftDatabase.Draft.VOICE_NOTE) {
+    fun fromDraft(draft: DraftTable.Draft): VoiceNoteDraft {
+      if (draft.type != DraftTable.Draft.VOICE_NOTE) {
         throw IllegalArgumentException()
       }
 
@@ -26,9 +25,9 @@ class VoiceNoteDraft(
     }
   }
 
-  fun asDraft(): DraftDatabase.Draft {
+  fun asDraft(): DraftTable.Draft {
     val draftUri = uri.buildUpon().appendQueryParameter(SIZE, size.toString())
 
-    return DraftDatabase.Draft(DraftDatabase.Draft.VOICE_NOTE, draftUri.build().toString())
+    return DraftTable.Draft(DraftTable.Draft.VOICE_NOTE, draftUri.build().toString())
   }
 }

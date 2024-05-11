@@ -4,7 +4,6 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.WorkerThread;
 
-import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 
@@ -38,10 +37,10 @@ public interface JobStorage {
   boolean areQueuesEmpty(@NonNull Set<String> queueKeys);
 
   @WorkerThread
-  void updateJobRunningState(@NonNull String id, boolean isRunning);
+  void markJobAsRunning(@NonNull String id, long currentTime);
 
   @WorkerThread
-  void updateJobAfterRetry(@NonNull String id, boolean isRunning, int runAttempt, long nextRunAttemptTime, @NonNull String serializedData);
+  void updateJobAfterRetry(@NonNull String id, long currentTime, int runAttempt, long nextBackoffInterval, @Nullable byte[] serializedData);
 
   @WorkerThread
   void updateAllJobsToBePending();

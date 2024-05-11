@@ -3,7 +3,6 @@ package org.thoughtcrime.securesms;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Context;
-import android.content.DialogInterface;
 import android.os.AsyncTask;
 import android.os.Bundle;
 import android.view.LayoutInflater;
@@ -22,12 +21,14 @@ import androidx.loader.app.LoaderManager;
 import androidx.loader.content.Loader;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
-import com.melnykov.fab.FloatingActionButton;
+import com.google.android.material.floatingactionbutton.FloatingActionButton;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.database.loaders.DeviceListLoader;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.devicelist.Device;
+import org.thoughtcrime.securesms.jobs.LinkedDeviceInactiveCheckJob;
+import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
 import org.thoughtcrime.securesms.util.task.ProgressDialogAsyncTask;
 import org.whispersystems.signalservice.api.SignalServiceAccountManager;
@@ -107,7 +108,9 @@ public class DeviceListFragment extends ListFragment
     if (data.isEmpty()) {
       empty.setVisibility(View.VISIBLE);
       TextSecurePreferences.setMultiDevice(getActivity(), false);
+      SignalStore.misc().setHasLinkedDevices(false);
     } else {
+      SignalStore.misc().setHasLinkedDevices(true);
       empty.setVisibility(View.GONE);
     }
   }
@@ -164,6 +167,7 @@ public class DeviceListFragment extends ListFragment
         super.onPostExecute(result);
         if (result) {
           getLoaderManager().restartLoader(0, null, DeviceListFragment.this);
+          LinkedDeviceInactiveCheckJob.enqueue();
         } else {
           Toast.makeText(getActivity(), R.string.DeviceListActivity_network_failed, Toast.LENGTH_LONG).show();
         }

@@ -23,9 +23,9 @@ public enum AvatarColor {
   A180("A180", 0xFFFEF5D0),
   A190("A190", 0xFFEAE6D5),
   A200("A200", 0xFFD2D2DC),
-  A210("A210", 0xFFD7D7D9);
-
-  public static final AvatarColor UNKNOWN = A210;
+  A210("A210", 0xFFD7D7D9),
+  UNKNOWN("UNKNOWN", 0x00000000),
+  ON_SURFACE_VARIANT("ON_SURFACE_VARIANT", 0x00000000);
 
   /** Fast map of name to enum, while also giving us a location to map old colors to new ones. */
   private static final Map<String, AvatarColor> NAME_MAP = new HashMap<>();
@@ -98,7 +98,7 @@ public enum AvatarColor {
   }
 
   /** Colors that can be assigned via {@link #random()}. */
-  private static final AvatarColor[] RANDOM_OPTIONS = new AvatarColor[] {
+  static final AvatarColor[] RANDOM_OPTIONS = new AvatarColor[] {
       A100,
       A110,
       A120,
@@ -134,7 +134,7 @@ public enum AvatarColor {
     return name;
   }
 
-  public static @NonNull AvatarColor deserialize(@NonNull String name) {
+  public static @NonNull AvatarColor deserialize(@Nullable String name) {
     return Objects.requireNonNull(NAME_MAP.getOrDefault(name, A210));
   }
 }

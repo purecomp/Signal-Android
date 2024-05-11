@@ -5,11 +5,11 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import androidx.annotation.MainThread
 import androidx.annotation.WorkerThread
+import org.signal.core.util.concurrent.SimpleTask
 import org.signal.core.util.logging.Log
 import org.thoughtcrime.securesms.mms.PartAuthority
 import org.thoughtcrime.securesms.util.ListenableFutureTask
 import org.thoughtcrime.securesms.util.SoftHashMap
-import org.thoughtcrime.securesms.util.concurrent.SimpleTask
 import java.io.IOException
 import java.io.InputStream
 
@@ -75,7 +75,7 @@ object EmojiPageCache {
     val bitmapOptions = BitmapFactory.Options()
     bitmapOptions.inSampleSize = emojiPageRequest.inSampleSize
 
-    return BitmapFactory.decodeStream(inputStream, null, bitmapOptions)
+    return inputStream.use { BitmapFactory.decodeStream(it, null, bitmapOptions) }
   }
 
   private data class EmojiPageRequest(val emojiPage: EmojiPage, val inSampleSize: Int)

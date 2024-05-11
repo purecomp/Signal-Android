@@ -2,17 +2,16 @@ package org.thoughtcrime.securesms.components.settings.app.chats
 
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.ViewModel
-import androidx.lifecycle.ViewModelProvider
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies
-import org.thoughtcrime.securesms.jobs.MultiDeviceContactUpdateJob
 import org.thoughtcrime.securesms.keyvalue.SignalStore
-import org.thoughtcrime.securesms.storage.StorageSyncHelper
 import org.thoughtcrime.securesms.util.BackupUtil
 import org.thoughtcrime.securesms.util.ConversationUtil
 import org.thoughtcrime.securesms.util.ThrottledDebouncer
 import org.thoughtcrime.securesms.util.livedata.Store
 
-class ChatsSettingsViewModel(private val repository: ChatsSettingsRepository) : ViewModel() {
+class ChatsSettingsViewModel @JvmOverloads constructor(
+  private val repository: ChatsSettingsRepository = ChatsSettingsRepository()
+) : ViewModel() {
 
   private val refreshDebouncer = ThrottledDebouncer(500L)
 
@@ -20,9 +19,11 @@ class ChatsSettingsViewModel(private val repository: ChatsSettingsRepository) : 
     ChatsSettingsState(
       generateLinkPreviews = SignalStore.settings().isLinkPreviewsEnabled,
       useAddressBook = SignalStore.settings().isPreferSystemContactPhotos,
+      keepMutedChatsArchived = SignalStore.settings().shouldKeepMutedChatsArchived(),
       useSystemEmoji = SignalStore.settings().isPreferSystemEmoji,
       enterKeySends = SignalStore.settings().isEnterKeySends,
-      chatBackupsEnabled = SignalStore.settings().isBackupEnabled && BackupUtil.canUserAccessBackupDirectory(ApplicationDependencies.getApplication())
+      localBackupsEnabled = SignalStore.settings().isBackupEnabled && BackupUtil.canUserAccessBackupDirectory(ApplicationDependencies.getApplication()),
+      remoteBackupsEnabled = SignalStore.backup().areBackupsEnabled
     )
   )
 
@@ -36,10 +37,15 @@ class ChatsSettingsViewModel(private val repository: ChatsSettingsRepository) : 
 
   fun setUseAddressBook(enabled: Boolean) {
     store.update { it.copy(useAddressBook = enabled) }
-    SignalStore.settings().isPreferSystemContactPhotos = enabled
     refreshDebouncer.publish { ConversationUtil.refreshRecipientShortcuts() }
-    ApplicationDependencies.getJobManager().add(MultiDeviceContactUpdateJob(true))
-    StorageSyncHelper.scheduleSyncForDataChange()
+    SignalStore.settings().isPreferSystemContactPhotos = enabled
+    repository.syncPreferSystemContactPhotos()
+  }
+
+  fun setKeepMutedChatsArchived(enabled: Boolean) {
+    store.update { it.copy(keepMutedChatsArchived = enabled) }
+    SignalStore.settings().setKeepMutedChatsArchived(enabled)
+    repository.syncKeepMutedChatsArchivedState()
   }
 
   fun setUseSystemEmoji(enabled: Boolean) {
@@ -52,9 +58,14 @@ class ChatsSettingsViewModel(private val repository: ChatsSettingsRepository) : 
     SignalStore.settings().isEnterKeySends = enabled
   }
 
-  class Factory(private val repository: ChatsSettingsRepository) : ViewModelProvider.Factory {
-    override fun <T : ViewModel?> create(modelClass: Class<T>): T {
-      return requireNotNull(modelClass.cast(ChatsSettingsViewModel(repository)))
+  fun refresh() {
+    val backupsEnabled = SignalStore.settings().isBackupEnabled && BackupUtil.canUserAccessBackupDirectory(ApplicationDependencies.getApplication())
+    val remoteBackupsEnabled = SignalStore.backup().areBackupsEnabled
+
+    if (store.state.localBackupsEnabled != backupsEnabled ||
+      store.state.remoteBackupsEnabled != remoteBackupsEnabled
+    ) {
+      store.update { it.copy(localBackupsEnabled = backupsEnabled, remoteBackupsEnabled = remoteBackupsEnabled) }
     }
   }
 }

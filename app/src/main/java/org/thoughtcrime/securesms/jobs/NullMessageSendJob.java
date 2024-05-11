@@ -1,24 +1,24 @@
 package org.thoughtcrime.securesms.jobs;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.crypto.UnidentifiedAccessUtil;
-import org.thoughtcrime.securesms.database.RecipientDatabase;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.jobmanager.Data;
+import org.thoughtcrime.securesms.jobmanager.JsonJobData;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.recipients.RecipientId;
 import org.thoughtcrime.securesms.recipients.RecipientUtil;
-import org.whispersystems.libsignal.util.guava.Optional;
 import org.whispersystems.signalservice.api.SignalServiceMessageSender;
 import org.whispersystems.signalservice.api.crypto.UnidentifiedAccessPair;
 import org.whispersystems.signalservice.api.crypto.UntrustedIdentityException;
 import org.whispersystems.signalservice.api.push.SignalServiceAddress;
 import org.whispersystems.signalservice.api.push.exceptions.PushNetworkException;
 
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 
 /**
@@ -50,8 +50,8 @@ public class NullMessageSendJob extends BaseJob {
   }
 
   @Override
-  public @NonNull Data serialize() {
-    return new Data.Builder().putString(KEY_RECIPIENT_ID, recipientId.serialize()).build();
+  public @Nullable byte[] serialize() {
+    return new JsonJobData.Builder().putString(KEY_RECIPIENT_ID, recipientId.serialize()).serialize();
   }
 
   @Override
@@ -95,7 +95,9 @@ public class NullMessageSendJob extends BaseJob {
   public static final class Factory implements Job.Factory<NullMessageSendJob> {
 
     @Override
-    public @NonNull NullMessageSendJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull NullMessageSendJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
+      JsonJobData data = JsonJobData.deserialize(serializedData);
+
       return new NullMessageSendJob(RecipientId.from(data.getString(KEY_RECIPIENT_ID)),
                                     parameters);
     }

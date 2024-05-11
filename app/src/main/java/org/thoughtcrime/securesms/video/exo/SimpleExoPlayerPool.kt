@@ -2,27 +2,30 @@ package org.thoughtcrime.securesms.video.exo
 
 import android.content.Context
 import androidx.annotation.MainThread
-import com.google.android.exoplayer2.ExoPlayer
-import com.google.android.exoplayer2.SimpleExoPlayer
-import com.google.android.exoplayer2.mediacodec.MediaCodecUtil
-import com.google.android.exoplayer2.mediacodec.MediaCodecUtil.DecoderQueryException
-import com.google.android.exoplayer2.source.MediaSourceFactory
-import com.google.android.exoplayer2.source.ProgressiveMediaSource
-import com.google.android.exoplayer2.upstream.DataSource
-import com.google.android.exoplayer2.util.MimeTypes
+import androidx.annotation.OptIn
+import androidx.media3.common.MimeTypes
+import androidx.media3.common.util.UnstableApi
+import androidx.media3.datasource.DataSource
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.mediacodec.MediaCodecUtil
+import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import androidx.media3.exoplayer.source.MediaSource
+import org.signal.core.util.logging.Log
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies
 import org.thoughtcrime.securesms.net.ContentProxySelector
 import org.thoughtcrime.securesms.util.AppForegroundObserver
 import org.thoughtcrime.securesms.util.DeviceProperties
+import kotlin.time.Duration.Companion.seconds
 
 /**
- * ExoPlayerPool concrete instance which helps to manage a pool of SimpleExoPlayer objects
+ * ExoPlayerPool concrete instance which helps to manage a pool of ExoPlayer objects
  */
-class SimpleExoPlayerPool(context: Context) : ExoPlayerPool<SimpleExoPlayer>(MAXIMUM_RESERVED_PLAYERS) {
+@OptIn(markerClass = [UnstableApi::class])
+class SimpleExoPlayerPool(context: Context) : ExoPlayerPool<ExoPlayer>(MAXIMUM_RESERVED_PLAYERS) {
   private val context: Context = context.applicationContext
   private val okHttpClient = ApplicationDependencies.getOkHttpClient().newBuilder().proxySelector(ContentProxySelector()).build()
   private val dataSourceFactory: DataSource.Factory = SignalDataSource.Factory(ApplicationDependencies.getApplication(), okHttpClient, null)
-  private val mediaSourceFactory: MediaSourceFactory = ProgressiveMediaSource.Factory(dataSourceFactory)
+  private val mediaSourceFactory: MediaSource.Factory = DefaultMediaSourceFactory(dataSourceFactory)
 
   init {
     ApplicationDependencies.getAppForegroundObserver().addListener(this)
@@ -40,7 +43,7 @@ class SimpleExoPlayerPool(context: Context) : ExoPlayerPool<SimpleExoPlayer>(MAX
       } else {
         0
       }
-    } catch (ignored: DecoderQueryException) {
+    } catch (ignored: MediaCodecUtil.DecoderQueryException) {
       0
     }
 
@@ -56,9 +59,11 @@ class SimpleExoPlayerPool(context: Context) : ExoPlayerPool<SimpleExoPlayer>(MAX
   }
 
   @MainThread
-  override fun createPlayer(): SimpleExoPlayer {
-    return SimpleExoPlayer.Builder(context)
+  override fun createPlayer(): ExoPlayer {
+    return ExoPlayer.Builder(context)
       .setMediaSourceFactory(mediaSourceFactory)
+      .setSeekBackIncrementMs(SEEK_INTERVAL.inWholeMilliseconds)
+      .setSeekForwardIncrementMs(SEEK_INTERVAL.inWholeMilliseconds)
       .build()
   }
 
@@ -66,6 +71,7 @@ class SimpleExoPlayerPool(context: Context) : ExoPlayerPool<SimpleExoPlayer>(MAX
     private const val MAXIMUM_RESERVED_PLAYERS = 1
     private const val MAXIMUM_SUPPORTED_PLAYBACK_PRE_23 = 6
     private const val MAXIMUM_SUPPORTED_PLAYBACK_PRE_23_LOW_MEM = 3
+    private val SEEK_INTERVAL = 15.seconds
   }
 }
 
@@ -78,8 +84,12 @@ class SimpleExoPlayerPool(context: Context) : ExoPlayerPool<SimpleExoPlayer>(MAX
  * players will be returned first when a player is requested via require.
  */
 abstract class ExoPlayerPool<T : ExoPlayer>(
-  private val maximumReservedPlayers: Int,
+  private val maximumReservedPlayers: Int
 ) : AppForegroundObserver.Listener {
+
+  companion object {
+    private val TAG = Log.tag(ExoPlayerPool::class.java)
+  }
 
   private val pool: MutableMap<T, PoolState> = mutableMapOf()
 
@@ -89,8 +99,8 @@ abstract class ExoPlayerPool<T : ExoPlayer>(
    * @return A player if one is available, otherwise null
    */
   @MainThread
-  fun get(): T? {
-    return get(allowReserved = false)
+  fun get(tag: String): T? {
+    return get(allowReserved = false, tag = tag)
   }
 
   /**
@@ -100,8 +110,8 @@ abstract class ExoPlayerPool<T : ExoPlayer>(
    * @throws IllegalStateException if no player is available.
    */
   @MainThread
-  fun require(): T {
-    return checkNotNull(get(allowReserved = true)) { "Required exoPlayer could not be acquired! :: ${poolStats()}" }
+  fun require(tag: String): T {
+    return checkNotNull(get(allowReserved = true, tag = tag)) { "Required exoPlayer could not be acquired for $tag! :: ${poolStats()}" }
   }
 
   /**
@@ -113,26 +123,31 @@ abstract class ExoPlayerPool<T : ExoPlayer>(
   fun pool(exoPlayer: T) {
     val poolState = pool[exoPlayer]
     if (poolState != null) {
-      pool[exoPlayer] = poolState.copy(available = true)
+      pool[exoPlayer] = poolState.copy(available = true, tag = null)
     } else {
       throw IllegalArgumentException("Tried to return unknown ExoPlayer to pool :: ${poolStats()}")
     }
   }
 
   @MainThread
-  private fun get(allowReserved: Boolean): T? {
+  private fun get(allowReserved: Boolean, tag: String): T? {
     val player = findAvailablePlayer(allowReserved)
-    return if (player == null && pool.size < getMaximumAllowed(allowReserved)) {
+    val toReturn = if (player == null && pool.size < getMaximumAllowed(allowReserved)) {
       val newPlayer = createPlayer()
-      val poolState = createPoolStateForNewEntry(allowReserved)
+      val poolState = createPoolStateForNewEntry(allowReserved, tag)
       pool[newPlayer] = poolState
       newPlayer
     } else if (player != null) {
-      val poolState = pool[player]!!.copy(available = false)
+      val poolState = pool[player]!!.copy(available = false, tag = tag)
       pool[player] = poolState
       player
     } else {
+      Log.d(TAG, "Failed to get an ExoPlayer instance for tag: $tag :: ${poolStats()}")
       null
+    }
+
+    return toReturn?.apply {
+      configureForVideoPlayback()
     }
   }
 
@@ -140,11 +155,11 @@ abstract class ExoPlayerPool<T : ExoPlayer>(
     return if (allowReserved) getMaxSimultaneousPlayback() else getMaxSimultaneousPlayback() - maximumReservedPlayers
   }
 
-  private fun createPoolStateForNewEntry(allowReserved: Boolean): PoolState {
+  private fun createPoolStateForNewEntry(allowReserved: Boolean, tag: String?): PoolState {
     return if (allowReserved && pool.none { (_, v) -> v.reserved }) {
-      PoolState(available = false, reserved = true)
+      PoolState(available = false, reserved = true, tag = tag)
     } else {
-      PoolState(available = false, reserved = false)
+      PoolState(available = false, reserved = false, tag = tag)
     }
   }
 
@@ -175,39 +190,51 @@ abstract class ExoPlayerPool<T : ExoPlayer>(
   }
 
   private fun poolStats(): String {
+    return getPoolStats().toString()
+  }
+
+  fun getPoolStats(): PoolStats {
     val poolStats = PoolStats(
       created = pool.size,
       maxUnreserved = getMaxSimultaneousPlayback() - maximumReservedPlayers,
-      maxReserved = maximumReservedPlayers
+      maxReserved = maximumReservedPlayers,
+      owners = emptyList()
     )
 
-    pool.values.fold(poolStats) { acc, state ->
+    return pool.values.fold(poolStats) { acc, state ->
+      Log.d(TAG, "$state")
       acc.copy(
         unreservedAndAvailable = acc.unreservedAndAvailable + if (state.unreservedAndAvailable) 1 else 0,
         reservedAndAvailable = acc.reservedAndAvailable + if (state.reservedAndAvailable) 1 else 0,
         unreserved = acc.unreserved + if (!state.reserved) 1 else 0,
-        reserved = acc.reserved + if (state.reserved) 1 else 0
+        reserved = acc.reserved + if (state.reserved) 1 else 0,
+        owners = if (!state.available) acc.owners + OwnershipInfo(state.tag!!, state.reserved) else acc.owners
       )
     }
-
-    return poolStats.toString()
   }
 
   protected abstract fun getMaxSimultaneousPlayback(): Int
 
-  private data class PoolStats(
+  data class PoolStats(
     val created: Int = 0,
     val maxUnreserved: Int = 0,
     val maxReserved: Int = 0,
     val unreservedAndAvailable: Int = 0,
     val reservedAndAvailable: Int = 0,
     val unreserved: Int = 0,
-    val reserved: Int = 0
+    val reserved: Int = 0,
+    val owners: List<OwnershipInfo>
+  )
+
+  data class OwnershipInfo(
+    val tag: String,
+    val isReserved: Boolean
   )
 
   private data class PoolState(
     val available: Boolean,
-    val reserved: Boolean
+    val reserved: Boolean,
+    val tag: String?
   ) {
     val unreservedAndAvailable = available && !reserved
     val reservedAndAvailable = available && reserved

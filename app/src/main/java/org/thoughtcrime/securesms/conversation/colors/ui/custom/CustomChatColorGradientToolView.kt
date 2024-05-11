@@ -149,7 +149,6 @@ class CustomChatColorGradientToolView @JvmOverloads constructor(
   }
 
   override fun onTouchEvent(event: MotionEvent): Boolean {
-
     if (event.action == MotionEvent.ACTION_CANCEL || event.action == MotionEvent.ACTION_UP) {
       listener?.onGestureFinished()
     } else if (event.action == MotionEvent.ACTION_DOWN) {
@@ -288,12 +287,11 @@ class CustomChatColorGradientToolView @JvmOverloads constructor(
     }
 
     override fun onScroll(
-      e1: MotionEvent,
+      e1: MotionEvent?,
       e2: MotionEvent,
       distanceX: Float,
       distanceY: Float
     ): Boolean {
-
       val a = PointF(e2.getX(activePointerId) - center.x, e2.getY(activePointerId) - center.y)
       val b = PointF(center.x, 0f)
       val dot = a.dotProduct(b)

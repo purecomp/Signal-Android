@@ -7,10 +7,8 @@ import androidx.annotation.WorkerThread;
 import com.annimon.stream.Stream;
 
 import org.signal.core.util.logging.Log;
-import org.thoughtcrime.securesms.crypto.UnidentifiedAccessUtil;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.groups.GroupId;
-import org.thoughtcrime.securesms.jobmanager.Data;
+import org.thoughtcrime.securesms.jobmanager.JsonJobData;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.messages.GroupSendUtil;
 import org.thoughtcrime.securesms.net.NotPushRegisteredException;
@@ -19,19 +17,16 @@ import org.thoughtcrime.securesms.recipients.RecipientId;
 import org.thoughtcrime.securesms.recipients.RecipientUtil;
 import org.thoughtcrime.securesms.transport.RetryLaterException;
 import org.thoughtcrime.securesms.util.GroupUtil;
-import org.whispersystems.libsignal.util.guava.Optional;
-import org.whispersystems.signalservice.api.SignalServiceMessageSender;
 import org.whispersystems.signalservice.api.crypto.ContentHint;
-import org.whispersystems.signalservice.api.crypto.UnidentifiedAccessPair;
 import org.whispersystems.signalservice.api.crypto.UntrustedIdentityException;
 import org.whispersystems.signalservice.api.messages.SendMessageResult;
 import org.whispersystems.signalservice.api.messages.SignalServiceDataMessage;
-import org.whispersystems.signalservice.api.push.SignalServiceAddress;
 import org.whispersystems.signalservice.api.push.exceptions.ServerRejectedException;
 
 import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 
 /**
  * Send a group call update message to every one in a V2 group. Used to indicate you
@@ -47,11 +42,14 @@ public class GroupCallUpdateSendJob extends BaseJob {
   private static final String KEY_ERA_ID                  = "era_id";
   private static final String KEY_RECIPIENTS              = "recipients";
   private static final String KEY_INITIAL_RECIPIENT_COUNT = "initial_recipient_count";
+  static final String KEY_SYNC_TIMESTAMP          = "sync_timestamp";
 
   private final RecipientId       recipientId;
   private final String            eraId;
   private final List<RecipientId> recipients;
   private final int               initialRecipientCount;
+
+  private long syncTimestamp;
 
   @WorkerThread
   public static @NonNull GroupCallUpdateSendJob create(@NonNull RecipientId recipientId, @Nullable String eraId) {
@@ -61,16 +59,16 @@ public class GroupCallUpdateSendJob extends BaseJob {
       throw new AssertionError("We have a recipient, but it's not a V2 Group");
     }
 
-    List<RecipientId> recipients = Stream.of(RecipientUtil.getEligibleForSending(conversationRecipient.getParticipants()))
-                                         .filterNot(Recipient::isSelf)
-                                         .filterNot(Recipient::isBlocked)
-                                         .map(Recipient::getId)
-                                         .toList();
+    List<RecipientId> recipientIds = Stream.of(RecipientUtil.getEligibleForSending(Recipient.resolvedList(conversationRecipient.getParticipantIds())))
+                                           .filterNot(Recipient::isSelf)
+                                           .map(Recipient::getId)
+                                           .toList();
 
     return new GroupCallUpdateSendJob(recipientId,
                                       eraId,
-                                      recipients,
-                                      recipients.size(),
+                                      recipientIds,
+                                      recipientIds.size(),
+                                      0L,
                                       new Parameters.Builder()
                                                     .setQueue(conversationRecipient.getId().toQueueKey())
                                                     .setLifespan(TimeUnit.MINUTES.toMillis(5))
@@ -79,9 +77,10 @@ public class GroupCallUpdateSendJob extends BaseJob {
   }
 
   private GroupCallUpdateSendJob(@NonNull RecipientId recipientId,
-                                 @NonNull String eraId,
+                                 @Nullable String eraId,
                                  @NonNull List<RecipientId> recipients,
                                  int initialRecipientCount,
+                                 long syncTimestamp,
                                  @NonNull Parameters parameters)
   {
     super(parameters);
@@ -90,15 +89,17 @@ public class GroupCallUpdateSendJob extends BaseJob {
     this.eraId                 = eraId;
     this.recipients            = recipients;
     this.initialRecipientCount = initialRecipientCount;
+    this.syncTimestamp         = syncTimestamp;
   }
 
   @Override
-  public @NonNull Data serialize() {
-    return new Data.Builder().putString(KEY_RECIPIENT_ID, recipientId.serialize())
-                             .putString(KEY_ERA_ID, eraId)
-                             .putString(KEY_RECIPIENTS, RecipientId.toSerializedList(recipients))
-                             .putInt(KEY_INITIAL_RECIPIENT_COUNT, initialRecipientCount)
-                             .build();
+  public @Nullable byte[] serialize() {
+    return new JsonJobData.Builder().putString(KEY_RECIPIENT_ID, recipientId.serialize())
+                                    .putString(KEY_ERA_ID, eraId)
+                                    .putString(KEY_RECIPIENTS, RecipientId.toSerializedList(recipients))
+                                    .putInt(KEY_INITIAL_RECIPIENT_COUNT, initialRecipientCount)
+                                    .putLong(KEY_SYNC_TIMESTAMP, syncTimestamp)
+                                    .serialize();
   }
 
   @Override
@@ -131,6 +132,10 @@ public class GroupCallUpdateSendJob extends BaseJob {
       Log.w(TAG, "Still need to send to " + recipients.size() + " recipients. Retrying.");
       throw new RetryLaterException();
     }
+
+    setOutputData(new JsonJobData.Builder()
+                      .putLong(KEY_SYNC_TIMESTAMP, syncTimestamp)
+                      .serialize());
   }
 
   @Override
@@ -153,33 +158,45 @@ public class GroupCallUpdateSendJob extends BaseJob {
   private @NonNull List<Recipient> deliver(@NonNull Recipient conversationRecipient, @NonNull List<Recipient> destinations)
       throws IOException, UntrustedIdentityException
   {
-    SignalServiceDataMessage.Builder dataMessage = SignalServiceDataMessage.newBuilder()
-                                                                           .withTimestamp(System.currentTimeMillis())
-                                                                           .withGroupCallUpdate(new SignalServiceDataMessage.GroupCallUpdate(eraId));
+    SignalServiceDataMessage.Builder dataMessageBuilder = SignalServiceDataMessage.newBuilder()
+                                                                                  .withTimestamp(System.currentTimeMillis())
+                                                                                  .withGroupCallUpdate(new SignalServiceDataMessage.GroupCallUpdate(eraId));
 
-    GroupUtil.setDataMessageGroupContext(context, dataMessage, conversationRecipient.requireGroupId().requirePush());
+    GroupUtil.setDataMessageGroupContext(context, dataMessageBuilder, conversationRecipient.requireGroupId().requirePush());
 
-    List<SendMessageResult> results = GroupSendUtil.sendUnresendableDataMessage(context,
-                                                                                conversationRecipient.requireGroupId().requireV2(),
-                                                                                destinations,
-                                                                                false,
-                                                                                ContentHint.DEFAULT,
-                                                                                dataMessage.build());
+    SignalServiceDataMessage dataMessage         = dataMessageBuilder.build();
+    List<Recipient>          nonSelfDestinations = destinations.stream().filter(r -> !r.isSelf()).collect(Collectors.toList());
+    boolean                  includesSelf        = nonSelfDestinations.size() != destinations.size();
+    List<SendMessageResult>  results             = GroupSendUtil.sendUnresendableDataMessage(context,
+                                                                                             conversationRecipient.requireGroupId().requireV2(),
+                                                                                             nonSelfDestinations,
+                                                                                             false,
+                                                                                             ContentHint.DEFAULT,
+                                                                                             dataMessage,
+                                                                                             false);
 
-    return GroupSendJobHelper.getCompletedSends(destinations, results);
+    if (includesSelf) {
+      results.add(ApplicationDependencies.getSignalServiceMessageSender().sendSyncMessage(dataMessage));
+      syncTimestamp = dataMessage.getTimestamp();
+    }
+
+    return GroupSendJobHelper.getCompletedSends(destinations, results).completed;
   }
 
   public static class Factory implements Job.Factory<GroupCallUpdateSendJob> {
 
     @Override
     public @NonNull
-    GroupCallUpdateSendJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    GroupCallUpdateSendJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
+      JsonJobData data = JsonJobData.deserialize(serializedData);
+
       RecipientId       recipientId           = RecipientId.from(data.getString(KEY_RECIPIENT_ID));
       String            eraId                 = data.getString(KEY_ERA_ID);
       List<RecipientId> recipients            = RecipientId.fromSerializedList(data.getString(KEY_RECIPIENTS));
       int               initialRecipientCount = data.getInt(KEY_INITIAL_RECIPIENT_COUNT);
+      long              syncTimestamp         = data.getLongOrDefault(KEY_SYNC_TIMESTAMP, 0L);
 
-      return new GroupCallUpdateSendJob(recipientId, eraId, recipients, initialRecipientCount, parameters);
+      return new GroupCallUpdateSendJob(recipientId, eraId, recipients, initialRecipientCount, syncTimestamp, parameters);
     }
   }
 }

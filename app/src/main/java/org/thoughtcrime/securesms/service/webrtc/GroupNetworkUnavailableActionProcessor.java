@@ -8,6 +8,7 @@ import androidx.annotation.NonNull;
 
 import org.signal.core.util.logging.Log;
 import org.signal.ringrtc.GroupCall;
+import org.thoughtcrime.securesms.components.webrtc.EglBaseWrapper;
 import org.thoughtcrime.securesms.events.WebRtcViewModel;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.ringrtc.RemotePeer;
@@ -21,12 +22,17 @@ import org.thoughtcrime.securesms.service.webrtc.state.WebRtcServiceState;
  * This class will check the network status when handlePreJoinCall is invoked, and transition to
  * GroupPreJoinActionProcessor as network becomes available again.
  */
-class GroupNetworkUnavailableActionProcessor extends WebRtcActionProcessor {
+public class GroupNetworkUnavailableActionProcessor extends WebRtcActionProcessor {
 
   private static final String TAG = Log.tag(GroupNetworkUnavailableActionProcessor.class);
 
-  public GroupNetworkUnavailableActionProcessor(@NonNull WebRtcInteractor webRtcInteractor) {
+  private final MultiPeerActionProcessorFactory actionProcessorFactory;
+
+  public GroupNetworkUnavailableActionProcessor(@NonNull MultiPeerActionProcessorFactory actionProcessorFactory,
+                                                @NonNull WebRtcInteractor webRtcInteractor)
+  {
     super(webRtcInteractor, TAG);
+    this.actionProcessorFactory = actionProcessorFactory;
   }
 
   @Override
@@ -37,14 +43,16 @@ class GroupNetworkUnavailableActionProcessor extends WebRtcActionProcessor {
     NetworkInfo         activeNetworkInfo   = connectivityManager.getActiveNetworkInfo();
 
     if (activeNetworkInfo != null && activeNetworkInfo.isConnected()) {
-      GroupPreJoinActionProcessor processor = new GroupPreJoinActionProcessor(webRtcInteractor);
+      GroupPreJoinActionProcessor processor = actionProcessorFactory.createPreJoinActionProcessor(webRtcInteractor);
       return processor.handlePreJoinCall(currentState.builder().actionProcessor(processor).build(), remotePeer);
     }
 
     byte[]    groupId   = currentState.getCallInfoState().getCallRecipient().requireGroupId().getDecodedId();
     GroupCall groupCall = webRtcInteractor.getCallManager().createGroupCall(groupId,
                                                                             SignalStore.internalValues().groupCallingServer(),
-                                                                            currentState.getVideoState().getLockableEglBase().require(),
+                                                                            new byte[0],
+                                                                            null,
+                                                                            RingRtcDynamicConfiguration.getAudioProcessingMethod(),
                                                                             webRtcInteractor.getGroupCallObserver());
 
     return currentState.builder()
@@ -60,6 +68,7 @@ class GroupNetworkUnavailableActionProcessor extends WebRtcActionProcessor {
     Log.i(TAG, "handleCancelPreJoinCall():");
 
     WebRtcVideoUtil.deinitializeVideo(currentState);
+    EglBaseWrapper.releaseEglBase(RemotePeer.GROUP_CALL_ID.longValue());
 
     return new WebRtcServiceState(new IdleActionProcessor(webRtcInteractor));
   }
@@ -68,7 +77,7 @@ class GroupNetworkUnavailableActionProcessor extends WebRtcActionProcessor {
   public @NonNull WebRtcServiceState handleNetworkChanged(@NonNull WebRtcServiceState currentState, boolean available) {
     if (available) {
       return currentState.builder()
-                         .actionProcessor(new GroupPreJoinActionProcessor(webRtcInteractor))
+                         .actionProcessor(actionProcessorFactory.createPreJoinActionProcessor(webRtcInteractor))
                          .changeCallInfoState()
                          .callState(WebRtcViewModel.State.CALL_PRE_JOIN)
                          .build();

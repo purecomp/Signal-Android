@@ -6,17 +6,18 @@ import com.bumptech.glide.Glide
 import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.mediasend.Media
 import org.thoughtcrime.securesms.mms.DecryptableStreamUriLoader
-import org.thoughtcrime.securesms.util.MappingAdapter
-import org.thoughtcrime.securesms.util.MappingModel
-import org.thoughtcrime.securesms.util.MappingViewHolder
 import org.thoughtcrime.securesms.util.MediaUtil
+import org.thoughtcrime.securesms.util.adapter.mapping.LayoutFactory
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingAdapter
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingModel
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingViewHolder
 import org.thoughtcrime.securesms.util.visible
 
 typealias OnSelectedMediaClicked = (Media, Boolean) -> Unit
 
 object MediaReviewSelectedItem {
   fun register(mappingAdapter: MappingAdapter, onSelectedMediaClicked: OnSelectedMediaClicked) {
-    mappingAdapter.registerFactory(Model::class.java, MappingAdapter.LayoutFactory({ ViewHolder(it, onSelectedMediaClicked) }, R.layout.v2_media_review_selected_item))
+    mappingAdapter.registerFactory(Model::class.java, LayoutFactory({ ViewHolder(it, onSelectedMediaClicked) }, R.layout.v2_media_review_selected_item))
   }
 
   class Model(val media: Media, val isSelected: Boolean) : MappingModel<Model> {
@@ -33,7 +34,7 @@ object MediaReviewSelectedItem {
 
     private val imageView: ImageView = itemView.findViewById(R.id.media_review_selected_image)
     private val playOverlay: ImageView = itemView.findViewById(R.id.media_review_play_overlay)
-    private val selectedOverlay: ImageView = itemView.findViewById(R.id.media_review_selected_overlay)
+    private val trashOverlay: ImageView = itemView.findViewById(R.id.media_review_trash_overlay)
 
     override fun bind(model: Model) {
       Glide.with(imageView)
@@ -42,7 +43,7 @@ object MediaReviewSelectedItem {
         .into(imageView)
 
       playOverlay.visible = MediaUtil.isNonGifVideo(model.media) && !model.isSelected
-      selectedOverlay.isSelected = model.isSelected
+      trashOverlay.visible = model.isSelected
 
       itemView.contentDescription = if (model.isSelected) {
         context.getString(R.string.MediaReviewSelectedItem__tap_to_remove)

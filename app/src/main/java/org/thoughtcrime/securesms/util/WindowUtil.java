@@ -1,11 +1,12 @@
 package org.thoughtcrime.securesms.util;
 
 import android.app.Activity;
+import android.content.Context;
 import android.graphics.Rect;
 import android.os.Build;
 import android.view.View;
 import android.view.Window;
-import android.view.WindowInsetsController;
+import android.view.WindowManager;
 
 import androidx.annotation.ColorInt;
 import androidx.annotation.NonNull;
@@ -13,6 +14,14 @@ import androidx.annotation.NonNull;
 public final class WindowUtil {
 
   private WindowUtil() {
+  }
+
+  public static void initializeScreenshotSecurity(@NonNull Context context, @NonNull Window window) {
+    if (TextSecurePreferences.isScreenSecurityEnabled(context)) {
+      window.addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+    } else {
+      window.clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
+    }
   }
 
   public static void setLightNavigationBarFromTheme(@NonNull Activity activity) {
@@ -34,6 +43,18 @@ public final class WindowUtil {
     if (Build.VERSION.SDK_INT < 27) return;
 
     setSystemUiFlags(window, View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR);
+  }
+
+  public static void setNavigationBarColor(@NonNull Activity activity, @ColorInt int color) {
+    setNavigationBarColor(activity, activity.getWindow(), color);
+  }
+
+  public static void setNavigationBarColor(@NonNull Context context, @NonNull Window window, @ColorInt int color) {
+    if (Build.VERSION.SDK_INT < 27) {
+      window.setNavigationBarColor(ThemeUtil.getThemedColor(context, android.R.attr.navigationBarColor));
+    } else {
+      window.setNavigationBarColor(color);
+    }
   }
 
   public static void setLightStatusBarFromTheme(@NonNull Activity activity) {
@@ -58,9 +79,11 @@ public final class WindowUtil {
   }
 
   public static void setStatusBarColor(@NonNull Window window, @ColorInt int color) {
-    if (Build.VERSION.SDK_INT < 21) return;
-
     window.setStatusBarColor(color);
+  }
+
+  public static int getStatusBarColor(@NonNull Window window) {
+    return window.getStatusBarColor();
   }
 
   /**

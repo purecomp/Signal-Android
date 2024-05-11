@@ -1,17 +1,17 @@
 package org.thoughtcrime.securesms.jobs;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.jobmanager.Data;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint;
+import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.util.FeatureFlags;
-import org.thoughtcrime.securesms.util.TextSecurePreferences;
+import org.whispersystems.signalservice.api.RemoteConfigResult;
 import org.whispersystems.signalservice.api.push.exceptions.PushNetworkException;
 
-import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
 public class RemoteConfigRefreshJob extends BaseJob {
@@ -35,8 +35,8 @@ public class RemoteConfigRefreshJob extends BaseJob {
   }
 
   @Override
-  public @NonNull Data serialize() {
-    return Data.EMPTY;
+  public @Nullable byte[] serialize() {
+    return null;
   }
 
   @Override
@@ -46,13 +46,14 @@ public class RemoteConfigRefreshJob extends BaseJob {
 
   @Override
   protected void onRun() throws Exception {
-    if (!TextSecurePreferences.isPushRegistered(context)) {
+    if (!SignalStore.account().isRegistered()) {
       Log.w(TAG, "Not registered. Skipping.");
       return;
     }
 
-    Map<String, Object> config = ApplicationDependencies.getSignalServiceAccountManager().getRemoteConfig();
-    FeatureFlags.update(config);
+    RemoteConfigResult result = ApplicationDependencies.getSignalServiceAccountManager().getRemoteConfig();
+    FeatureFlags.update(result.getConfig());
+    SignalStore.misc().setLastKnownServerTime(TimeUnit.SECONDS.toMillis(result.getServerEpochTimeSeconds()), System.currentTimeMillis());
   }
 
   @Override
@@ -66,7 +67,7 @@ public class RemoteConfigRefreshJob extends BaseJob {
 
   public static final class Factory implements Job.Factory<RemoteConfigRefreshJob> {
     @Override
-    public @NonNull RemoteConfigRefreshJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull RemoteConfigRefreshJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
       return new RemoteConfigRefreshJob(parameters);
     }
   }

@@ -1,15 +1,15 @@
 package org.thoughtcrime.securesms.components.settings.conversation.preferences
 
-import android.database.Cursor
 import android.view.View
+import com.bumptech.glide.Glide
 import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.components.ThreadPhotoRailView
 import org.thoughtcrime.securesms.components.settings.PreferenceModel
-import org.thoughtcrime.securesms.database.MediaDatabase
-import org.thoughtcrime.securesms.mms.GlideApp
-import org.thoughtcrime.securesms.util.MappingAdapter
-import org.thoughtcrime.securesms.util.MappingViewHolder
+import org.thoughtcrime.securesms.database.MediaTable
 import org.thoughtcrime.securesms.util.ViewUtil
+import org.thoughtcrime.securesms.util.adapter.mapping.LayoutFactory
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingAdapter
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingViewHolder
 
 /**
  * Renders the shared media photo rail.
@@ -17,13 +17,13 @@ import org.thoughtcrime.securesms.util.ViewUtil
 object SharedMediaPreference {
 
   fun register(adapter: MappingAdapter) {
-    adapter.registerFactory(Model::class.java, MappingAdapter.LayoutFactory(::ViewHolder, R.layout.conversation_settings_shared_media))
+    adapter.registerFactory(Model::class.java, LayoutFactory(::ViewHolder, R.layout.conversation_settings_shared_media))
   }
 
   class Model(
-    val mediaCursor: Cursor,
+    val mediaRecords: List<MediaTable.MediaRecord>,
     val mediaIds: List<Long>,
-    val onMediaRecordClick: (MediaDatabase.MediaRecord, Boolean) -> Unit
+    val onMediaRecordClick: (View, MediaTable.MediaRecord, Boolean) -> Unit
   ) : PreferenceModel<Model>() {
     override fun areItemsTheSame(newItem: Model): Boolean {
       return true
@@ -40,9 +40,9 @@ object SharedMediaPreference {
     private val rail: ThreadPhotoRailView = itemView.findViewById(R.id.rail_view)
 
     override fun bind(model: Model) {
-      rail.setCursor(GlideApp.with(rail), model.mediaCursor)
-      rail.setListener {
-        model.onMediaRecordClick(it, ViewUtil.isLtr(rail))
+      rail.setMediaRecords(Glide.with(rail), model.mediaRecords)
+      rail.setListener { v, m ->
+        model.onMediaRecordClick(v, m, ViewUtil.isLtr(rail))
       }
     }
   }

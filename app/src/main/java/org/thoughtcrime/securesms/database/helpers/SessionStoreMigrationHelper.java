@@ -8,15 +8,16 @@ import net.zetetic.database.sqlcipher.SQLiteDatabase;
 
 import org.signal.core.util.Conversions;
 import org.signal.core.util.logging.Log;
-import org.thoughtcrime.securesms.database.SessionDatabase;
-import org.whispersystems.libsignal.state.SessionRecord;
+import org.signal.libsignal.protocol.InvalidMessageException;
+import org.signal.libsignal.protocol.state.SessionRecord;
+import org.thoughtcrime.securesms.database.SessionTable;
 import org.whispersystems.signalservice.api.push.SignalServiceAddress;
 
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 
-class SessionStoreMigrationHelper {
+public final class SessionStoreMigrationHelper {
 
   private static final String TAG = Log.tag(SessionStoreMigrationHelper.class);
 
@@ -28,7 +29,7 @@ class SessionStoreMigrationHelper {
   private static final int PLAINTEXT_VERSION      = 3;
   private static final int CURRENT_VERSION        = 3;
 
-  static void migrateSessions(Context context, SQLiteDatabase database) {
+  public static void migrateSessions(Context context, SQLiteDatabase database) {
     File directory = new File(context.getFilesDir(), SESSIONS_DIRECTORY_V2);
 
     if (directory.exists()) {
@@ -73,12 +74,12 @@ class SessionStoreMigrationHelper {
 
 
             ContentValues contentValues = new ContentValues();
-            contentValues.put(SessionDatabase.ADDRESS, address);
-            contentValues.put(SessionDatabase.DEVICE, deviceId);
-            contentValues.put(SessionDatabase.RECORD, sessionRecord.serialize());
+            contentValues.put(SessionTable.ADDRESS, address);
+            contentValues.put(SessionTable.DEVICE, deviceId);
+            contentValues.put(SessionTable.RECORD, sessionRecord.serialize());
 
-            database.insert(SessionDatabase.TABLE_NAME, null, contentValues);
-          } catch (NumberFormatException | IOException e) {
+            database.insert(SessionTable.TABLE_NAME, null, contentValues);
+          } catch (NumberFormatException | IOException | InvalidMessageException e) {
             Log.w(TAG, e);
           }
         }

@@ -7,13 +7,13 @@ import com.bumptech.glide.load.DataSource;
 import com.bumptech.glide.load.data.DataFetcher;
 
 import org.signal.core.util.logging.Log;
-import org.whispersystems.libsignal.InvalidMessageException;
-import org.whispersystems.libsignal.util.guava.Optional;
+import org.signal.libsignal.protocol.InvalidMessageException;
 import org.whispersystems.signalservice.api.crypto.AttachmentCipherInputStream;
 
 import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Optional;
 
 class AttachmentStreamLocalUriFetcher implements DataFetcher<InputStream> {
 
@@ -27,17 +27,17 @@ class AttachmentStreamLocalUriFetcher implements DataFetcher<InputStream> {
   private InputStream is;
 
   AttachmentStreamLocalUriFetcher(File attachment, long plaintextLength, byte[] key, Optional<byte[]> digest) {
-    this.attachment      = attachment;
-    this.plaintextLength = plaintextLength;
-    this.digest          = digest;
-    this.key             = key;
+    this.attachment              = attachment;
+    this.plaintextLength         = plaintextLength;
+    this.digest                  = digest;
+    this.key                     = key;
   }
 
   @Override
   public void loadData(@NonNull Priority priority, @NonNull DataCallback<? super InputStream> callback) {
     try {
       if (!digest.isPresent()) throw new InvalidMessageException("No attachment digest!");
-      is = AttachmentCipherInputStream.createForAttachment(attachment, plaintextLength, key, digest.get());
+      is = AttachmentCipherInputStream.createForAttachment(attachment, plaintextLength, key, digest.get(), null, 0);
       callback.onDataReady(is);
     } catch (IOException | InvalidMessageException e) {
       callback.onLoadFailed(e);

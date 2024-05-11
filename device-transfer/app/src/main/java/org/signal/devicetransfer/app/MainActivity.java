@@ -20,9 +20,12 @@ import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.app.NotificationManagerCompat;
 
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+
 import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
+import org.signal.core.util.PendingIntentFlags;
 import org.signal.devicetransfer.ClientTask;
 import org.signal.devicetransfer.DeviceToDeviceTransferService;
 import org.signal.devicetransfer.DeviceToDeviceTransferService.TransferNotificationData;
@@ -63,7 +66,7 @@ public class MainActivity extends AppCompatActivity {
                                                 PendingIntent.getActivity(this,
                                                                           0,
                                                                           new Intent(this, MainActivity.class),
-                                                                          0));
+                                                                          PendingIntentFlags.mutable()));
 
       list.removeAllViews();
     });
@@ -75,7 +78,7 @@ public class MainActivity extends AppCompatActivity {
                                                 PendingIntent.getActivity(this,
                                                                           0,
                                                                           new Intent(this, MainActivity.class),
-                                                                          0));
+                                                                          PendingIntentFlags.mutable()));
 
       list.removeAllViews();
     });
@@ -87,6 +90,9 @@ public class MainActivity extends AppCompatActivity {
         requestPermissions(new String[]{Manifest.permission.ACCESS_FINE_LOCATION}, 420);
       }
     });
+
+    final TextView libsignalVersion = findViewById(R.id.libsignal_version);
+    libsignalVersion.setText(BuildConfig.LIBSIGNAL_VERSION);
 
     EventBus.getDefault().register(this);
   }
@@ -100,12 +106,12 @@ public class MainActivity extends AppCompatActivity {
     list.addView(text);
 
     if (event.getTransferMode() == TransferStatus.TransferMode.VERIFICATION_REQUIRED) {
-      new AlertDialog.Builder(this).setTitle("Verification Required")
-                                   .setMessage("Code: " + event.getAuthenticationCode())
-                                   .setPositiveButton("Yes, Same", (d, w) -> DeviceToDeviceTransferService.setAuthenticationCodeVerified(this, true))
-                                   .setNegativeButton("No, different", (d, w) -> DeviceToDeviceTransferService.setAuthenticationCodeVerified(this, false))
-                                   .setCancelable(false)
-                                   .show();
+      new MaterialAlertDialogBuilder(this).setTitle("Verification Required")
+                                          .setMessage("Code: " + event.getAuthenticationCode())
+                                          .setPositiveButton("Yes, Same", (d, w) -> DeviceToDeviceTransferService.setAuthenticationCodeVerified(this, true))
+                                          .setNegativeButton("No, different", (d, w) -> DeviceToDeviceTransferService.setAuthenticationCodeVerified(this, false))
+                                          .setCancelable(false)
+                                          .show();
     }
   }
 

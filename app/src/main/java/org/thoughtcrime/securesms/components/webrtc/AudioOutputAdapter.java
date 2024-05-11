@@ -5,7 +5,6 @@ import android.view.View;
 import android.view.ViewGroup;
 import android.widget.CompoundButton;
 import android.widget.RadioButton;
-import android.widget.TextView;
 
 import androidx.annotation.CallSuper;
 import androidx.annotation.NonNull;
@@ -58,7 +57,7 @@ final class AudioOutputAdapter extends RecyclerView.Adapter<AudioOutputAdapter.V
 
     if (mode != selected) {
       setSelectedOutput(mode);
-      onAudioOutputChangedListener.audioOutputChanged(selected);
+      onAudioOutputChangedListener.audioOutputChanged(new WebRtcAudioDevice(selected, null));
     }
   }
 

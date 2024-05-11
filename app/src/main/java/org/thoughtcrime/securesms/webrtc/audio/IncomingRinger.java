@@ -1,14 +1,16 @@
 package org.thoughtcrime.securesms.webrtc.audio;
 
 
+import android.app.NotificationManager;
 import android.content.Context;
 import android.media.AudioAttributes;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Build;
+import android.os.VibrationAttributes;
+import android.os.VibrationEffect;
 import android.os.Vibrator;
-import android.provider.Settings;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -30,13 +32,16 @@ public class IncomingRinger {
 
   private MediaPlayer player;
 
+  private final AudioAttributes audioAttributes = new AudioAttributes.Builder()
+      .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+      .build();
+
   IncomingRinger(Context context) {
     this.context  = context.getApplicationContext();
     this.vibrator = (Vibrator) context.getSystemService(Context.VIBRATOR_SERVICE);
   }
 
   public void start(@Nullable Uri uri, boolean vibrate) {
-    AudioManager audioManager = ServiceUtil.getAudioManager(context);
 
     if (player != null) {
       player.release();
@@ -46,11 +51,11 @@ public class IncomingRinger {
       player = createPlayer(uri);
     }
 
-    int ringerMode = audioManager.getRingerMode();
+    int ringerMode = getAudioManagerRingMode();
 
     if (shouldVibrate(context, player, ringerMode, vibrate)) {
       Log.i(TAG, "Starting vibration");
-      vibrator.vibrate(VIBRATE_PATTERN, 1);
+      startVibrate();
     } else {
       Log.i(TAG, "Skipping vibration");
     }
@@ -69,7 +74,7 @@ public class IncomingRinger {
         player = null;
       }
     } else {
-      Log.w(TAG, "Not ringing, player: " + (player != null ? "available" : "null") + " mode: " + ringerMode);
+      Log.w(TAG, "Not ringing, player: " + (player != null ? "available" : "null") + " modeInt: " + ringerMode + " mode: " + (ringerMode == AudioManager.RINGER_MODE_SILENT ? "silent" : "vibrate only"));
     }
   }
 
@@ -82,6 +87,38 @@ public class IncomingRinger {
 
     Log.i(TAG, "Cancelling vibrator");
     vibrator.cancel();
+  }
+
+  private void startVibrate() {
+    if (Build.VERSION.SDK_INT >= 33) {
+      vibrator.vibrate(
+          VibrationEffect.createWaveform(VIBRATE_PATTERN, 1),
+          VibrationAttributes.createForUsage(VibrationAttributes.USAGE_RINGTONE)
+      );
+    } else {
+      vibrator.vibrate(VIBRATE_PATTERN, 1, audioAttributes);
+    }
+  }
+
+  /**
+   * Overrides the ringer mode if we are on the right API level and have the right policy access.
+   * Checks the ringer volume to make sure we're not going to blast someone with their ringtone inadvertently.
+   * Safe to do because at this point, we've already checked the policy for the given incoming call peer.
+   */
+  private int getAudioManagerRingMode() {
+    AudioManager        audioManager        = ServiceUtil.getAudioManager(context);
+    NotificationManager notificationManager = ServiceUtil.getNotificationManager(context);
+    int                 ringerMode          = audioManager.getRingerMode();
+
+    if (Build.VERSION.SDK_INT >= 28 && !notificationManager.isNotificationPolicyAccessGranted()) {
+      int ringVolume = audioManager.getStreamVolume(AudioManager.STREAM_RING);
+
+      if (ringVolume > 0 && ringerMode == AudioManager.RINGER_MODE_SILENT) {
+        return AudioManager.RINGER_MODE_NORMAL;
+      }
+    }
+
+    return ringerMode;
   }
 
   private boolean shouldVibrate(Context context, MediaPlayer player, int ringerMode, boolean vibrate) {
@@ -117,14 +154,14 @@ public class IncomingRinger {
       if (Build.VERSION.SDK_INT <= 21) {
         mediaPlayer.setAudioStreamType(AudioManager.STREAM_RING);
       } else {
-        mediaPlayer.setAudioAttributes(new AudioAttributes.Builder().setContentType(AudioAttributes.CONTENT_TYPE_SPEECH)
-                                                                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION_SIGNALLING)
+        mediaPlayer.setAudioAttributes(new AudioAttributes.Builder().setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                                                                    .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
                                                                     .build());
       }
 
       return mediaPlayer;
     } catch (IOException e) {
-      Log.e(TAG, "Failed to create player for incoming call ringer");
+      Log.e(TAG, "Failed to create player for incoming call ringer", e);
       return null;
     }
   }
@@ -134,21 +171,19 @@ public class IncomingRinger {
       MediaPlayer mediaPlayer = new MediaPlayer();
       mediaPlayer.setDataSource(context, ringtoneUri);
       return mediaPlayer;
-    } catch (SecurityException e) {
+    } catch (IOException | SecurityException e) {
       Log.w(TAG, "Failed to create player with ringtone the normal way", e);
     }
 
-    if (ringtoneUri.equals(Settings.System.DEFAULT_RINGTONE_URI)) {
-      try {
-        Uri defaultRingtoneUri = RingtoneUtil.getActualDefaultRingtoneUri(context);
-        if (defaultRingtoneUri != null) {
-          MediaPlayer mediaPlayer = new MediaPlayer();
-          mediaPlayer.setDataSource(context, defaultRingtoneUri);
-          return mediaPlayer;
-        }
-      } catch (SecurityException e) {
-        Log.w(TAG, "Failed to set default ringtone with fallback approach", e);
+    try {
+      Uri defaultRingtoneUri = RingtoneUtil.getActualDefaultRingtoneUri(context);
+      if (defaultRingtoneUri != null) {
+        MediaPlayer mediaPlayer = new MediaPlayer();
+        mediaPlayer.setDataSource(context, defaultRingtoneUri);
+        return mediaPlayer;
       }
+    } catch (SecurityException e) {
+      Log.w(TAG, "Failed to set default ringtone with fallback approach", e);
     }
 
     return null;

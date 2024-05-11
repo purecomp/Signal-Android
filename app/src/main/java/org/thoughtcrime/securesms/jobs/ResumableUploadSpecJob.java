@@ -1,10 +1,11 @@
 package org.thoughtcrime.securesms.jobs;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.jobmanager.Data;
+import org.thoughtcrime.securesms.jobmanager.JsonJobData;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint;
 import org.whispersystems.signalservice.internal.push.http.ResumableUploadSpec;
@@ -12,6 +13,10 @@ import org.whispersystems.signalservice.internal.push.http.ResumableUploadSpec;
 import java.io.IOException;
 import java.util.concurrent.TimeUnit;
 
+/**
+ * No longer used. Functionality has been merged into {@link AttachmentUploadJob}.
+ */
+@Deprecated
 public class ResumableUploadSpecJob extends BaseJob {
 
   private static final String TAG = Log.tag(ResumableUploadSpecJob.class);
@@ -19,14 +24,6 @@ public class ResumableUploadSpecJob extends BaseJob {
   static final String KEY_RESUME_SPEC = "resume_spec";
 
   public static final String KEY = "ResumableUploadSpecJob";
-
-  public ResumableUploadSpecJob() {
-    this(new Job.Parameters.Builder()
-                           .addConstraint(NetworkConstraint.KEY)
-                           .setLifespan(TimeUnit.DAYS.toMillis(1))
-                           .setMaxAttempts(Parameters.UNLIMITED)
-                           .build());
-  }
 
   private ResumableUploadSpecJob(@NonNull Parameters parameters) {
     super(parameters);
@@ -37,9 +34,9 @@ public class ResumableUploadSpecJob extends BaseJob {
     ResumableUploadSpec resumableUploadSpec = ApplicationDependencies.getSignalServiceMessageSender()
                                                                      .getResumableUploadSpec();
 
-    setOutputData(new Data.Builder()
+    setOutputData(new JsonJobData.Builder()
                           .putString(KEY_RESUME_SPEC, resumableUploadSpec.serialize())
-                          .build());
+                          .serialize());
   }
 
   @Override
@@ -48,8 +45,8 @@ public class ResumableUploadSpecJob extends BaseJob {
   }
 
   @Override
-  public @NonNull Data serialize() {
-    return Data.EMPTY;
+  public @Nullable byte[] serialize() {
+    return null;
   }
 
   @Override
@@ -65,7 +62,7 @@ public class ResumableUploadSpecJob extends BaseJob {
   public static class Factory implements Job.Factory<ResumableUploadSpecJob> {
 
     @Override
-    public @NonNull ResumableUploadSpecJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull ResumableUploadSpecJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
       return new ResumableUploadSpecJob(parameters);
     }
   }

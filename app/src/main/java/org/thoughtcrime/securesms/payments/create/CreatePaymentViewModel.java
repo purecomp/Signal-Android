@@ -11,28 +11,27 @@ import androidx.lifecycle.ViewModel;
 import androidx.lifecycle.ViewModelProvider;
 
 import org.signal.core.util.logging.Log;
+import org.signal.core.util.money.FiatMoney;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.payments.Balance;
 import org.thoughtcrime.securesms.payments.CreatePaymentDetails;
 import org.thoughtcrime.securesms.payments.FiatMoneyUtil;
 import org.thoughtcrime.securesms.payments.currency.CurrencyExchange;
-import org.signal.core.util.money.FiatMoney;
 import org.thoughtcrime.securesms.payments.preferences.model.PayeeParcelable;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.util.DefaultValueLiveData;
 import org.thoughtcrime.securesms.util.ProfileUtil;
 import org.thoughtcrime.securesms.util.livedata.LiveDataUtil;
 import org.thoughtcrime.securesms.util.livedata.Store;
-import org.whispersystems.libsignal.util.guava.Optional;
 import org.whispersystems.signalservice.api.payments.FormatterOptions;
 import org.whispersystems.signalservice.api.payments.Money;
-import org.whispersystems.signalservice.api.util.OptionalUtil;
 
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.util.Currency;
 import java.util.Objects;
+import java.util.Optional;
 
 public class CreatePaymentViewModel extends ViewModel {
 
@@ -45,6 +44,7 @@ public class CreatePaymentViewModel extends ViewModel {
   private final LiveData<Boolean> isValidAmount;
   private final Store<InputState> inputState;
   private final LiveData<Boolean> isPaymentsSupportedByPayee;
+  private final LiveData<Boolean> enclaveFailure;
 
   private final PayeeParcelable               payee;
   private final MutableLiveData<CharSequence> note;
@@ -55,6 +55,7 @@ public class CreatePaymentViewModel extends ViewModel {
     this.note             = new MutableLiveData<>(note);
     this.inputState       = new Store<>(new InputState());
     this.isValidAmount    = LiveDataUtil.combineLatest(spendableBalance, inputState.getStateLiveData(), (b, s) -> validateAmount(b.requireMobileCoin(), s.getMoney().requireMobileCoin()));
+    this.enclaveFailure   = LiveDataUtil.mapDistinct(SignalStore.paymentsValues().enclaveFailure(), isFailure -> isFailure);
 
     if (payee.getPayee().hasRecipientId()) {
       isPaymentsSupportedByPayee = LiveDataUtil.mapAsync(new DefaultValueLiveData<>(payee.getPayee().requireRecipientId()), r -> {
@@ -73,23 +74,27 @@ public class CreatePaymentViewModel extends ViewModel {
     LiveData<Optional<CurrencyExchange.ExchangeRate>> liveExchangeRate = LiveDataUtil.mapAsync(SignalStore.paymentsValues().liveCurrentCurrency(),
                                                                                                currency -> {
                                                                                                  try {
-                                                                                                   return Optional.fromNullable(ApplicationDependencies.getPayments()
+                                                                                                   return Optional.ofNullable(ApplicationDependencies.getPayments()
                                                                                                                                                        .getCurrencyExchange(true)
                                                                                                                                                        .getExchangeRate(currency));
                                                                                                  } catch (IOException e1) {
                                                                                                    Log.w(TAG, "Unable to get fresh exchange data, falling back to cached", e1);
                                                                                                    try {
-                                                                                                     return Optional.fromNullable(ApplicationDependencies.getPayments()
+                                                                                                     return Optional.ofNullable(ApplicationDependencies.getPayments()
                                                                                                                                                          .getCurrencyExchange(false)
                                                                                                                                                          .getExchangeRate(currency));
                                                                                                    } catch (IOException e2) {
                                                                                                      Log.w(TAG, "Unable to get any exchange data", e2);
-                                                                                                     return Optional.absent();
+                                                                                                     return Optional.empty();
                                                                                                    }
                                                                                                  }
                                                                                                });
 
     inputState.update(liveExchangeRate, (rate, state) -> updateAmount(ApplicationDependencies.getApplication(), state.updateExchangeRate(rate), AmountKeyboardGlyph.NONE));
+  }
+
+  @NonNull LiveData<Boolean> getEnclaveFailure() {
+    return enclaveFailure;
   }
 
   @NonNull LiveData<InputState> getInputState() {
@@ -119,7 +124,7 @@ public class CreatePaymentViewModel extends ViewModel {
   void clearAmount() {
     inputState.update(s -> {
       final Money               money = Money.MobileCoin.ZERO;
-      final Optional<FiatMoney> fiat  = OptionalUtil.flatMap(s.getExchangeRate(), r -> r.exchange(money));
+      final Optional<FiatMoney> fiat  = s.getExchangeRate().flatMap(r -> r.exchange(money));
 
       return s.updateAmount("0", "0", Money.MobileCoin.ZERO, fiat);
     });
@@ -155,7 +160,7 @@ public class CreatePaymentViewModel extends ViewModel {
   {
     String    newFiatAmount = updateAmountString(context, inputState.getFiatAmount(), glyph, currency.getDefaultFractionDigits());
     FiatMoney newFiat       = stringToFiatValueOrZero(newFiatAmount, currency);
-    Money     newMoney      = OptionalUtil.flatMap(inputState.getExchangeRate(), e -> e.exchange(newFiat)).get();
+    Money     newMoney      = inputState.getExchangeRate().flatMap(e -> e.exchange(newFiat)).get();
     String    newMoneyAmount;
 
     if (newFiatAmount.equals("0")) {
@@ -177,7 +182,7 @@ public class CreatePaymentViewModel extends ViewModel {
   {
     String              newMoneyAmount = updateAmountString(context, inputState.getMoneyAmount(), glyph, inputState.getMoney().getCurrency().getDecimalPrecision());
     Money.MobileCoin    newMoney       = stringToMobileCoinValueOrZero(newMoneyAmount);
-    Optional<FiatMoney> newFiat        = OptionalUtil.flatMap(inputState.getExchangeRate(), e -> e.exchange(newMoney));
+    Optional<FiatMoney> newFiat        = inputState.getExchangeRate().flatMap(e -> e.exchange(newMoney));
     String              newFiatAmount;
 
     if (!withinMobileCoinBounds(newMoney)) {
@@ -187,7 +192,7 @@ public class CreatePaymentViewModel extends ViewModel {
     if (newMoneyAmount.equals("0")) {
       newFiatAmount = "0";
     } else {
-      newFiatAmount = newFiat.transform(f -> FiatMoneyUtil.format(context.getResources(), f, FiatMoneyUtil.formatOptions().withDisplayTime(false).numberOnly())).or("0");
+      newFiatAmount = newFiat.map(f -> FiatMoneyUtil.format(context.getResources(), f, FiatMoneyUtil.formatOptions().withDisplayTime(false).numberOnly())).orElse("0");
     }
 
     return inputState.updateAmount(newMoneyAmount, newFiatAmount, newMoney, newFiat);

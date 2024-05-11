@@ -1,39 +1,23 @@
 package org.thoughtcrime.securesms.components;
 
 import android.content.Context;
-import android.graphics.PorterDuff;
-import android.graphics.PorterDuffColorFilter;
-import android.graphics.Typeface;
 import android.graphics.drawable.Drawable;
-import android.os.Build;
-import android.text.Spannable;
-import android.text.SpannableString;
 import android.text.SpannableStringBuilder;
-import android.text.style.CharacterStyle;
-import android.text.style.MetricAffectingSpan;
-import android.text.style.StyleSpan;
-import android.text.style.TypefaceSpan;
 import android.util.AttributeSet;
 
+import androidx.annotation.DrawableRes;
 import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 
-import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.R;
-import org.thoughtcrime.securesms.components.emoji.EmojiTextView;
 import org.thoughtcrime.securesms.components.emoji.SimpleEmojiTextView;
 import org.thoughtcrime.securesms.recipients.Recipient;
+import org.thoughtcrime.securesms.util.ContextUtil;
+import org.thoughtcrime.securesms.util.DrawableUtil;
 import org.thoughtcrime.securesms.util.SpanUtil;
 import org.thoughtcrime.securesms.util.ViewUtil;
 
-import java.util.Objects;
-
 public class FromTextView extends SimpleEmojiTextView {
-
-  private static final String TAG = Log.tag(FromTextView.class);
-
-  private final static Typeface  BOLD_TYPEFACE  = Typeface.create("sans-serif-medium", Typeface.NORMAL);
-  private final static Typeface  LIGHT_TYPEFACE = Typeface.create("sans-serif", Typeface.NORMAL);
 
   public FromTextView(Context context) {
     super(context);
@@ -44,47 +28,63 @@ public class FromTextView extends SimpleEmojiTextView {
   }
 
   public void setText(Recipient recipient) {
-    setText(recipient, true);
+    setText(recipient, null);
   }
 
-  public void setText(Recipient recipient, boolean read) {
-    setText(recipient, read, null);
+  public void setText(Recipient recipient, @Nullable CharSequence suffix) {
+    setText(recipient, recipient.getDisplayName(getContext()), suffix);
   }
 
-  public void setText(Recipient recipient, boolean read, @Nullable String suffix) {
-    String fromString = recipient.getDisplayName(getContext());
+  public void setText(Recipient recipient, @Nullable CharSequence fromString, @Nullable CharSequence suffix) {
+    setText(recipient, fromString, suffix, true);
+  }
 
+  public void setText(Recipient recipient, @Nullable CharSequence fromString, @Nullable CharSequence suffix, boolean asThread) {
+    setText(recipient, fromString, suffix, asThread, false);
+  }
+
+  public void setText(Recipient recipient, @Nullable CharSequence fromString, @Nullable CharSequence suffix, boolean asThread, boolean showSelfAsYou) {
     SpannableStringBuilder builder  = new SpannableStringBuilder();
-    SpannableString        fromSpan = new SpannableString(fromString);
-    fromSpan.setSpan(getFontSpan(!read), 0, fromSpan.length(), Spannable.SPAN_INCLUSIVE_EXCLUSIVE);
 
-    if (recipient.isSelf()) {
+    if (asThread && recipient.isSelf() && showSelfAsYou) {
+      builder.append(getContext().getString(R.string.Recipient_you));
+    } else if (asThread && recipient.isSelf()) {
       builder.append(getContext().getString(R.string.note_to_self));
     } else {
-      builder.append(fromSpan);
+      builder.append(fromString);
     }
 
     if (suffix != null) {
       builder.append(suffix);
     }
 
+    if (asThread && recipient.getShowVerified()) {
+      Drawable official = ContextUtil.requireDrawable(getContext(), R.drawable.ic_official_20);
+      official.setBounds(0, 0, ViewUtil.dpToPx(20), ViewUtil.dpToPx(20));
+
+      builder.append(" ")
+             .append(SpanUtil.buildCenteredImageSpan(official));
+    }
+
     setText(builder);
 
-    if      (recipient.isBlocked()) setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_block_grey600_18dp, 0, 0, 0);
+    if      (recipient.isBlocked()) setCompoundDrawablesRelativeWithIntrinsicBounds(getBlocked(), null, null, null);
     else if (recipient.isMuted())   setCompoundDrawablesRelativeWithIntrinsicBounds(getMuted(), null, null, null);
-    else                            setCompoundDrawablesWithIntrinsicBounds(0, 0, 0, 0);
+    else                            setCompoundDrawablesRelativeWithIntrinsicBounds(0, 0, 0, 0);
+  }
+
+  private Drawable getBlocked() {
+    return getDrawable(R.drawable.symbol_block_16);
   }
 
   private Drawable getMuted() {
-    Drawable mutedDrawable = Objects.requireNonNull(ContextCompat.getDrawable(getContext(), R.drawable.ic_bell_disabled_16));
-
-    mutedDrawable.setBounds(0, 0, ViewUtil.dpToPx(18), ViewUtil.dpToPx(18));
-    mutedDrawable.setColorFilter(new PorterDuffColorFilter(ContextCompat.getColor(getContext(), R.color.signal_icon_tint_secondary), PorterDuff.Mode.SRC_IN));
-
-    return mutedDrawable;
+    return getDrawable(R.drawable.ic_bell_disabled_16);
   }
 
-  private CharacterStyle getFontSpan(boolean isBold) {
-    return isBold ? SpanUtil.getBoldSpan() : SpanUtil.getNormalSpan();
+  private Drawable getDrawable(@DrawableRes int drawable) {
+    Drawable mutedDrawable = ContextUtil.requireDrawable(getContext(), drawable);
+    mutedDrawable.setBounds(0, 0, ViewUtil.dpToPx(18), ViewUtil.dpToPx(18));
+    DrawableUtil.tint(mutedDrawable, ContextCompat.getColor(getContext(), R.color.signal_icon_tint_secondary));
+    return mutedDrawable;
   }
 }

@@ -29,12 +29,17 @@ class MediaGalleryViewModel(bucketId: String?, bucketTitle: String?, private val
     loadItemsForBucket(mediaFolder.bucketId, mediaFolder.title)
   }
 
+  fun refreshMediaGallery() {
+    loadItemsForBucket(null, null)
+  }
+
   private fun loadItemsForBucket(bucketId: String?, bucketTitle: String?) {
     if (bucketId == null) {
       repository.getFolders { folders ->
         store.update { state ->
           state.copy(
-            bucketId = bucketId, bucketTitle = bucketTitle,
+            bucketId = bucketId,
+            bucketTitle = bucketTitle,
             items = folders.map {
               MediaGallerySelectableItem.FolderModel(it)
             }
@@ -45,9 +50,10 @@ class MediaGalleryViewModel(bucketId: String?, bucketTitle: String?, private val
       repository.getMedia(bucketId) { media ->
         store.update { state ->
           state.copy(
-            bucketId = bucketId, bucketTitle = bucketTitle,
+            bucketId = bucketId,
+            bucketTitle = bucketTitle,
             items = media.map {
-              MediaGallerySelectableItem.FileModel(it, false)
+              MediaGallerySelectableItem.FileModel(it, false, 0)
             }
           )
         }
@@ -60,7 +66,7 @@ class MediaGalleryViewModel(bucketId: String?, bucketTitle: String?, private val
     private val bucketTitle: String?,
     private val repository: MediaGalleryRepository
   ) : ViewModelProvider.Factory {
-    override fun <T : ViewModel?> create(modelClass: Class<T>): T {
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
       return requireNotNull(modelClass.cast(MediaGalleryViewModel(bucketId, bucketTitle, repository)))
     }
   }

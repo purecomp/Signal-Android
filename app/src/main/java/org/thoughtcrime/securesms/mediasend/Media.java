@@ -6,11 +6,13 @@ import android.os.Parcelable;
 
 import androidx.annotation.NonNull;
 
-import org.thoughtcrime.securesms.database.AttachmentDatabase;
-import org.whispersystems.libsignal.util.guava.Optional;
+import org.thoughtcrime.securesms.database.AttachmentTable;
+import org.thoughtcrime.securesms.util.MediaUtil;
+import org.whispersystems.signalservice.api.util.Preconditions;
 import org.whispersystems.signalservice.internal.util.JsonUtil;
 
 import java.io.IOException;
+import java.util.Optional;
 
 /**
  * Represents a piece of media that the user has on their device.
@@ -30,8 +32,8 @@ public class Media implements Parcelable {
   private final boolean videoGif;
 
   private Optional<String>                                 bucketId;
-  private Optional<String>                                 caption;
-  private Optional<AttachmentDatabase.TransformProperties> transformProperties;
+  private Optional<String>                              caption;
+  private Optional<AttachmentTable.TransformProperties> transformProperties;
 
   public Media(@NonNull Uri uri,
                @NonNull String mimeType,
@@ -44,7 +46,7 @@ public class Media implements Parcelable {
                boolean videoGif,
                Optional<String> bucketId,
                Optional<String> caption,
-               Optional<AttachmentDatabase.TransformProperties> transformProperties)
+               Optional<AttachmentTable.TransformProperties> transformProperties)
   {
     this.uri                 = uri;
     this.mimeType            = mimeType;
@@ -70,11 +72,11 @@ public class Media implements Parcelable {
     duration   = in.readLong();
     borderless = in.readInt() == 1;
     videoGif   = in.readInt() == 1;
-    bucketId   = Optional.fromNullable(in.readString());
-    caption    = Optional.fromNullable(in.readString());
+    bucketId   = Optional.ofNullable(in.readString());
+    caption    = Optional.ofNullable(in.readString());
     try {
       String json = in.readString();
-      transformProperties = json == null ? Optional.absent() : Optional.fromNullable(JsonUtil.fromJson(json, AttachmentDatabase.TransformProperties.class));
+      transformProperties = json == null ? Optional.empty() : Optional.ofNullable(JsonUtil.fromJson(json, AttachmentTable.TransformProperties.class));
     } catch (IOException e) {
       throw new AssertionError(e);
     }
@@ -125,10 +127,10 @@ public class Media implements Parcelable {
   }
 
   public void setCaption(String caption) {
-    this.caption = Optional.fromNullable(caption);
+    this.caption = Optional.ofNullable(caption);
   }
 
-  public Optional<AttachmentDatabase.TransformProperties> getTransformProperties() {
+  public Optional<AttachmentTable.TransformProperties> getTransformProperties() {
     return transformProperties;
   }
 
@@ -148,9 +150,9 @@ public class Media implements Parcelable {
     dest.writeLong(duration);
     dest.writeInt(borderless ? 1 : 0);
     dest.writeInt(videoGif ? 1 : 0);
-    dest.writeString(bucketId.orNull());
-    dest.writeString(caption.orNull());
-    dest.writeString(transformProperties.transform(JsonUtil::toJson).orNull());
+    dest.writeString(bucketId.orElse(null));
+    dest.writeString(caption.orElse(null));
+    dest.writeString(transformProperties.map(JsonUtil::toJson).orElse(null));
   }
 
   public static final Creator<Media> CREATOR = new Creator<Media>() {
@@ -193,5 +195,22 @@ public class Media implements Parcelable {
                      media.getBucketId(),
                      media.getCaption(),
                      media.getTransformProperties());
+  }
+
+  public static @NonNull Media stripTransform(@NonNull Media media) {
+    Preconditions.checkArgument(MediaUtil.isImageType(media.mimeType));
+
+    return new Media(media.getUri(),
+                     media.getMimeType(),
+                     media.getDate(),
+                     media.getWidth(),
+                     media.getHeight(),
+                     media.getSize(),
+                     media.getDuration(),
+                     media.isBorderless(),
+                     media.isVideoGif(),
+                     media.getBucketId(),
+                     media.getCaption(),
+                     Optional.empty());
   }
 }

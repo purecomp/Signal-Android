@@ -1,29 +1,31 @@
 package org.thoughtcrime.securesms.components.settings.app.appearance
 
-import androidx.lifecycle.LiveData
+import android.app.Activity
 import androidx.lifecycle.ViewModel
+import io.reactivex.rxjava3.core.Flowable
 import org.thoughtcrime.securesms.jobs.EmojiSearchIndexDownloadJob
+import org.thoughtcrime.securesms.keyvalue.SettingsValues.Theme
 import org.thoughtcrime.securesms.keyvalue.SignalStore
-import org.thoughtcrime.securesms.util.livedata.Store
+import org.thoughtcrime.securesms.util.SplashScreenUtil
+import org.thoughtcrime.securesms.util.rx.RxStore
 
 class AppearanceSettingsViewModel : ViewModel() {
-  private val store: Store<AppearanceSettingsState>
+  private val store = RxStore(getState())
+  val state: Flowable<AppearanceSettingsState> = store.stateFlowable
 
-  init {
-    val initialState = AppearanceSettingsState(
-      SignalStore.settings().theme,
-      SignalStore.settings().messageFontSize,
-      SignalStore.settings().language
-    )
-
-    store = Store(initialState)
+  override fun onCleared() {
+    super.onCleared()
+    store.dispose()
   }
 
-  val state: LiveData<AppearanceSettingsState> = store.stateLiveData
+  fun refreshState() {
+    store.update { getState() }
+  }
 
-  fun setTheme(theme: String) {
+  fun setTheme(activity: Activity?, theme: Theme) {
     store.update { it.copy(theme = theme) }
     SignalStore.settings().theme = theme
+    SplashScreenUtil.setSplashScreenThemeIfNecessary(activity, theme)
   }
 
   fun setLanguage(language: String) {
@@ -35,5 +37,14 @@ class AppearanceSettingsViewModel : ViewModel() {
   fun setMessageFontSize(size: Int) {
     store.update { it.copy(messageFontSize = size) }
     SignalStore.settings().messageFontSize = size
+  }
+
+  private fun getState(): AppearanceSettingsState {
+    return AppearanceSettingsState(
+      SignalStore.settings().theme,
+      SignalStore.settings().messageFontSize,
+      SignalStore.settings().language,
+      SignalStore.settings().useCompactNavigationBar
+    )
   }
 }

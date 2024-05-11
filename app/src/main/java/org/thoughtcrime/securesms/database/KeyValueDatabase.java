@@ -2,12 +2,12 @@ package org.thoughtcrime.securesms.database;
 
 import android.app.Application;
 import android.content.ContentValues;
+import android.content.Context;
 import android.database.Cursor;
 
 import androidx.annotation.NonNull;
 
 import net.zetetic.database.sqlcipher.SQLiteDatabase;
-import net.zetetic.database.sqlcipher.SQLiteDatabaseHook;
 import net.zetetic.database.sqlcipher.SQLiteOpenHelper;
 
 import org.signal.core.util.concurrent.SignalExecutors;
@@ -15,8 +15,8 @@ import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.crypto.DatabaseSecret;
 import org.thoughtcrime.securesms.crypto.DatabaseSecretProvider;
 import org.thoughtcrime.securesms.keyvalue.KeyValueDataSet;
-import org.thoughtcrime.securesms.util.CursorUtil;
-import org.thoughtcrime.securesms.util.SqlUtil;
+import org.thoughtcrime.securesms.keyvalue.KeyValuePersistentStorage;
+import org.signal.core.util.CursorUtil;
 
 import java.util.Collection;
 import java.util.Map;
@@ -27,7 +27,7 @@ import java.util.Map;
  * This is it's own separate physical database, so it cannot do joins or queries with any other
  * tables.
  */
-public class KeyValueDatabase extends SQLiteOpenHelper implements SignalDatabase {
+public class KeyValueDatabase extends SQLiteOpenHelper implements SignalDatabaseOpenHelper, KeyValuePersistentStorage {
 
   private static final String TAG = Log.tag(KeyValueDatabase.class);
 
@@ -61,8 +61,13 @@ public class KeyValueDatabase extends SQLiteOpenHelper implements SignalDatabase
     return instance;
   }
 
+  public static boolean exists(Context context) {
+    return context.getDatabasePath(DATABASE_NAME).exists();
+  }
+
+
   private KeyValueDatabase(@NonNull Application application, @NonNull DatabaseSecret databaseSecret) {
-    super(application, DATABASE_NAME, databaseSecret.asString(), null, DATABASE_VERSION, 0,new SqlCipherErrorHandler(DATABASE_NAME), new SqlCipherDatabaseHook());
+    super(application, DATABASE_NAME, databaseSecret.asString(), null, DATABASE_VERSION, 0,new SqlCipherErrorHandler(DATABASE_NAME), new SqlCipherDatabaseHook(), true);
 
     this.application = application;
   }
@@ -73,9 +78,9 @@ public class KeyValueDatabase extends SQLiteOpenHelper implements SignalDatabase
 
     db.execSQL(CREATE_TABLE);
 
-    if (DatabaseFactory.getInstance(application).hasTable("key_value")) {
+    if (SignalDatabase.hasTable("key_value")) {
       Log.i(TAG, "Found old key_value table. Migrating data.");
-      migrateDataFromPreviousDatabase(DatabaseFactory.getInstance(application).getRawDatabase(), db);
+      migrateDataFromPreviousDatabase(SignalDatabase.getRawDatabase(), db);
     }
   }
 
@@ -88,17 +93,17 @@ public class KeyValueDatabase extends SQLiteOpenHelper implements SignalDatabase
   public void onOpen(SQLiteDatabase db) {
     Log.i(TAG, "onOpen()");
 
-    db.enableWriteAheadLogging();
     db.setForeignKeyConstraintsEnabled(true);
 
     SignalExecutors.BOUNDED.execute(() -> {
-      if (DatabaseFactory.getInstance(application).hasTable("key_value")) {
+      if (SignalDatabase.hasTable("key_value")) {
         Log.i(TAG, "Dropping original key_value table from the main database.");
-        DatabaseFactory.getInstance(application).getRawDatabase().execSQL("DROP TABLE key_value");
+        SignalDatabase.getRawDatabase().execSQL("DROP TABLE key_value");
       }
     });
   }
 
+  @Override
   public @NonNull KeyValueDataSet getDataSet() {
     KeyValueDataSet dataSet = new KeyValueDataSet();
 
@@ -133,6 +138,7 @@ public class KeyValueDatabase extends SQLiteOpenHelper implements SignalDatabase
     return dataSet;
   }
 
+  @Override
   public void writeDataSet(@NonNull KeyValueDataSet dataSet, @NonNull Collection<String> removes) {
     SQLiteDatabase db = getWritableDatabase();
 

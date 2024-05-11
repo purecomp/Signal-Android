@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <org.thoughtcrime.securesms.conversation.ConversationItem xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    tools:viewBindingIgnore="true"
     xmlns:tools="http://schemas.android.com/tools"
     android:id="@+id/conversation_item"
     android:layout_width="match_parent"
@@ -27,9 +28,9 @@
             android:layout_width="@dimen/conversation_item_reply_size"
             android:layout_height="@dimen/conversation_item_reply_size"
             android:padding="9dp"
-            android:tint="@color/signal_icon_tint_primary"
+            android:tint="@color/signal_icon_tint_secondary"
             android:layout_gravity="center"
-            app:srcCompat="@drawable/ic_reply_24" />
+            app:srcCompat="@drawable/symbol_reply_24" />
 
     </FrameLayout>
 
@@ -55,10 +56,10 @@
             android:layout_marginTop="@dimen/message_bubble_top_padding"
             android:layout_marginEnd="@dimen/message_bubble_horizontal_padding"
             android:layout_marginBottom="@dimen/message_bubble_collapsed_footer_padding"
-            android:ellipsize="end"
             android:textColor="@color/conversation_item_sent_text_primary_color"
             android:textColorLink="@color/conversation_item_sent_text_primary_color"
             app:emoji_maxLength="1000"
+            app:emoji_renderSpoilers="true"
             app:scaleEmojis="true"
             app:measureLastLine="true"
             tools:text="Mango pickle lorem ipsum" />
@@ -79,17 +80,54 @@
             app:footer_reveal_dot_color="@color/conversation_item_sent_text_secondary_color"
             app:footer_text_color="@color/conversation_item_sent_text_secondary_color" />
 
+        <org.thoughtcrime.securesms.components.ConversationItemFooter
+            android:id="@+id/conversation_item_sticker_footer"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="end"
+            android:layout_marginTop="2dp"
+            android:clipChildren="false"
+            android:clipToPadding="false"
+            android:paddingStart="@dimen/message_bubble_horizontal_padding"
+            android:paddingTop="3dp"
+            android:paddingEnd="@dimen/message_bubble_horizontal_padding"
+            android:paddingBottom="3dp"
+            android:visibility="gone"
+            app:footer_icon_color="@color/signal_icon_tint_secondary"
+            app:footer_mode="outgoing"
+            app:footer_reveal_dot_color="@color/signal_icon_tint_secondary"
+            app:footer_text_color="@color/signal_text_secondary" />
+
     </org.thoughtcrime.securesms.conversation.ConversationItemBodyBubble>
 
     <org.thoughtcrime.securesms.components.AlertView
         android:id="@+id/indicators_parent"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
+        android:layout_width="36dp"
+        android:layout_height="36dp"
         android:layout_alignParentEnd="true"
         android:layout_alignParentBottom="true"
-        android:layout_marginStart="8dp"
-        android:padding="8dp"
-        android:orientation="vertical" />
+        android:padding="8dp" />
+
+    <FrameLayout
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_alignStart="@id/body_bubble"
+        android:layout_alignTop="@id/body_bubble"
+        android:layout_alignBottom="@id/body_bubble"
+        android:layout_marginStart="-42dp" >
+
+        <androidx.appcompat.widget.AppCompatImageView
+            android:id="@+id/scheduled_indicator"
+            android:layout_width="32dp"
+            android:layout_height="32dp"
+            android:layout_gravity="center_vertical"
+            android:background="@drawable/circle_tintable"
+            android:backgroundTint="@color/signal_colorSurfaceVariant"
+            android:padding="6dp"
+            android:tint="@color/signal_colorOnSurfaceVariant"
+            app:srcCompat="@drawable/symbol_calendar_24" />
+
+    </FrameLayout>
 
     <org.thoughtcrime.securesms.reactions.ReactionsConversationView
         android:id="@+id/reactions_view"

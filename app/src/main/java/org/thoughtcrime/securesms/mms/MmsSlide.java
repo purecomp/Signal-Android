@@ -9,13 +9,13 @@ import org.thoughtcrime.securesms.attachments.Attachment;
 
 public class MmsSlide extends ImageSlide {
 
-  public MmsSlide(@NonNull Context context, @NonNull Attachment attachment) {
-    super(context, attachment);
+  public MmsSlide(@NonNull Attachment attachment) {
+    super(attachment);
   }
 
   @NonNull
   @Override
-  public String getContentDescription() {
+  public String getContentDescription(Context context) {
     return "MMS";
   }
 

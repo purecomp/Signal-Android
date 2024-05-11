@@ -12,15 +12,16 @@ import androidx.appcompat.content.res.AppCompatResources
 import androidx.appcompat.widget.AppCompatSeekBar
 import androidx.fragment.app.FragmentManager
 import com.airbnb.lottie.SimpleColorFilter
+import org.signal.core.util.getParcelableCompat
 import org.signal.imageeditor.core.HiddenEditText
 import org.signal.imageeditor.core.model.EditorElement
 import org.signal.imageeditor.core.renderers.MultiLineTextRenderer
 import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.components.KeyboardEntryDialogFragment
-import org.thoughtcrime.securesms.keyboard.findListener
 import org.thoughtcrime.securesms.scribbles.HSVColorSlider.getColor
 import org.thoughtcrime.securesms.scribbles.HSVColorSlider.setUpForColor
 import org.thoughtcrime.securesms.util.ViewUtil
+import org.thoughtcrime.securesms.util.fragments.requireListener
 
 class TextEntryDialogFragment : KeyboardEntryDialogFragment(R.layout.v2_media_image_editor_text_entry_fragment) {
 
@@ -30,16 +31,19 @@ class TextEntryDialogFragment : KeyboardEntryDialogFragment(R.layout.v2_media_im
   private var colorIndicatorAlphaAnimator: Animator? = null
 
   override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
-    controller = requireNotNull(findListener())
+    controller = requireListener()
 
     hiddenTextEntry = HiddenEditText(requireContext())
+    if (!ImageEditorFragment.CAN_RENDER_EMOJI) {
+      hiddenTextEntry.addTextFilter(RemoveEmojiTextFilter())
+    }
     (view as ViewGroup).addView(hiddenTextEntry)
 
     view.setOnClickListener {
       dismissAllowingStateLoss()
     }
 
-    val element: EditorElement = requireNotNull(requireArguments().getParcelable("element"))
+    val element: EditorElement = requireNotNull(requireArguments().getParcelableCompat("element", EditorElement::class.java))
     val incognito = requireArguments().getBoolean("incognito")
     val selectAll = requireArguments().getBoolean("selectAll")
 
@@ -95,6 +99,7 @@ class TextEntryDialogFragment : KeyboardEntryDialogFragment(R.layout.v2_media_im
   }
 
   override fun onDismiss(dialog: DialogInterface) {
+    super.onDismiss(dialog)
     controller.onTextEntryDialogDismissed(!hiddenTextEntry.text.isNullOrEmpty())
   }
 

@@ -3,28 +3,23 @@ package org.thoughtcrime.securesms.jobs;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
-import com.google.protobuf.ByteString;
-import com.google.protobuf.InvalidProtocolBufferException;
-
 import org.signal.core.util.ThreadUtil;
 import org.signal.core.util.logging.Log;
+import org.signal.libsignal.protocol.SignalProtocolAddress;
+import org.signal.libsignal.protocol.message.SenderKeyDistributionMessage;
 import org.thoughtcrime.securesms.crypto.UnidentifiedAccessUtil;
-import org.thoughtcrime.securesms.crypto.storage.SignalSenderKeyStore;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.GroupDatabase;
-import org.thoughtcrime.securesms.database.GroupDatabase.GroupRecord;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.database.model.DistributionListRecord;
+import org.thoughtcrime.securesms.database.model.GroupRecord;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.groups.GroupId;
-import org.thoughtcrime.securesms.jobmanager.Data;
 import org.thoughtcrime.securesms.jobmanager.Job;
+import org.thoughtcrime.securesms.jobmanager.JsonJobData;
 import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.recipients.RecipientId;
 import org.thoughtcrime.securesms.recipients.RecipientUtil;
-import org.whispersystems.libsignal.SignalProtocolAddress;
-import org.whispersystems.libsignal.protocol.SenderKeyDistributionMessage;
-import org.whispersystems.libsignal.util.guava.Optional;
 import org.whispersystems.signalservice.api.SignalServiceMessageSender;
 import org.whispersystems.signalservice.api.crypto.ContentHint;
 import org.whispersystems.signalservice.api.crypto.UnidentifiedAccessPair;
@@ -32,11 +27,15 @@ import org.whispersystems.signalservice.api.messages.SendMessageResult;
 import org.whispersystems.signalservice.api.push.DistributionId;
 import org.whispersystems.signalservice.api.push.SignalServiceAddress;
 import org.whispersystems.signalservice.api.push.exceptions.PushNetworkException;
-import org.whispersystems.signalservice.internal.push.SignalServiceProtos.Content;
+import org.whispersystems.signalservice.internal.push.Content;
 
+import java.io.IOException;
 import java.util.List;
+import java.util.Optional;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
+
+import okio.ByteString;
 
 /**
  * Resends a previously-sent message in response to receiving a retry receipt.
@@ -53,6 +52,7 @@ public class ResendMessageJob extends BaseJob {
   private final long           sentTimestamp;
   private final Content        content;
   private final ContentHint    contentHint;
+  private final boolean        urgent;
   private final GroupId.V2     groupId;
   private final DistributionId distributionId;
 
@@ -60,6 +60,7 @@ public class ResendMessageJob extends BaseJob {
   private static final String KEY_SENT_TIMESTAMP  = "sent_timestamp";
   private static final String KEY_CONTENT         = "content";
   private static final String KEY_CONTENT_HINT    = "content_hint";
+  private static final String KEY_URGENT          = "urgent";
   private static final String KEY_GROUP_ID        = "group_id";
   private static final String KEY_DISTRIBUTION_ID = "distribution_id";
 
@@ -67,6 +68,7 @@ public class ResendMessageJob extends BaseJob {
                           long sentTimestamp,
                           @NonNull Content content,
                           @NonNull ContentHint contentHint,
+                          boolean urgent,
                           @Nullable GroupId.V2 groupId,
                           @Nullable DistributionId distributionId)
   {
@@ -74,6 +76,7 @@ public class ResendMessageJob extends BaseJob {
          sentTimestamp,
          content,
          contentHint,
+         urgent,
          groupId,
          distributionId,
          new Parameters.Builder().setQueue(recipientId.toQueueKey())
@@ -87,6 +90,7 @@ public class ResendMessageJob extends BaseJob {
                            long sentTimestamp,
                            @NonNull Content content,
                            @NonNull ContentHint contentHint,
+                           boolean urgent,
                            @Nullable GroupId.V2 groupId,
                            @Nullable DistributionId distributionId,
                            @NonNull Parameters parameters)
@@ -97,20 +101,22 @@ public class ResendMessageJob extends BaseJob {
     this.sentTimestamp  = sentTimestamp;
     this.content        = content;
     this.contentHint    = contentHint;
+    this.urgent         = urgent;
     this.groupId        = groupId;
     this.distributionId = distributionId;
   }
 
   @Override
-  public @NonNull Data serialize() {
-    return new Data.Builder()
+  public @Nullable byte[] serialize() {
+    return new JsonJobData.Builder()
                    .putString(KEY_RECIPIENT_ID, recipientId.serialize())
                    .putLong(KEY_SENT_TIMESTAMP, sentTimestamp)
-                   .putBlobAsString(KEY_CONTENT, content.toByteArray())
+                   .putBlobAsString(KEY_CONTENT, content.encode())
                    .putInt(KEY_CONTENT_HINT, contentHint.getType())
+                   .putBoolean(KEY_URGENT, urgent)
                    .putBlobAsString(KEY_GROUP_ID, groupId != null ? groupId.getDecodedId() : null)
                    .putString(KEY_DISTRIBUTION_ID, distributionId != null ? distributionId.toString() : null)
-                   .build();
+                   .serialize();
   }
 
   @Override
@@ -125,6 +131,8 @@ public class ResendMessageJob extends BaseJob {
       ThreadUtil.sleep(10000);
     }
 
+    Log.i(TAG, "[" + sentTimestamp + " ] Resending message to " + recipientId + " (urgent: " + urgent + ", contentHint: " + contentHint.name() + ", groupId: " + groupId + ", distributionId: " + distributionId + ")");
+
     SignalServiceMessageSender messageSender = ApplicationDependencies.getSignalServiceMessageSender();
     Recipient                  recipient     = Recipient.resolved(recipientId);
 
@@ -138,32 +146,59 @@ public class ResendMessageJob extends BaseJob {
     Content                          contentToSend = content;
 
     if (distributionId != null) {
-      Optional<GroupRecord> groupRecord = DatabaseFactory.getGroupDatabase(context).getGroupByDistributionId(distributionId);
+      if (groupId != null) {
+        Log.d(TAG, "GroupId is present. Assuming this is a group message.");
+        Optional<GroupRecord> groupRecord = SignalDatabase.groups().getGroupByDistributionId(distributionId);
 
-      if (!groupRecord.isPresent()) {
-        Log.w(TAG, "Could not find a matching group for the distributionId! Skipping message send.");
-        return;
-      } else if (!groupRecord.get().getMembers().contains(recipientId)) {
-        Log.w(TAG, "The target user is no longer in the group! Skipping message send.");
-        return;
+        if (!groupRecord.isPresent()) {
+          Log.w(TAG, "Could not find a matching group for the distributionId! Skipping message send.");
+          return;
+        } else if (!groupRecord.get().getMembers().contains(recipientId)) {
+          Log.w(TAG, "The target user is no longer in the group! Skipping message send.");
+          return;
+        }
+      } else {
+        Log.d(TAG, "GroupId is not present. Assuming this is a message for a distribution list.");
+        DistributionListRecord listRecord = SignalDatabase.distributionLists().getListByDistributionId(distributionId);
+
+        if (listRecord == null) {
+          Log.w(TAG, "Could not find a matching distribution list for the distributionId! Skipping message send.");
+          return;
+        } else if (!listRecord.getMembers().contains(recipientId)) {
+          Log.w(TAG, "The target user is no longer in the distribution list! Skipping message send.");
+          return;
+        }
       }
 
       SenderKeyDistributionMessage senderKeyDistributionMessage = messageSender.getOrCreateNewGroupSession(distributionId);
-      ByteString                   distributionBytes            = ByteString.copyFrom(senderKeyDistributionMessage.serialize());
+      ByteString                   distributionBytes            = ByteString.of(senderKeyDistributionMessage.serialize());
 
-      contentToSend = contentToSend.toBuilder().setSenderKeyDistributionMessage(distributionBytes).build();
+      contentToSend = contentToSend.newBuilder().senderKeyDistributionMessage(distributionBytes).build();
     }
 
-    SendMessageResult result = messageSender.resendContent(address, access, sentTimestamp, contentToSend, contentHint, Optional.fromNullable(groupId).transform(GroupId::getDecodedId));
+    SendMessageResult result;
+
+    try {
+      result = messageSender.resendContent(address, access, sentTimestamp, contentToSend, contentHint, Optional.ofNullable(groupId).map(GroupId::getDecodedId), urgent);
+    } catch (IllegalStateException e) {
+      Log.w(TAG, "Failed to resend content. Archiving session and trying again.", e);
+      ApplicationDependencies.getProtocolStore().aci().sessions().archiveSessions(recipientId, SignalServiceAddress.DEFAULT_DEVICE_ID);
+      ApplicationDependencies.getProtocolStore().aci().sessions().archiveSiblingSessions(recipient.requireServiceId().toProtocolAddress(SignalServiceAddress.DEFAULT_DEVICE_ID));
+      ApplicationDependencies.getProtocolStore().pni().sessions().archiveSessions(recipientId, SignalServiceAddress.DEFAULT_DEVICE_ID);
+      ApplicationDependencies.getProtocolStore().pni().sessions().archiveSiblingSessions(recipient.requireServiceId().toProtocolAddress(SignalServiceAddress.DEFAULT_DEVICE_ID));
+      SignalDatabase.senderKeyShared().deleteAllFor(recipientId);
+
+      result = messageSender.resendContent(address, access, sentTimestamp, contentToSend, contentHint, Optional.ofNullable(groupId).map(GroupId::getDecodedId), urgent);
+    }
 
     if (result.isSuccess() && distributionId != null) {
       List<SignalProtocolAddress> addresses = result.getSuccess()
                                                     .getDevices()
                                                     .stream()
-                                                    .map(device -> new SignalProtocolAddress(recipient.requireServiceId(), device))
+                                                    .map(device -> recipient.requireServiceId().toProtocolAddress(device))
                                                     .collect(Collectors.toList());
 
-      ApplicationDependencies.getSenderKeyStore().markSenderKeySharedWith(distributionId, addresses);
+      ApplicationDependencies.getProtocolStore().aci().markSenderKeySharedWith(distributionId, addresses);
     }
   }
 
@@ -179,11 +214,13 @@ public class ResendMessageJob extends BaseJob {
   public static final class Factory implements Job.Factory<ResendMessageJob> {
 
     @Override
-    public @NonNull ResendMessageJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull ResendMessageJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
+      JsonJobData data = JsonJobData.deserialize(serializedData);
+
       Content content;
       try {
-        content = Content.parseFrom(data.getStringAsBlob(KEY_CONTENT));
-      } catch (InvalidProtocolBufferException e) {
+        content = Content.ADAPTER.decode(data.getStringAsBlob(KEY_CONTENT));
+      } catch (IOException e) {
         throw new AssertionError(e);
       }
 
@@ -197,6 +234,7 @@ public class ResendMessageJob extends BaseJob {
                                   data.getLong(KEY_SENT_TIMESTAMP),
                                   content,
                                   ContentHint.fromType(data.getInt(KEY_CONTENT_HINT)),
+                                  data.getBooleanOrDefault(KEY_URGENT, true),
                                   groupId,
                                   distributionId,
                                   parameters);

@@ -4,19 +4,22 @@ import android.content.Context;
 import android.text.TextUtils;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.VisibleForTesting;
 
 import com.annimon.stream.Stream;
 
 import org.signal.core.util.logging.Log;
-import org.thoughtcrime.securesms.crypto.IdentityKeyUtil;
+import org.signal.libsignal.protocol.IdentityKeyPair;
+import org.signal.libsignal.protocol.InvalidKeyException;
+import org.signal.libsignal.protocol.ecc.Curve;
+import org.signal.libsignal.protocol.ecc.ECPrivateKey;
+import org.signal.libsignal.protocol.ecc.ECPublicKey;
+import org.signal.libsignal.protocol.util.ByteUtil;
 import org.thoughtcrime.securesms.devicelist.Device;
+import org.thoughtcrime.securesms.keyvalue.SignalStore;
+import org.thoughtcrime.securesms.registration.secondary.DeviceNameCipher;
 import org.thoughtcrime.securesms.util.AsyncLoader;
-import org.thoughtcrime.securesms.util.Base64;
-import org.whispersystems.libsignal.InvalidKeyException;
-import org.whispersystems.libsignal.ecc.Curve;
-import org.whispersystems.libsignal.ecc.ECPrivateKey;
-import org.whispersystems.libsignal.ecc.ECPublicKey;
-import org.whispersystems.libsignal.util.ByteUtil;
+import org.signal.core.util.Base64;
 import org.whispersystems.signalservice.api.SignalServiceAccountManager;
 import org.whispersystems.signalservice.api.messages.multidevice.DeviceInfo;
 import org.whispersystems.signalservice.api.push.SignalServiceAddress;
@@ -27,13 +30,14 @@ import java.security.MessageDigest;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Objects;
 
 import javax.crypto.Cipher;
 import javax.crypto.Mac;
 import javax.crypto.spec.IvParameterSpec;
 import javax.crypto.spec.SecretKeySpec;
 
-import static org.thoughtcrime.securesms.devicelist.DeviceNameProtos.DeviceName;
+import org.thoughtcrime.securesms.devicelist.protos.DeviceName;
 
 public class DeviceListLoader extends AsyncLoader<List<Device>> {
 
@@ -69,46 +73,20 @@ public class DeviceListLoader extends AsyncLoader<List<Device>> {
         throw new IOException("Invalid DeviceInfo name.");
       }
 
-      DeviceName deviceName = DeviceName.parseFrom(Base64.decode(deviceInfo.getName()));
+      DeviceName deviceName = DeviceName.ADAPTER.decode(Base64.decode(deviceInfo.getName()));
 
-      if (!deviceName.hasCiphertext() || !deviceName.hasEphemeralPublic() || !deviceName.hasSyntheticIv()) {
+      if (deviceName.ciphertext == null || deviceName.ephemeralPublic == null || deviceName.syntheticIv == null) {
         throw new IOException("Got a DeviceName that wasn't properly populated.");
       }
 
-      byte[]       syntheticIv     = deviceName.getSyntheticIv().toByteArray();
-      byte[]       cipherText      = deviceName.getCiphertext().toByteArray();
-      ECPrivateKey identityKey     = IdentityKeyUtil.getIdentityKeyPair(getContext()).getPrivateKey();
-      ECPublicKey  ephemeralPublic = Curve.decodePoint(deviceName.getEphemeralPublic().toByteArray(), 0);
-      byte[]       masterSecret    = Curve.calculateAgreement(ephemeralPublic, identityKey);
-
-      Mac mac = Mac.getInstance("HmacSHA256");
-      mac.init(new SecretKeySpec(masterSecret, "HmacSHA256"));
-      byte[] cipherKeyPart1 = mac.doFinal("cipher".getBytes());
-
-      mac.init(new SecretKeySpec(cipherKeyPart1, "HmacSHA256"));
-      byte[] cipherKey = mac.doFinal(syntheticIv);
-
-      Cipher cipher = Cipher.getInstance("AES/CTR/NoPadding");
-      cipher.init(Cipher.DECRYPT_MODE, new SecretKeySpec(cipherKey, "AES"), new IvParameterSpec(new byte[16]));
-      final byte[] plaintext = cipher.doFinal(cipherText);
-
-      mac.init(new SecretKeySpec(masterSecret, "HmacSHA256"));
-      byte[] verificationPart1 = mac.doFinal("auth".getBytes());
-
-      mac.init(new SecretKeySpec(verificationPart1, "HmacSHA256"));
-      byte[] verificationPart2 = mac.doFinal(plaintext);
-      byte[] ourSyntheticIv    = ByteUtil.trim(verificationPart2, 16);
-
-      if (!MessageDigest.isEqual(ourSyntheticIv, syntheticIv)) {
-        throw new GeneralSecurityException("The computed syntheticIv didn't match the actual syntheticIv.");
+      byte[] plaintext = DeviceNameCipher.decryptDeviceName(deviceName, SignalStore.account().getAciIdentityKey());
+      if (plaintext == null) {
+        throw new IOException("Failed to decrypt device name.");
       }
 
       return new Device(deviceInfo.getId(), new String(plaintext), deviceInfo.getCreated(), deviceInfo.getLastSeen());
-
     } catch (IOException e) {
       Log.w(TAG, "Failed while reading the protobuf.", e);
-    } catch (GeneralSecurityException | InvalidKeyException e) {
-      Log.w(TAG, "Failed during decryption.", e);
     }
 
     return new Device(deviceInfo.getId(), deviceInfo.getName(), deviceInfo.getCreated(), deviceInfo.getLastSeen());

@@ -13,15 +13,30 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 /**
  * Represents the participants to be displayed in the grid at any given time.
  */
 public class ParticipantCollection {
 
-  private static final Comparator<CallParticipant> LEAST_RECENTLY_ADDED                           = (a, b) -> Long.compare(a.getAddedToCallTime(), b.getAddedToCallTime());
-  private static final Comparator<CallParticipant> MOST_RECENTLY_SPOKEN                           = (a, b) -> Long.compare(b.getLastSpoke(), a.getLastSpoke());
-  private static final Comparator<CallParticipant> MOST_RECENTLY_SPOKEN_THEN_LEAST_RECENTLY_ADDED = ComparatorCompat.chain(MOST_RECENTLY_SPOKEN).thenComparing(LEAST_RECENTLY_ADDED);
+  private static final Comparator<CallParticipant> LEAST_RECENTLY_ADDED     = (a, b) -> Long.compare(a.getAddedToCallTime(), b.getAddedToCallTime());
+  private static final Comparator<CallParticipant> MOST_RECENTLY_SPOKEN     = (a, b) -> Long.compare(b.getLastSpoke(), a.getLastSpoke());
+  private static final Comparator<CallParticipant> HAND_RAISED              = (a, b) -> {
+    if (a.isHandRaised() && b.isHandRaised()) {
+      return Long.compare(a.getHandRaisedTimestamp(), b.getHandRaisedTimestamp());
+    } else if (a.isHandRaised()) {
+      return -1;
+    } else if (b.isHandRaised()) {
+      return 1;
+    } else {
+      return 0;
+    }
+  };
+  private static final Comparator<CallParticipant> COMPLEX_COMPARATOR_CHAIN = ComparatorCompat.chain(HAND_RAISED)
+                                                                                              .thenComparing(MOST_RECENTLY_SPOKEN)
+                                                                                              .thenComparing(LEAST_RECENTLY_ADDED);
 
   private final int                   maxGridCellCount;
   private final List<CallParticipant> participants;
@@ -41,12 +56,12 @@ public class ParticipantCollection {
       return new ParticipantCollection(maxGridCellCount);
     } else if (this.participants.isEmpty()) {
       List<CallParticipant> newParticipants = new ArrayList<>(participants);
-      Collections.sort(newParticipants, participants.size() <= maxGridCellCount ? LEAST_RECENTLY_ADDED : MOST_RECENTLY_SPOKEN_THEN_LEAST_RECENTLY_ADDED);
+      Collections.sort(newParticipants, participants.size() <= maxGridCellCount ? LEAST_RECENTLY_ADDED : COMPLEX_COMPARATOR_CHAIN);
 
       return new ParticipantCollection(maxGridCellCount, newParticipants);
     } else {
       List<CallParticipant> newParticipants = new ArrayList<>(participants);
-      Collections.sort(newParticipants, MOST_RECENTLY_SPOKEN_THEN_LEAST_RECENTLY_ADDED);
+      Collections.sort(newParticipants, COMPLEX_COMPARATOR_CHAIN);
 
       List<CallParticipantId> oldGridParticipantIds = Stream.of(getGridParticipants())
                                                             .map(CallParticipant::getCallParticipantId)
@@ -88,6 +103,10 @@ public class ParticipantCollection {
 
   public List<CallParticipant> getAllParticipants() {
     return participants;
+  }
+
+  public @NonNull ParticipantCollection map(@NonNull Function<CallParticipant, CallParticipant> mapper) {
+    return new ParticipantCollection(maxGridCellCount, participants.stream().map(mapper).collect(Collectors.toList()));
   }
 
   public int size() {

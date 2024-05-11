@@ -18,11 +18,11 @@ import androidx.annotation.Nullable;
 import androidx.annotation.WorkerThread;
 import androidx.exifinterface.media.ExifInterface;
 
+import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
 
 import org.signal.core.util.ThreadUtil;
 import org.signal.core.util.logging.Log;
-import org.thoughtcrime.securesms.mms.GlideApp;
 import org.thoughtcrime.securesms.mms.MediaConstraints;
 
 import java.io.BufferedInputStream;
@@ -68,6 +68,7 @@ public class BitmapUtil {
    * @deprecated You probably want to use {@link ImageCompressionUtil} instead, which has a clearer
    *             contract and handles mimetypes properly.
    */
+  @Deprecated
   @WorkerThread
   public static <T> ScaleResult createScaledBytes(@NonNull Context context,
                                                   @NonNull T model,
@@ -83,6 +84,7 @@ public class BitmapUtil {
    * @deprecated You probably want to use {@link ImageCompressionUtil} instead, which has a clearer
    *             contract and handles mimetypes properly.
    */
+  @Deprecated
   @WorkerThread
   public static <T> ScaleResult createScaledBytes(Context context,
                                                   T model,
@@ -111,7 +113,7 @@ public class BitmapUtil {
       int    attempts = 0;
       byte[] bytes;
 
-      Bitmap scaledBitmap = GlideApp.with(context.getApplicationContext())
+      Bitmap scaledBitmap = Glide.with(context.getApplicationContext())
                                     .asBitmap()
                                     .load(model)
                                     .skipMemoryCache(true)
@@ -177,7 +179,7 @@ public class BitmapUtil {
       throws BitmapDecodingException
   {
     try {
-      return GlideApp.with(context.getApplicationContext())
+      return Glide.with(context.getApplicationContext())
                      .asBitmap()
                      .load(model)
                      .centerInside()
@@ -244,16 +246,19 @@ public class BitmapUtil {
     return options;
   }
 
+  public static int getExifOrientation(ExifInterface exif) {
+    return exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_UNDEFINED);
+  }
+
   @Nullable
-  public static Pair<Integer, Integer> getExifDimensions(InputStream inputStream) throws IOException {
-    ExifInterface exif   = new ExifInterface(inputStream);
-    int           width  = exif.getAttributeInt(ExifInterface.TAG_IMAGE_WIDTH, 0);
-    int           height = exif.getAttributeInt(ExifInterface.TAG_IMAGE_LENGTH, 0);
+  public static Pair<Integer, Integer> getExifDimensions(ExifInterface exif) {
+    int width  = exif.getAttributeInt(ExifInterface.TAG_IMAGE_WIDTH, 0);
+    int height = exif.getAttributeInt(ExifInterface.TAG_IMAGE_LENGTH, 0);
     if (width == 0 || height == 0) {
       return null;
     }
 
-    int orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, 0);
+    int orientation = getExifOrientation(exif);
     if (orientation == ExifInterface.ORIENTATION_ROTATE_90  ||
         orientation == ExifInterface.ORIENTATION_ROTATE_270 ||
         orientation == ExifInterface.ORIENTATION_TRANSVERSE ||
@@ -269,7 +274,7 @@ public class BitmapUtil {
     return new Pair<>(options.outWidth, options.outHeight);
   }
 
-  public static InputStream toCompressedJpeg(Bitmap bitmap) {
+  public static ByteArrayInputStream toCompressedJpeg(Bitmap bitmap) {
     ByteArrayOutputStream thumbnailBytes = new ByteArrayOutputStream();
     bitmap.compress(CompressFormat.JPEG, 85, thumbnailBytes);
     return new ByteArrayInputStream(thumbnailBytes.toByteArray());

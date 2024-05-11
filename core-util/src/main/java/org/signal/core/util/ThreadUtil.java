@@ -2,22 +2,36 @@ package org.signal.core.util;
 
 import android.os.Handler;
 import android.os.Looper;
+import android.os.Process;
 
 import androidx.annotation.NonNull;
-
-import org.signal.core.util.concurrent.TracingExecutor;
-import org.signal.core.util.concurrent.TracingExecutorService;
+import androidx.annotation.VisibleForTesting;
 
 import java.util.concurrent.CountDownLatch;
-import java.util.concurrent.Executor;
-import java.util.concurrent.ExecutorService;
 
 /**
  * Thread related utility functions.
  */
 public final class ThreadUtil {
 
+  /**
+   * Default background thread priority.
+   */
+  public static final int PRIORITY_BACKGROUND_THREAD = Process.THREAD_PRIORITY_BACKGROUND;
+  /**
+   * Important background thread priority. This is slightly lower priority than the UI thread. Use for critical work that should run as fast as
+   * possible, but shouldn't block the UI (e.g. message sends)
+   */
+  public static final int PRIORITY_IMPORTANT_BACKGROUND_THREAD = Process.THREAD_PRIORITY_DEFAULT + Process.THREAD_PRIORITY_LESS_FAVORABLE;
+  /**
+   * As important as the UI thread. Use for absolutely critical UI blocking tasks/threads. For example fetching data for display in a recyclerview, or
+   * anything that will block UI.
+   */
+  public static final int PRIORITY_UI_BLOCKING_THREAD = Process.THREAD_PRIORITY_DEFAULT;
   private static volatile Handler handler;
+
+  @VisibleForTesting
+  public static volatile  boolean enforceAssertions = true;
 
   private ThreadUtil() {}
 
@@ -37,13 +51,13 @@ public final class ThreadUtil {
   }
 
   public static void assertMainThread() {
-    if (!isMainThread()) {
+    if (!isMainThread() && enforceAssertions) {
       throw new AssertionError("Must run on main thread.");
     }
   }
 
   public static void assertNotMainThread() {
-    if (isMainThread()) {
+    if (isMainThread() && enforceAssertions) {
       throw new AssertionError("Cannot run on main thread.");
     }
   }
@@ -97,13 +111,5 @@ public final class ThreadUtil {
     try {
       Thread.sleep(millis);
     } catch (InterruptedException ignored) { }
-  }
-
-  public static Executor trace(Executor executor) {
-    return new TracingExecutor(executor);
-  }
-
-  public static ExecutorService trace(ExecutorService executor) {
-    return new TracingExecutorService(executor);
   }
 }

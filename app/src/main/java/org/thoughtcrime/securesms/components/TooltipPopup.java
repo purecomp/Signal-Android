@@ -2,11 +2,11 @@ package org.thoughtcrime.securesms.components;
 
 import android.content.Context;
 import android.graphics.PorterDuff;
-import android.os.Build;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.ViewTreeObserver;
+import android.view.WindowManager;
 import android.widget.ImageView;
 import android.widget.PopupWindow;
 import android.widget.TextView;
@@ -14,17 +14,24 @@ import android.widget.TextView;
 import androidx.annotation.ColorInt;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.Px;
 import androidx.annotation.StringRes;
 import androidx.core.content.ContextCompat;
 
+import com.bumptech.glide.Glide;
+import com.google.android.material.shape.MaterialShapeDrawable;
+import com.google.android.material.shape.ShapeAppearanceModel;
+
+import org.signal.core.util.DimensionUnit;
+import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.R;
-import org.thoughtcrime.securesms.mms.GlideApp;
 
 /**
  * Class for creating simple tooltips to show throughout the app. Utilizes a popup window so you
  * don't have to worry about view hierarchies or anything.
  */
 public class TooltipPopup extends PopupWindow {
+  private static final String TAG = Log.tag(TooltipPopup.class);
 
   public static final int POSITION_ABOVE = 0;
   public static final int POSITION_BELOW = 1;
@@ -36,7 +43,10 @@ public class TooltipPopup extends PopupWindow {
 
   private final View      anchor;
   private final ImageView arrow;
-  private final int       position;
+  private final int position;
+  private final int startMargin;
+
+  private final MaterialShapeDrawable shapeableBubbleBackground = new MaterialShapeDrawable();
 
   public static Builder forTarget(@NonNull View anchor) {
     return new Builder(anchor);
@@ -44,6 +54,7 @@ public class TooltipPopup extends PopupWindow {
 
   private TooltipPopup(@NonNull View anchor,
                        int rawPosition,
+                       @Px int startMargin,
                        @NonNull String text,
                        @ColorInt int backgroundTint,
                        @ColorInt int textColor,
@@ -54,8 +65,9 @@ public class TooltipPopup extends PopupWindow {
           ViewGroup.LayoutParams.WRAP_CONTENT,
           ViewGroup.LayoutParams.WRAP_CONTENT);
 
-    this.anchor   = anchor;
-    this.position = getRtlPosition(anchor.getContext(), rawPosition);
+    this.anchor      = anchor;
+    this.position    = getRtlPosition(anchor.getContext(), rawPosition);
+    this.startMargin = startMargin;
 
     switch (rawPosition) {
       case POSITION_ABOVE: arrow = getContentView().findViewById(R.id.tooltip_arrow_bottom); break;
@@ -78,21 +90,21 @@ public class TooltipPopup extends PopupWindow {
 
     if (backgroundTint == 0) {
       bubble.getBackground().setColorFilter(ContextCompat.getColor(anchor.getContext(), R.color.tooltip_default_color), PorterDuff.Mode.MULTIPLY);
-      arrow.setColorFilter(ContextCompat.getColor(anchor.getContext(), R.color.tooltip_default_color), PorterDuff.Mode.MULTIPLY);
+      arrow.setColorFilter(ContextCompat.getColor(anchor.getContext(), R.color.tooltip_default_color), PorterDuff.Mode.SRC_IN);
+      shapeableBubbleBackground.setTint(ContextCompat.getColor(anchor.getContext(), R.color.tooltip_default_color));
     } else {
       bubble.getBackground().setColorFilter(backgroundTint, PorterDuff.Mode.MULTIPLY);
-      arrow.setColorFilter(backgroundTint, PorterDuff.Mode.MULTIPLY);
+      arrow.setColorFilter(backgroundTint, PorterDuff.Mode.SRC_IN);
+      shapeableBubbleBackground.setTint(backgroundTint);
     }
 
     if (iconGlideModel != null) {
       ImageView iconView = getContentView().findViewById(R.id.tooltip_icon);
       iconView.setVisibility(View.VISIBLE);
-      GlideApp.with(anchor.getContext()).load(iconGlideModel).into(iconView);
+      Glide.with(anchor.getContext()).load(iconGlideModel).into(iconView);
     }
 
-    if (Build.VERSION.SDK_INT >= 21) {
-      setElevation(10);
-    }
+    setElevation(10);
 
     getContentView().setOnClickListener(v -> dismiss());
 
@@ -140,7 +152,48 @@ public class TooltipPopup extends PopupWindow {
         throw new AssertionError("Invalid tooltip position!");
     }
 
-    showAsDropDown(anchor, xoffset, yoffset);
+    switch (position) {
+      case POSITION_ABOVE:
+        xoffset += startMargin;
+        xoffset -= DimensionUnit.DP.toPixels(20);
+      case POSITION_BELOW:
+        xoffset += startMargin;
+        xoffset -= DimensionUnit.DP.toPixels(20);
+        break;
+      case POSITION_LEFT:
+        xoffset += startMargin;
+        break;
+      case POSITION_RIGHT:
+        xoffset -= startMargin;
+    }
+
+    View bubble = getContentView().findViewById(R.id.tooltip_bubble);
+    ShapeAppearanceModel.Builder  shapeAppearanceModel  = ShapeAppearanceModel.builder()
+                                                                              .setAllCornerSizes(DimensionUnit.DP.toPixels(18));
+
+    if (position == POSITION_BELOW) {
+      // If the arrow is within the last 20dp of the right hand side, use RIGHT and set corner to 9dp
+      onLayout(() -> {
+        if (arrow.getX() > getContentView().getWidth() / 2f) {
+          arrow.setImageResource(R.drawable.ic_tooltip_arrow_up_right);
+        }
+
+        float arrowEnd = arrow.getX() + arrow.getRight();
+        if (arrowEnd > getContentView().getRight() - DimensionUnit.DP.toPixels(20)) {
+          shapeableBubbleBackground.setShapeAppearanceModel(shapeAppearanceModel.setTopRightCornerSize(DimensionUnit.DP.toPixels(9f)).build());
+          bubble.setBackground(shapeableBubbleBackground);
+        } else if (arrowEnd < DimensionUnit.DP.toPixels(20)) {
+          shapeableBubbleBackground.setShapeAppearanceModel(shapeAppearanceModel.setTopLeftCornerSize(DimensionUnit.DP.toPixels(9f)).build());
+          bubble.setBackground(shapeableBubbleBackground);
+        }
+      });
+    }
+
+    try {
+      showAsDropDown(anchor, xoffset, yoffset);
+    } catch (WindowManager.BadTokenException e) {
+      Log.w(TAG, "Failed to display popup, window disappeared.", e);
+    }
   }
 
   private void onLayout(@NonNull Runnable runnable) {
@@ -192,6 +245,7 @@ public class TooltipPopup extends PopupWindow {
     private int               textResId;
     private Object            iconGlideModel;
     private OnDismissListener dismissListener;
+    private int               setStartMargin;
 
     private Builder(@NonNull View anchor) {
       this.anchor = anchor;
@@ -222,9 +276,14 @@ public class TooltipPopup extends PopupWindow {
       return this;
     }
 
+    public Builder setStartMargin(@Px int startMargin) {
+      this.setStartMargin = startMargin;
+      return this;
+    }
+
     public TooltipPopup show(int position) {
       String       text    = anchor.getContext().getString(textResId);
-      TooltipPopup tooltip = new TooltipPopup(anchor, position, text, backgroundTint, textColor, iconGlideModel, dismissListener);
+      TooltipPopup tooltip = new TooltipPopup(anchor, position, setStartMargin, text, backgroundTint, textColor, iconGlideModel, dismissListener);
 
       tooltip.show();
 

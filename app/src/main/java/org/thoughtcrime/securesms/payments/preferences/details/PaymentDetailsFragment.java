@@ -17,14 +17,15 @@ import androidx.appcompat.widget.Toolbar;
 import androidx.constraintlayout.widget.Group;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.FragmentActivity;
-import androidx.lifecycle.ViewModelProviders;
+import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.Navigation;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.LoggingFragment;
 import org.thoughtcrime.securesms.R;
+import org.thoughtcrime.securesms.badges.BadgeImageView;
 import org.thoughtcrime.securesms.components.AvatarImageView;
-import org.thoughtcrime.securesms.database.PaymentDatabase;
+import org.thoughtcrime.securesms.database.PaymentTable;
 import org.thoughtcrime.securesms.payments.Direction;
 import org.thoughtcrime.securesms.payments.MoneyView;
 import org.thoughtcrime.securesms.payments.Payee;
@@ -33,7 +34,7 @@ import org.thoughtcrime.securesms.payments.State;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.util.DateUtils;
 import org.thoughtcrime.securesms.util.SpanUtil;
-import org.thoughtcrime.securesms.util.StringUtil;
+import org.signal.core.util.StringUtil;
 import org.thoughtcrime.securesms.util.views.LearnMoreTextView;
 import org.whispersystems.signalservice.api.payments.Money;
 
@@ -57,6 +58,7 @@ public final class PaymentDetailsFragment extends LoggingFragment {
     PaymentDetailsParcelable details = PaymentDetailsFragmentArgs.fromBundle(requireArguments()).getPaymentDetails();
 
     AvatarImageView   avatar          = view.findViewById(R.id.payments_details_avatar);
+    BadgeImageView    badge           = view.findViewById(R.id.payments_details_badge);
     TextView          contactFromTo   = view.findViewById(R.id.payments_details_contact_to_from);
     MoneyView         amount          = view.findViewById(R.id.payments_details_amount);
     TextView          note            = view.findViewById(R.id.payments_details_note);
@@ -97,7 +99,7 @@ public final class PaymentDetailsFragment extends LoggingFragment {
         sentFeeAmount.setVisibility(View.VISIBLE);
       }
     } else {
-      PaymentsDetailsViewModel viewModel = ViewModelProviders.of(this, new PaymentsDetailsViewModel.Factory(details.requireUuid())).get(PaymentsDetailsViewModel.class);
+      PaymentsDetailsViewModel viewModel = new ViewModelProvider(this, new PaymentsDetailsViewModel.Factory(details.requireUuid())).get(PaymentsDetailsViewModel.class);
       viewModel.getViewState()
                .observe(getViewLifecycleOwner(),
                         state -> {
@@ -106,6 +108,7 @@ public final class PaymentDetailsFragment extends LoggingFragment {
                             avatar.setImageResource(R.drawable.ic_mobilecoin_avatar_24);
                           } else {
                             avatar.setRecipient(state.getRecipient(), true);
+                            badge.setBadgeFromRecipient(state.getRecipient());
                           }
                           contactFromTo.setText(describeToOrFrom(state));
 
@@ -208,7 +211,7 @@ public final class PaymentDetailsFragment extends LoggingFragment {
     }
   }
 
-  private @NonNull CharSequence describeSentTo(@NonNull PaymentsDetailsViewModel.ViewState state, @NonNull PaymentDatabase.PaymentTransaction payment) {
+  private @NonNull CharSequence describeSentTo(@NonNull PaymentsDetailsViewModel.ViewState state, @NonNull PaymentTable.PaymentTransaction payment) {
     if (payment.getDirection().isSent()) {
       return SpanUtil.insertSingleSpan(getResources(), R.string.PaymentsDetailsFragment__sent_to_s, describe(payment.getPayee(), state.getRecipient()));
     } else {
@@ -216,7 +219,7 @@ public final class PaymentDetailsFragment extends LoggingFragment {
     }
   }
 
-  private @NonNull CharSequence describeStatus(@NonNull PaymentDatabase.PaymentTransaction payment) {
+  private @NonNull CharSequence describeStatus(@NonNull PaymentTable.PaymentTransaction payment) {
     switch (payment.getState()) {
       case INITIAL:
         return getResources().getString(R.string.PaymentsDetailsFragment__submitting_payment);

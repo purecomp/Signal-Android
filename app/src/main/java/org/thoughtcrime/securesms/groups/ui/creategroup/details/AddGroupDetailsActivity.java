@@ -7,8 +7,6 @@ import android.os.Bundle;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.navigation.NavGraph;
-import androidx.navigation.Navigation;
 import androidx.navigation.fragment.NavHostFragment;
 
 import org.thoughtcrime.securesms.PassphraseRequiredActivity;
@@ -66,7 +64,7 @@ public class AddGroupDetailsActivity extends PassphraseRequiredActivity implemen
                              long threadId,
                              @NonNull List<Recipient> invitedMembers)
   {
-    Dialog dialog = GroupInviteSentDialog.showInvitesSent(this, invitedMembers);
+    Dialog dialog = GroupInviteSentDialog.showInvitesSent(this, this, invitedMembers);
     if (dialog != null) {
       dialog.setOnDismissListener((d) -> goToConversation(recipientId, threadId));
     } else {
@@ -75,7 +73,7 @@ public class AddGroupDetailsActivity extends PassphraseRequiredActivity implemen
   }
 
   void goToConversation(@NonNull RecipientId recipientId, long threadId) {
-    Intent intent = ConversationIntents.createBuilder(this, recipientId, threadId)
+    Intent intent = ConversationIntents.createBuilderSync(this, recipientId, threadId)
                                        .firstTimeInSelfCreatedGroup()
                                        .build();
 

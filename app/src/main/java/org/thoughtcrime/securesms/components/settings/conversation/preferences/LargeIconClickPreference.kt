@@ -6,7 +6,8 @@ import org.thoughtcrime.securesms.components.settings.DSLSettingsIcon
 import org.thoughtcrime.securesms.components.settings.DSLSettingsText
 import org.thoughtcrime.securesms.components.settings.PreferenceModel
 import org.thoughtcrime.securesms.components.settings.PreferenceViewHolder
-import org.thoughtcrime.securesms.util.MappingAdapter
+import org.thoughtcrime.securesms.util.adapter.mapping.LayoutFactory
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingAdapter
 
 /**
  * Renders a preference line item with a larger (40dp) icon
@@ -14,12 +15,14 @@ import org.thoughtcrime.securesms.util.MappingAdapter
 object LargeIconClickPreference {
 
   fun register(adapter: MappingAdapter) {
-    adapter.registerFactory(Model::class.java, MappingAdapter.LayoutFactory(::ViewHolder, R.layout.large_icon_preference_item))
+    adapter.registerFactory(Model::class.java, LayoutFactory(::ViewHolder, R.layout.large_icon_preference_item))
   }
 
   class Model(
     override val title: DSLSettingsText?,
     override val icon: DSLSettingsIcon,
+    override val summary: DSLSettingsText? = null,
+    override val isEnabled: Boolean = true,
     val onClick: () -> Unit
   ) : PreferenceModel<Model>()
 

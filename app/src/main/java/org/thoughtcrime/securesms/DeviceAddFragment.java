@@ -1,100 +1,89 @@
 package org.thoughtcrime.securesms;
 
 import android.animation.Animator;
-import android.annotation.TargetApi;
-import android.content.res.Configuration;
-import android.os.Build;
 import android.os.Bundle;
 import android.view.LayoutInflater;
+import android.view.MenuItem;
 import android.view.View;
 import android.view.ViewAnimationUtils;
 import android.view.ViewGroup;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.ImageView;
-import android.widget.LinearLayout;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.core.view.ViewCompat;
 
-import org.thoughtcrime.securesms.components.camera.CameraView;
-import org.thoughtcrime.securesms.qr.ScanListener;
-import org.thoughtcrime.securesms.qr.ScanningThread;
+import org.signal.qr.QrScannerView;
+import org.signal.qr.kitkat.ScanListener;
+import org.thoughtcrime.securesms.mediasend.camerax.CameraXModelBlocklist;
+import org.signal.core.util.concurrent.LifecycleDisposable;
 import org.thoughtcrime.securesms.util.ViewUtil;
+
+import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
+import io.reactivex.rxjava3.disposables.Disposable;
 
 public class DeviceAddFragment extends LoggingFragment {
 
-  private ViewGroup      container;
-  private LinearLayout   overlay;
-  private ImageView      devicesImage;
-  private CameraView     scannerView;
-  private ScanningThread scanningThread;
-  private ScanListener   scanListener;
+  private final LifecycleDisposable lifecycleDisposable = new LifecycleDisposable();
+
+  private ImageView     devicesImage;
+  private ScanListener  scanListener;
+  private QrScannerView scannerView;
 
   @Override
   public View onCreateView(@NonNull LayoutInflater inflater, ViewGroup viewGroup, Bundle bundle) {
-    this.container    = ViewUtil.inflate(inflater, viewGroup, R.layout.device_add_fragment);
-    this.overlay      = this.container.findViewById(R.id.overlay);
-    this.scannerView  = this.container.findViewById(R.id.scanner);
-    this.devicesImage = this.container.findViewById(R.id.devices);
+    ViewGroup container = ViewUtil.inflate(inflater, viewGroup, R.layout.device_add_fragment);
 
-    if (getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE) {
-      this.overlay.setOrientation(LinearLayout.HORIZONTAL);
-    } else {
-      this.overlay.setOrientation(LinearLayout.VERTICAL);
-    }
+    this.scannerView = container.findViewById(R.id.scanner);
+    this.devicesImage = container.findViewById(R.id.devices);
+    ViewCompat.setTransitionName(devicesImage, "devices");
 
-    if (Build.VERSION.SDK_INT >= 21) {
-      this.container.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
-        @TargetApi(21)
-        @Override
-        public void onLayoutChange(View v, int left, int top, int right, int bottom,
-                                   int oldLeft, int oldTop, int oldRight, int oldBottom)
-        {
-          v.removeOnLayoutChangeListener(this);
+    container.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
+      @Override
+      public void onLayoutChange(View v, int left, int top, int right, int bottom,
+                                 int oldLeft, int oldTop, int oldRight, int oldBottom)
+      {
+        v.removeOnLayoutChangeListener(this);
 
-          Animator reveal = ViewAnimationUtils.createCircularReveal(v, right, bottom, 0, (int) Math.hypot(right, bottom));
-          reveal.setInterpolator(new DecelerateInterpolator(2f));
-          reveal.setDuration(800);
-          reveal.start();
-        }
+        Animator reveal = ViewAnimationUtils.createCircularReveal(v, right, bottom, 0, (int) Math.hypot(right, bottom));
+        reveal.setInterpolator(new DecelerateInterpolator(2f));
+        reveal.setDuration(800);
+        reveal.start();
+      }
+    });
+
+    scannerView.start(getViewLifecycleOwner(), CameraXModelBlocklist.isBlocklisted());
+
+    lifecycleDisposable.bindTo(getViewLifecycleOwner());
+
+    Disposable qrDisposable = scannerView
+        .getQrData()
+        .distinctUntilChanged()
+        .observeOn(AndroidSchedulers.mainThread())
+        .subscribe(qrData -> {
+          if (scanListener != null) {
+            scanListener.onQrDataFound(qrData);
+          }
+        });
+
+    lifecycleDisposable.add(qrDisposable);
+
+    return container;
+  }
+
+  @Override
+  public void onViewCreated(@NonNull View view, @Nullable Bundle savedInstanceState) {
+    MenuItem switchCamera = ((DeviceActivity) requireActivity()).getCameraSwitchItem();
+
+    if (switchCamera != null) {
+      switchCamera.setVisible(true);
+      switchCamera.setOnMenuItemClickListener(v -> {
+        scannerView.toggleCamera();
+        return true;
       });
     }
-
-    return this.container;
   }
-
-  @Override
-  public void onResume() {
-    super.onResume();
-    this.scanningThread = new ScanningThread();
-    this.scanningThread.setScanListener(scanListener);
-    this.scannerView.onResume();
-    this.scannerView.setPreviewCallback(scanningThread);
-    this.scanningThread.start();
-  }
-
-  @Override
-  public void onPause() {
-    super.onPause();
-    this.scannerView.onPause();
-    this.scanningThread.stopScanning();
-  }
-
-  @Override
-  public void onConfigurationChanged(@NonNull Configuration newConfiguration) {
-    super.onConfigurationChanged(newConfiguration);
-
-    this.scannerView.onPause();
-
-    if (newConfiguration.orientation == Configuration.ORIENTATION_LANDSCAPE) {
-      overlay.setOrientation(LinearLayout.HORIZONTAL);
-    } else {
-      overlay.setOrientation(LinearLayout.VERTICAL);
-    }
-
-    this.scannerView.onResume();
-    this.scannerView.setPreviewCallback(scanningThread);
-  }
-
 
   public ImageView getDevicesImage() {
     return devicesImage;
@@ -102,9 +91,5 @@ public class DeviceAddFragment extends LoggingFragment {
 
   public void setScanListener(ScanListener scanListener) {
     this.scanListener = scanListener;
-
-    if (this.scanningThread != null) {
-      this.scanningThread.setScanListener(scanListener);
-    }
   }
 }

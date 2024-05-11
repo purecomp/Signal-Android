@@ -5,12 +5,14 @@ import android.content.Context;
 import androidx.annotation.NonNull;
 import androidx.annotation.WorkerThread;
 
-import org.thoughtcrime.securesms.database.AttachmentDatabase;
+import org.thoughtcrime.securesms.database.AttachmentTable;
 import org.thoughtcrime.securesms.mms.SentMediaQuality;
-import org.whispersystems.libsignal.util.guava.Optional;
+
+import java.util.Optional;
+
 
 /**
- * Add a {@link SentMediaQuality} value for {@link AttachmentDatabase.TransformProperties#getSentMediaQuality()} on the
+ * Add a {@link SentMediaQuality} value for {@link AttachmentTable.TransformProperties#getSentMediaQuality()} on the
  * transformed media. Safe to use in a pipeline with other transforms.
  */
 public final class SentMediaQualityTransform implements MediaTransform {
@@ -35,6 +37,6 @@ public final class SentMediaQualityTransform implements MediaTransform {
                      media.isVideoGif(),
                      media.getBucketId(),
                      media.getCaption(),
-                     Optional.of(AttachmentDatabase.TransformProperties.forSentMediaQuality(media.getTransformProperties(), sentMediaQuality)));
+                     Optional.of(AttachmentTable.TransformProperties.forSentMediaQuality(media.getTransformProperties(), sentMediaQuality)));
   }
 }

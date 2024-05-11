@@ -19,14 +19,16 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 import androidx.appcompat.widget.Toolbar;
-import androidx.lifecycle.ViewModelProviders;
+import androidx.core.content.ContextCompat;
+import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.Navigation;
 import androidx.vectordrawable.graphics.drawable.VectorDrawableCompat;
 
+import com.airbnb.lottie.SimpleColorFilter;
+import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.bumptech.glide.request.target.CustomTarget;
 import com.bumptech.glide.request.transition.Transition;
-import com.dd.CircularProgressButton;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import org.signal.core.util.EditTextUtil;
@@ -35,12 +37,9 @@ import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.avatar.picker.AvatarPickerFragment;
 import org.thoughtcrime.securesms.components.settings.app.privacy.expire.ExpireTimerSettingsFragment;
 import org.thoughtcrime.securesms.groups.ui.GroupMemberListView;
-import org.thoughtcrime.securesms.groups.ui.creategroup.dialogs.NonGv2MemberDialog;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
-import org.thoughtcrime.securesms.mediasend.AvatarSelectionActivity;
 import org.thoughtcrime.securesms.mediasend.Media;
 import org.thoughtcrime.securesms.mms.DecryptableStreamUriLoader;
-import org.thoughtcrime.securesms.mms.GlideApp;
 import org.thoughtcrime.securesms.profiles.AvatarHelper;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.recipients.RecipientId;
@@ -49,8 +48,9 @@ import org.thoughtcrime.securesms.util.BitmapUtil;
 import org.thoughtcrime.securesms.util.ExpirationUtil;
 import org.thoughtcrime.securesms.util.FeatureFlags;
 import org.thoughtcrime.securesms.util.ViewUtil;
+import org.thoughtcrime.securesms.util.navigation.SafeNavigation;
 import org.thoughtcrime.securesms.util.text.AfterTextChanged;
-import org.thoughtcrime.securesms.util.views.LearnMoreTextView;
+import org.thoughtcrime.securesms.util.views.CircularProgressMaterialButton;
 
 import java.util.Arrays;
 import java.util.List;
@@ -61,13 +61,13 @@ public class AddGroupDetailsFragment extends LoggingFragment {
   private static final int   AVATAR_PLACEHOLDER_INSET_DP = 18;
   private static final short REQUEST_DISAPPEARING_TIMER  = 28621;
 
-  private CircularProgressButton   create;
-  private Callback                 callback;
-  private AddGroupDetailsViewModel viewModel;
-  private Drawable                 avatarPlaceholder;
-  private EditText                 name;
-  private Toolbar                  toolbar;
-  private View                     disappearingMessagesRow;
+  private CircularProgressMaterialButton create;
+  private Callback                       callback;
+  private AddGroupDetailsViewModel       viewModel;
+  private Drawable                       avatarPlaceholder;
+  private EditText                       name;
+  private Toolbar                        toolbar;
+  private View                           disappearingMessagesRow;
 
   @Override
   public void onAttach(@NonNull Context context) {
@@ -95,16 +95,18 @@ public class AddGroupDetailsFragment extends LoggingFragment {
     toolbar                 = view.findViewById(R.id.toolbar);
     disappearingMessagesRow = view.findViewById(R.id.group_disappearing_messages_row);
 
-    setCreateEnabled(false, false);
+    setCreateEnabled(false);
 
     GroupMemberListView members                  = view.findViewById(R.id.member_list);
     ImageView           avatar                   = view.findViewById(R.id.group_avatar);
     View                mmsWarning               = view.findViewById(R.id.mms_warning);
-    LearnMoreTextView   gv2Warning               = view.findViewById(R.id.gv2_warning);
+    TextView            mmsWarningText           = view.findViewById(R.id.mms_warning_text);
     View                addLater                 = view.findViewById(R.id.add_later);
     TextView            disappearingMessageValue = view.findViewById(R.id.group_disappearing_messages_value);
 
-    avatarPlaceholder = VectorDrawableCompat.create(getResources(), R.drawable.ic_camera_outline_32_ultramarine, requireActivity().getTheme());
+    members.initializeAdapter(getViewLifecycleOwner());
+    avatarPlaceholder = Objects.requireNonNull(VectorDrawableCompat.create(getResources(), R.drawable.ic_camera_outline_24, requireActivity().getTheme()));
+    avatarPlaceholder.setColorFilter(new SimpleColorFilter(ContextCompat.getColor(requireContext(), R.color.signal_icon_tint_primary)));
 
     if (savedInstanceState == null) {
       avatar.setImageDrawable(new InsetDrawable(avatarPlaceholder, ViewUtil.dpToPx(AVATAR_PLACEHOLDER_INSET_DP)));
@@ -122,24 +124,19 @@ public class AddGroupDetailsFragment extends LoggingFragment {
       addLater.setVisibility(list.isEmpty() ? View.VISIBLE : View.GONE);
       members.setMembers(list);
     });
-    viewModel.getCanSubmitForm().observe(getViewLifecycleOwner(), isFormValid -> setCreateEnabled(isFormValid, true));
+    viewModel.getCanSubmitForm().observe(getViewLifecycleOwner(), this::setCreateEnabled);
     viewModel.getIsMms().observe(getViewLifecycleOwner(), isMms -> {
       disappearingMessagesRow.setVisibility(isMms ? View.GONE : View.VISIBLE);
       mmsWarning.setVisibility(isMms ? View.VISIBLE : View.GONE);
+      mmsWarningText.setText(R.string.AddGroupDetailsFragment__youve_selected_a_contact_that_doesnt_support_signal_groups_mms_removal);
       name.setHint(isMms ? R.string.AddGroupDetailsFragment__group_name_optional : R.string.AddGroupDetailsFragment__group_name_required);
       toolbar.setTitle(isMms ? R.string.AddGroupDetailsFragment__create_group : R.string.AddGroupDetailsFragment__name_this_group);
-    });
-    viewModel.getNonGv2CapableMembers().observe(getViewLifecycleOwner(), nonGv2CapableMembers -> {
-      gv2Warning.setVisibility(nonGv2CapableMembers.isEmpty() ? View.GONE : View.VISIBLE);
-      gv2Warning.setText(requireContext().getResources().getQuantityString(R.plurals.AddGroupDetailsFragment__d_members_do_not_support_new_groups_so_this_group_cannot_be_created, nonGv2CapableMembers.size(), nonGv2CapableMembers.size()));
-      gv2Warning.setLearnMoreVisible(true);
-      gv2Warning.setOnLinkClickListener(v -> NonGv2MemberDialog.showNonGv2Members(requireContext(), nonGv2CapableMembers));
     });
     viewModel.getAvatar().observe(getViewLifecycleOwner(), avatarBytes -> {
       if (avatarBytes == null) {
         avatar.setImageDrawable(new InsetDrawable(avatarPlaceholder, ViewUtil.dpToPx(AVATAR_PLACEHOLDER_INSET_DP)));
       } else {
-        GlideApp.with(this)
+        Glide.with(this)
                 .load(avatarBytes)
                 .circleCrop()
                 .skipMemoryCache(true)
@@ -181,7 +178,7 @@ public class AddGroupDetailsFragment extends LoggingFragment {
 
     viewModel.setAvatarMedia(result);
 
-    GlideApp.with(this)
+    Glide.with(this)
             .asBitmap()
             .load(decryptableUri)
             .skipMemoryCache(true)
@@ -205,15 +202,17 @@ public class AddGroupDetailsFragment extends LoggingFragment {
     AddGroupDetailsRepository        repository = new AddGroupDetailsRepository(requireContext());
     AddGroupDetailsViewModel.Factory factory    = new AddGroupDetailsViewModel.Factory(Arrays.asList(args.getRecipientIds()), repository);
 
-    viewModel = ViewModelProviders.of(this, factory).get(AddGroupDetailsViewModel.class);
+    viewModel = new ViewModelProvider(this, factory).get(AddGroupDetailsViewModel.class);
 
     viewModel.getGroupCreateResult().observe(getViewLifecycleOwner(), this::handleGroupCreateResult);
   }
 
   private void handleCreateClicked() {
-    create.setClickable(false);
-    create.setIndeterminateProgressMode(true);
-    create.setProgress(50);
+    if (!create.isClickable()) {
+      return;
+    }
+
+    create.setSpinning();
 
     viewModel.create();
   }
@@ -260,21 +259,18 @@ public class AddGroupDetailsFragment extends LoggingFragment {
          .show();
   }
 
-  private void setCreateEnabled(boolean isEnabled, boolean animate) {
-    if (create.isEnabled() == isEnabled) {
+  private void setCreateEnabled(boolean isEnabled) {
+    if (create.isClickable() == isEnabled) {
       return;
     }
 
-    create.setEnabled(isEnabled);
-    create.animate()
-          .setDuration(animate ? 300 : 0)
-          .alpha(isEnabled ? 1f : 0.5f);
+    create.setClickable(isEnabled);
   }
 
   private void showAvatarPicker() {
     Media media = viewModel.getAvatarMedia();
 
-    Navigation.findNavController(requireView()).navigate(AddGroupDetailsFragmentDirections.actionAddGroupDetailsFragmentToAvatarPicker(null, media).setIsNewGroup(true));
+    SafeNavigation.safeNavigate(Navigation.findNavController(requireView()), AddGroupDetailsFragmentDirections.actionAddGroupDetailsFragmentToAvatarPicker(null, media).setIsNewGroup(true));
   }
 
   public interface Callback {

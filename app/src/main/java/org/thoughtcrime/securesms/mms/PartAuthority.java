@@ -3,22 +3,28 @@ package org.thoughtcrime.securesms.mms;
 import android.content.ContentUris;
 import android.content.Context;
 import android.content.UriMatcher;
+import android.content.res.AssetFileDescriptor;
+import android.database.Cursor;
 import android.net.Uri;
+import android.provider.DocumentsContract;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.core.provider.DocumentsContractCompat;
 
 import org.thoughtcrime.securesms.BuildConfig;
 import org.thoughtcrime.securesms.attachments.Attachment;
 import org.thoughtcrime.securesms.attachments.AttachmentId;
 import org.thoughtcrime.securesms.avatar.AvatarPickerStorage;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
+import org.thoughtcrime.securesms.database.AttachmentTable;
+import org.thoughtcrime.securesms.database.SignalDatabase;
 import org.thoughtcrime.securesms.emoji.EmojiFiles;
 import org.thoughtcrime.securesms.providers.BlobProvider;
 import org.thoughtcrime.securesms.providers.DeprecatedPersistentBlobProvider;
 import org.thoughtcrime.securesms.providers.PartProvider;
 import org.thoughtcrime.securesms.wallpaper.WallpaperStorage;
 
+import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.InputStream;
 
@@ -48,7 +54,7 @@ public class PartAuthority {
 
   static {
     uriMatcher = new UriMatcher(UriMatcher.NO_MATCH);
-    uriMatcher.addURI(AUTHORITY, "part/*/#", PART_ROW);
+    uriMatcher.addURI(AUTHORITY, "part/#", PART_ROW);
     uriMatcher.addURI(AUTHORITY, "sticker/#", STICKER_ROW);
     uriMatcher.addURI(AUTHORITY, "wallpaper/*", WALLPAPER_ROW);
     uriMatcher.addURI(AUTHORITY, "emoji/*", EMOJI_ROW);
@@ -70,14 +76,14 @@ public class PartAuthority {
     int match = uriMatcher.match(uri);
     try {
       switch (match) {
-      case PART_ROW:          return DatabaseFactory.getAttachmentDatabase(context).getAttachmentStream(new PartUriParser(uri).getPartId(), 0);
-      case STICKER_ROW:       return DatabaseFactory.getStickerDatabase(context).getStickerStream(ContentUris.parseId(uri));
+      case PART_ROW:          return SignalDatabase.attachments().getAttachmentStream(new PartUriParser(uri).getPartId(), 0);
+      case STICKER_ROW:       return SignalDatabase.stickers().getStickerStream(ContentUris.parseId(uri));
       case PERSISTENT_ROW:    return DeprecatedPersistentBlobProvider.getInstance(context).getStream(context, ContentUris.parseId(uri));
       case BLOB_ROW:          return BlobProvider.getInstance().getStream(context, uri);
       case WALLPAPER_ROW:     return WallpaperStorage.read(context, getWallpaperFilename(uri));
       case EMOJI_ROW:         return EmojiFiles.openForReading(context, getEmojiFilename(uri));
       case AVATAR_PICKER_ROW: return AvatarPickerStorage.read(context, getAvatarPickerFilename(uri));
-      default:                return context.getContentResolver().openInputStream(uri);
+      default:                return openExternalFileStream(context, uri);
       }
     } catch (SecurityException se) {
       throw new IOException(se);
@@ -89,9 +95,9 @@ public class PartAuthority {
 
     switch (match) {
     case PART_ROW:
-      Attachment attachment = DatabaseFactory.getAttachmentDatabase(context).getAttachment(new PartUriParser(uri).getPartId());
+      Attachment attachment = SignalDatabase.attachments().getAttachment(new PartUriParser(uri).getPartId());
 
-      if (attachment != null) return attachment.getFileName();
+      if (attachment != null) return attachment.fileName;
       else                    return null;
     case PERSISTENT_ROW:
       return DeprecatedPersistentBlobProvider.getFileName(context, uri);
@@ -107,9 +113,9 @@ public class PartAuthority {
 
     switch (match) {
       case PART_ROW:
-        Attachment attachment = DatabaseFactory.getAttachmentDatabase(context).getAttachment(new PartUriParser(uri).getPartId());
+        Attachment attachment = SignalDatabase.attachments().getAttachment(new PartUriParser(uri).getPartId());
 
-        if (attachment != null) return attachment.getSize();
+        if (attachment != null) return attachment.size;
         else                    return null;
       case PERSISTENT_ROW:
         return DeprecatedPersistentBlobProvider.getFileSize(context, uri);
@@ -125,9 +131,9 @@ public class PartAuthority {
 
     switch (match) {
       case PART_ROW:
-        Attachment attachment = DatabaseFactory.getAttachmentDatabase(context).getAttachment(new PartUriParser(uri).getPartId());
+        Attachment attachment = SignalDatabase.attachments().getAttachment(new PartUriParser(uri).getPartId());
 
-        if (attachment != null) return attachment.getContentType();
+        if (attachment != null) return attachment.contentType;
         else                    return null;
       case PERSISTENT_ROW:
         return DeprecatedPersistentBlobProvider.getMimeType(context, uri);
@@ -143,12 +149,22 @@ public class PartAuthority {
 
     switch (match) {
       case PART_ROW:
-        Attachment attachment = DatabaseFactory.getAttachmentDatabase(context).getAttachment(new PartUriParser(uri).getPartId());
+        Attachment attachment = SignalDatabase.attachments().getAttachment(new PartUriParser(uri).getPartId());
 
-        if (attachment != null) return attachment.isVideoGif();
+        if (attachment != null) return attachment.videoGif;
         else                    return false;
       default:
         return false;
+    }
+  }
+
+  public static @Nullable AttachmentTable.TransformProperties getAttachmentTransformProperties(@NonNull Uri uri) {
+    int match = uriMatcher.match(uri);
+    switch (match) {
+      case PART_ROW:
+        return SignalDatabase.attachments().getTransformProperties(new PartUriParser(uri).getPartId());
+      default:
+        return null;
     }
   }
 
@@ -158,8 +174,7 @@ public class PartAuthority {
   }
 
   public static Uri getAttachmentDataUri(AttachmentId attachmentId) {
-    Uri uri = Uri.withAppendedPath(PART_CONTENT_URI, String.valueOf(attachmentId.getUniqueId()));
-    return ContentUris.withAppendedId(uri, attachmentId.getRowId());
+    return ContentUris.withAppendedId(PART_CONTENT_URI, attachmentId.id);
   }
 
   public static Uri getAttachmentThumbnailUri(AttachmentId attachmentId) {
@@ -211,5 +226,46 @@ public class PartAuthority {
 
   public static @NonNull AttachmentId requireAttachmentId(@NonNull Uri uri) {
     return new PartUriParser(uri).getPartId();
+  }
+
+  private static @Nullable InputStream openExternalFileStream(@NonNull Context context, @NonNull Uri uri) throws IOException {
+    if (isVirtualFile(context, uri)) {
+      return getInputStreamForVirtualFile(context, uri);
+    } else {
+      return context.getContentResolver().openInputStream(uri);
+    }
+  }
+
+  private static boolean isVirtualFile(@NonNull Context context, @NonNull Uri uri) {
+    if (!DocumentsContractCompat.isDocumentUri(context, uri)) {
+      return false;
+    }
+
+    try (Cursor cursor = context.getContentResolver().query(uri, new String[]{DocumentsContract.Document.COLUMN_FLAGS}, null, null, null, null)) {
+      if (cursor == null) {
+        return false;
+      }
+
+      int flags = cursor.moveToFirst() ? cursor.getInt(0) : 0;
+      return (flags & DocumentsContractCompat.DocumentCompat.FLAG_VIRTUAL_DOCUMENT) != 0;
+    }
+  }
+
+  /** @noinspection resource*/
+  private static @Nullable InputStream getInputStreamForVirtualFile(@NonNull Context context, @NonNull Uri uri) throws IOException {
+    String[] openableMimeTypes = context.getContentResolver().getStreamTypes(uri, "*/*");
+
+    if (openableMimeTypes == null || openableMimeTypes.length < 1) {
+      throw new FileNotFoundException("No openable mime-types for virtual file.");
+    }
+
+    AssetFileDescriptor fileDescriptor = context.getContentResolver()
+                                                .openTypedAssetFileDescriptor(uri, openableMimeTypes[0], null);
+
+    if (fileDescriptor == null) {
+      throw new FileNotFoundException("Couldn't open file descriptor for virtual file.");
+    }
+
+    return fileDescriptor.createInputStream();
   }
 }

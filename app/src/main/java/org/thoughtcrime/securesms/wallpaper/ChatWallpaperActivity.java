@@ -6,8 +6,7 @@ import android.os.Bundle;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.appcompat.widget.Toolbar;
-import androidx.lifecycle.ViewModelProviders;
+import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.NavGraph;
 import androidx.navigation.Navigation;
 
@@ -36,7 +35,7 @@ public final class ChatWallpaperActivity extends PassphraseRequiredActivity {
   @Override
   protected void onCreate(Bundle savedInstanceState, boolean ready) {
     ChatWallpaperViewModel.Factory factory = new ChatWallpaperViewModel.Factory(getIntent().getParcelableExtra(EXTRA_RECIPIENT_ID));
-    ViewModelProviders.of(this, factory).get(ChatWallpaperViewModel.class);
+    new ViewModelProvider(this, factory).get(ChatWallpaperViewModel.class);
 
     dynamicTheme.onCreate(this);
     setContentView(R.layout.chat_wallpaper_activity);

@@ -13,11 +13,17 @@
     <item android:title="@string/text_secure_normal__invite_friends"
           android:id="@+id/menu_invite" />
 
+    <item android:title="@string/text_secure_normal__filter_unread_chats"
+          android:id="@+id/menu_filter_unread_chats" />
+
+    <item android:title="@string/text_secure_normal__clear_unread_filter"
+          android:id="@+id/menu_clear_unread_filter"
+          android:visible="false" />
+
     <item android:title="@string/text_secure_normal__menu_settings"
           android:id="@+id/menu_settings" />
 
-    <item android:title="@string/Insights__title"
-          android:id="@+id/menu_insights"
-          android:visible="false" />
+    <item android:title="@string/ConversationListFragment__notification_profile"
+          android:id="@+id/menu_notification_profile" />
 
 </menu>

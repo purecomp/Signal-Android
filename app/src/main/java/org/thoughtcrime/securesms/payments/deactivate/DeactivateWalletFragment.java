@@ -12,12 +12,15 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.widget.Toolbar;
 import androidx.core.content.ContextCompat;
 import androidx.fragment.app.Fragment;
-import androidx.lifecycle.ViewModelProviders;
+import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.Navigation;
+
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.payments.MoneyView;
 import org.thoughtcrime.securesms.util.SpanUtil;
+import org.thoughtcrime.securesms.util.navigation.SafeNavigation;
 import org.thoughtcrime.securesms.util.views.LearnMoreTextView;
 
 public class DeactivateWalletFragment extends Fragment {
@@ -38,7 +41,7 @@ public class DeactivateWalletFragment extends Fragment {
     notice.setLearnMoreVisible(true);
     notice.setLink(getString(R.string.DeactivateWalletFragment__learn_more__we_recommend_transferring_your_funds));
 
-    DeactivateWalletViewModel viewModel = ViewModelProviders.of(this).get(DeactivateWalletViewModel.class);
+    DeactivateWalletViewModel viewModel = new ViewModelProvider(this).get(DeactivateWalletViewModel.class);
 
     viewModel.getBalance().observe(getViewLifecycleOwner(), balance::setMoney);
     viewModel.getDeactivationResults().observe(getViewLifecycleOwner(), r -> {
@@ -49,13 +52,13 @@ public class DeactivateWalletFragment extends Fragment {
       }
     });
 
-    transferRemainingBalance.setOnClickListener(v -> Navigation.findNavController(requireView()).navigate(R.id.action_deactivateWallet_to_paymentsTransfer));
+    transferRemainingBalance.setOnClickListener(v -> SafeNavigation.safeNavigate(Navigation.findNavController(requireView()), R.id.action_deactivateWallet_to_paymentsTransfer));
 
     toolbar.setNavigationOnClickListener(v -> Navigation.findNavController(requireView()).popBackStack());
 
     //noinspection CodeBlock2Expr
     deactivateWithoutTransfer.setOnClickListener(v -> {
-      new AlertDialog.Builder(requireContext())
+      new MaterialAlertDialogBuilder(requireContext())
                      .setTitle(R.string.DeactivateWalletFragment__deactivate_without_transferring_question)
                      .setMessage(R.string.DeactivateWalletFragment__your_balance_will_remain)
                      .setNegativeButton(android.R.string.cancel, (dialog, which) -> dialog.dismiss())

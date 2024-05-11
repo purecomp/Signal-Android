@@ -10,6 +10,7 @@ import androidx.annotation.Nullable;
 import androidx.annotation.StringRes;
 import androidx.navigation.fragment.NavHostFragment;
 
+import org.signal.core.util.PendingIntentFlags;
 import org.signal.devicetransfer.DeviceToDeviceTransferService;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.components.settings.app.AppSettingsActivity;
@@ -19,6 +20,7 @@ import org.thoughtcrime.securesms.devicetransfer.SetupStep;
 import org.thoughtcrime.securesms.jobs.LocalBackupJob;
 import org.thoughtcrime.securesms.notifications.NotificationChannels;
 import org.thoughtcrime.securesms.notifications.NotificationIds;
+import org.thoughtcrime.securesms.util.navigation.SafeNavigation;
 
 /**
  * Most responsibility is in {@link DeviceTransferSetupFragment} and delegates here
@@ -41,7 +43,7 @@ public final class OldDeviceTransferSetupFragment extends DeviceTransferSetupFra
 
   @Override
   protected void navigateToTransferConnected() {
-    NavHostFragment.findNavController(this).navigate(R.id.action_oldDeviceTransferSetup_to_oldDeviceTransfer);
+    SafeNavigation.safeNavigate(NavHostFragment.findNavController(this), R.id.action_oldDeviceTransferSetup_to_oldDeviceTransfer);
   }
 
   @Override
@@ -54,9 +56,9 @@ public final class OldDeviceTransferSetupFragment extends DeviceTransferSetupFra
   protected void startTransfer() {
     Intent intent = new Intent(requireContext(), OldDeviceTransferActivity.class);
     intent.setFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP);
-    PendingIntent pendingIntent = PendingIntent.getActivity(requireContext(), 0, intent, 0);
+    PendingIntent pendingIntent = PendingIntent.getActivity(requireContext(), 0, intent, PendingIntentFlags.mutable());
 
-    DeviceToDeviceTransferService.TransferNotificationData notificationData = new DeviceToDeviceTransferService.TransferNotificationData(NotificationIds.DEVICE_TRANSFER, NotificationChannels.BACKUPS, R.drawable.ic_signal_backup);
+    DeviceToDeviceTransferService.TransferNotificationData notificationData = new DeviceToDeviceTransferService.TransferNotificationData(NotificationIds.DEVICE_TRANSFER, NotificationChannels.getInstance().BACKUPS, R.drawable.ic_signal_backup);
     DeviceToDeviceTransferService.startClient(requireContext(), new OldDeviceClientTask(), notificationData, pendingIntent);
   }
 

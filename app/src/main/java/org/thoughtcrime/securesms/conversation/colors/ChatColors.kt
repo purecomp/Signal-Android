@@ -7,12 +7,12 @@ import android.graphics.PorterDuff
 import android.graphics.PorterDuffColorFilter
 import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.Drawable
-import android.graphics.drawable.ShapeDrawable
-import android.graphics.drawable.shapes.OvalShape
-import android.os.Build
+import android.os.Parcel
+import android.os.Parcelable
 import androidx.annotation.ColorInt
 import com.google.common.base.Objects
-import org.signal.core.util.ColorUtil
+import kotlinx.parcelize.IgnoredOnParcel
+import kotlinx.parcelize.Parcelize
 import org.thoughtcrime.securesms.components.RotatableGradientDrawable
 import org.thoughtcrime.securesms.database.model.databaseprotos.ChatColor
 import org.thoughtcrime.securesms.util.customizeOnDraw
@@ -25,13 +25,14 @@ import kotlin.math.min
  * @param linearGradient The LinearGradient to render. Null if this is for a single color.
  * @param singleColor    The single color to render. Null if this is for a linear gradient.
  */
-class ChatColors private constructor(
+@Parcelize
+class ChatColors(
   val id: Id,
   private val linearGradient: LinearGradient?,
   private val singleColor: Int?
-) {
+) : Parcelable {
 
-  fun isGradient(): Boolean = Build.VERSION.SDK_INT >= 21 && linearGradient != null
+  fun isGradient(): Boolean = linearGradient != null
 
   /**
    * Returns the Drawable to render the linear gradient, or null if this ChatColors is a single color.
@@ -39,9 +40,6 @@ class ChatColors private constructor(
   val chatBubbleMask: Drawable
     get() {
       return when {
-        Build.VERSION.SDK_INT < 21 -> {
-          ColorDrawable(Color.TRANSPARENT)
-        }
         linearGradient != null -> {
           RotatableGradientDrawable(
             linearGradient.degrees,
@@ -58,11 +56,8 @@ class ChatColors private constructor(
   /**
    * Returns the ColorFilter to apply to a conversation bubble or other relevant piece of UI.
    */
-  val chatBubbleColorFilter: ColorFilter = if (Build.VERSION.SDK_INT >= 21) {
-    PorterDuffColorFilter(Color.TRANSPARENT, PorterDuff.Mode.SRC_IN)
-  } else {
-    PorterDuffColorFilter(asSingleColor(), PorterDuff.Mode.SRC_IN)
-  }
+  @IgnoredOnParcel
+  val chatBubbleColorFilter: ColorFilter = PorterDuffColorFilter(Color.TRANSPARENT, PorterDuff.Mode.SRC_IN)
 
   @ColorInt
   fun asSingleColor(): Int {
@@ -71,30 +66,27 @@ class ChatColors private constructor(
     }
 
     if (linearGradient != null) {
-      val start = linearGradient.colors.first()
-      val end = linearGradient.colors.last()
-
-      return ColorUtil.blendARGB(start, end, 0.5f)
+      return linearGradient.colors.last()
     }
 
     throw AssertionError()
   }
 
   fun serialize(): ChatColor {
-    val builder: ChatColor.Builder = ChatColor.newBuilder()
+    val builder: ChatColor.Builder = ChatColor.Builder()
 
     if (linearGradient != null) {
-      val gradientBuilder = ChatColor.LinearGradient.newBuilder()
+      val gradientBuilder = ChatColor.LinearGradient.Builder()
 
       gradientBuilder.rotation = linearGradient.degrees
-      linearGradient.colors.forEach { gradientBuilder.addColors(it) }
-      linearGradient.positions.forEach { gradientBuilder.addPositions(it) }
+      gradientBuilder.colors = linearGradient.colors.toList()
+      gradientBuilder.positions = linearGradient.positions.toList()
 
-      builder.setLinearGradient(gradientBuilder)
+      builder.linearGradient(gradientBuilder.build())
     }
 
     if (singleColor != null) {
-      builder.setSingleColor(ChatColor.SingleColor.newBuilder().setColor(singleColor))
+      builder.singleColor(ChatColor.SingleColor.Builder().color(singleColor).build())
     }
 
     return builder.build()
@@ -113,12 +105,6 @@ class ChatColors private constructor(
   }
 
   fun asCircle(): Drawable {
-    if (Build.VERSION.SDK_INT < 21) {
-      return ShapeDrawable(OvalShape()).apply {
-        paint.color = asSingleColor()
-      }
-    }
-
     val toWrap: Drawable = chatBubbleMask
     val path = Path()
 
@@ -156,18 +142,18 @@ class ChatColors private constructor(
   companion object {
     @JvmStatic
     fun forChatColor(id: Id, chatColor: ChatColor): ChatColors {
-      assert(chatColor.hasSingleColor() xor chatColor.hasLinearGradient())
+      assert((chatColor.singleColor != null) xor (chatColor.linearGradient != null))
 
-      return if (chatColor.hasLinearGradient()) {
+      return if (chatColor.linearGradient != null) {
         val linearGradient = LinearGradient(
           chatColor.linearGradient.rotation,
-          chatColor.linearGradient.colorsList.toIntArray(),
-          chatColor.linearGradient.positionsList.toFloatArray()
+          chatColor.linearGradient.colors.toIntArray(),
+          chatColor.linearGradient.positions.toFloatArray()
         )
 
         forGradient(id, linearGradient)
       } else {
-        val singleColor = chatColor.singleColor.color
+        val singleColor = chatColor.singleColor!!.color
 
         forColor(id, singleColor)
       }
@@ -182,7 +168,7 @@ class ChatColors private constructor(
       ChatColors(id, null, color)
   }
 
-  sealed class Id(val longValue: Long) {
+  sealed class Id(val longValue: Long) : Parcelable {
     /**
      * Represents user selection of 'auto'.
      */
@@ -211,6 +197,12 @@ class ChatColors private constructor(
       return Objects.hashCode(longValue)
     }
 
+    override fun writeToParcel(dest: Parcel, flags: Int) {
+      dest.writeLong(longValue)
+    }
+
+    override fun describeContents(): Int = 0
+
     companion object {
       @JvmStatic
       fun forLongValue(longValue: Long): Id {
@@ -221,14 +213,26 @@ class ChatColors private constructor(
           else -> Custom(longValue)
         }
       }
+
+      @JvmField
+      val CREATOR = object : Parcelable.Creator<Id> {
+        override fun createFromParcel(parcel: Parcel): Id {
+          return forLongValue(parcel.readLong())
+        }
+
+        override fun newArray(size: Int): Array<Id?> {
+          return arrayOfNulls(size)
+        }
+      }
     }
   }
 
+  @Parcelize
   data class LinearGradient(
     val degrees: Float,
     val colors: IntArray,
     val positions: FloatArray
-  ) {
+  ) : Parcelable {
 
     override fun equals(other: Any?): Boolean {
       if (this === other) return true

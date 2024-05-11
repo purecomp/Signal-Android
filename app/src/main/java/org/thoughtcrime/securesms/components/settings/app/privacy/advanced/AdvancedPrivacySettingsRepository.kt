@@ -5,16 +5,16 @@ import com.google.android.gms.tasks.Tasks
 import com.google.firebase.installations.FirebaseInstallations
 import org.signal.core.util.concurrent.SignalExecutors
 import org.signal.core.util.logging.Log
-import org.thoughtcrime.securesms.database.DatabaseFactory
+import org.thoughtcrime.securesms.database.SignalDatabase
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies
 import org.thoughtcrime.securesms.jobs.MultiDeviceConfigurationUpdateJob
 import org.thoughtcrime.securesms.keyvalue.SignalStore
 import org.thoughtcrime.securesms.recipients.Recipient
 import org.thoughtcrime.securesms.storage.StorageSyncHelper
 import org.thoughtcrime.securesms.util.TextSecurePreferences
-import org.whispersystems.libsignal.util.guava.Optional
 import org.whispersystems.signalservice.api.push.exceptions.AuthorizationFailedException
 import java.io.IOException
+import java.util.Optional
 import java.util.concurrent.ExecutionException
 
 private val TAG = Log.tag(AdvancedPrivacySettingsRepository::class.java)
@@ -26,11 +26,11 @@ class AdvancedPrivacySettingsRepository(private val context: Context) {
       val result = try {
         val accountManager = ApplicationDependencies.getSignalServiceAccountManager()
         try {
-          accountManager.setGcmId(Optional.absent())
+          accountManager.setGcmId(Optional.empty())
         } catch (e: AuthorizationFailedException) {
           Log.w(TAG, e)
         }
-        if (!TextSecurePreferences.isFcmDisabled(context)) {
+        if (SignalStore.account().fcmEnabled) {
           Tasks.await(FirebaseInstallations.getInstance().delete())
         }
         DisablePushMessagesResult.SUCCESS
@@ -51,7 +51,7 @@ class AdvancedPrivacySettingsRepository(private val context: Context) {
 
   fun syncShowSealedSenderIconState() {
     SignalExecutors.BOUNDED.execute {
-      DatabaseFactory.getRecipientDatabase(context).markNeedsSync(Recipient.self().id)
+      SignalDatabase.recipients.markNeedsSync(Recipient.self().id)
       StorageSyncHelper.scheduleSyncForDataChange()
       ApplicationDependencies.getJobManager().add(
         MultiDeviceConfigurationUpdateJob(

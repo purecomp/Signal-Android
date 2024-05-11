@@ -10,7 +10,7 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.fragment.app.DialogFragment;
 import androidx.fragment.app.FragmentManager;
-import androidx.lifecycle.ViewModelProviders;
+import androidx.lifecycle.ViewModelProvider;
 
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment;
 
@@ -20,12 +20,12 @@ import org.thoughtcrime.securesms.groups.ui.GroupMemberListView;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.util.BottomSheetUtil;
 import org.thoughtcrime.securesms.util.ThemeUtil;
+import org.thoughtcrime.securesms.util.WindowUtil;
 
 import java.util.List;
 
 /**
- * Shows more info about a GV1->GV2 migration event. Looks similar to
- * {@link GroupsV1MigrationInitiationBottomSheetDialogFragment}, but only displays static data.
+ * Shows more info about a GV1->GV2 migration event.
  */
 public final class GroupsV1MigrationInfoBottomSheetDialogFragment extends BottomSheetDialogFragment {
 
@@ -72,14 +72,23 @@ public final class GroupsV1MigrationInfoBottomSheetDialogFragment extends Bottom
     this.droppedTitle     = view.findViewById(R.id.gv1_learn_more_dropped_title);
     this.droppedList      = view.findViewById(R.id.gv1_learn_more_dropped_list);
 
+    pendingList.initializeAdapter(getViewLifecycleOwner());
+    droppedList.initializeAdapter(getViewLifecycleOwner());
+
     //noinspection ConstantConditions
     GroupMigrationMembershipChange membershipChange = GroupMigrationMembershipChange.deserialize(getArguments().getString(KEY_MEMBERSHIP_CHANGE));
 
-    this.viewModel = ViewModelProviders.of(this, new GroupsV1MigrationInfoViewModel.Factory(membershipChange)).get(GroupsV1MigrationInfoViewModel.class);
+    this.viewModel = new ViewModelProvider(this, new GroupsV1MigrationInfoViewModel.Factory(membershipChange)).get(GroupsV1MigrationInfoViewModel.class);
     viewModel.getPendingMembers().observe(getViewLifecycleOwner(), this::onPendingMembersChanged);
     viewModel.getDroppedMembers().observe(getViewLifecycleOwner(), this::onDroppedMembersChanged);
 
     view.findViewById(R.id.gv1_learn_more_ok_button).setOnClickListener(v -> dismiss());
+  }
+
+  @Override
+  public void onResume() {
+    super.onResume();
+    WindowUtil.initializeScreenshotSecurity(requireContext(), requireDialog().getWindow());
   }
 
   @Override

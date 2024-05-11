@@ -13,7 +13,7 @@ import java.util.Arrays;
 import java.util.Collections;
 
 import static org.junit.Assert.assertEquals;
-import static org.mockito.Matchers.any;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
@@ -53,7 +53,7 @@ public class JobMigratorTest {
     JobMigration migration2 = spy(new EmptyMigration(3));
 
     JobMigrator subject = new JobMigrator(1, 3, Arrays.asList(migration1, migration2));
-    int         version = subject.migrate(simpleJobStorage(), mock(Data.Serializer.class));
+    int         version = subject.migrate(simpleJobStorage());
 
     assertEquals(3, version);
     verify(migration1).migrate(any());
@@ -66,7 +66,7 @@ public class JobMigratorTest {
     JobMigration migration2 = spy(new EmptyMigration(3));
 
     JobMigrator subject = new JobMigrator(2, 3, Arrays.asList(migration1, migration2));
-    int         version = subject.migrate(simpleJobStorage(), mock(Data.Serializer.class));
+    int         version = subject.migrate(simpleJobStorage());
 
     assertEquals(3, version);
     verify(migration1, never()).migrate(any());
@@ -79,7 +79,7 @@ public class JobMigratorTest {
     JobMigration migration2 = spy(new EmptyMigration(3));
 
     JobMigrator subject = new JobMigrator(3, 3, Arrays.asList(migration1, migration2));
-    int         version = subject.migrate(simpleJobStorage(), mock(Data.Serializer.class));
+    int         version = subject.migrate(simpleJobStorage());
 
     assertEquals(3, version);
     verify(migration1, never()).migrate(any());
@@ -88,7 +88,7 @@ public class JobMigratorTest {
 
   private static JobStorage simpleJobStorage() {
     JobStorage jobStorage = mock(JobStorage.class);
-    when(jobStorage.getAllJobSpecs()).thenReturn(new ArrayList<>(Collections.singletonList(new JobSpec("1", "f1", null, 1, 1, 1, 1, 1, "", null, false, false))));
+    when(jobStorage.getAllJobSpecs()).thenReturn(new ArrayList<>(Collections.singletonList(new JobSpec("1", "f1", null, 1, 1, 1, 1, 1, 1, null, null, false, false, 0))));
     return jobStorage;
   }
 
@@ -99,7 +99,7 @@ public class JobMigratorTest {
     }
 
     @Override
-    protected @NonNull JobData migrate(@NonNull JobData jobData) {
+    public @NonNull JobData migrate(@NonNull JobData jobData) {
       return jobData;
     }
   }

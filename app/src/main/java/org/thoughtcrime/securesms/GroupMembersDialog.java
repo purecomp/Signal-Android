@@ -5,6 +5,8 @@ import androidx.appcompat.app.AlertDialog;
 import androidx.fragment.app.FragmentActivity;
 import androidx.lifecycle.LiveData;
 
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+
 import org.thoughtcrime.securesms.groups.LiveGroup;
 import org.thoughtcrime.securesms.groups.ui.GroupMemberEntry;
 import org.thoughtcrime.securesms.groups.ui.GroupMemberListView;
@@ -26,7 +28,7 @@ public final class GroupMembersDialog {
   }
 
   public void display() {
-    AlertDialog dialog = new AlertDialog.Builder(fragmentActivity)
+    AlertDialog dialog = new MaterialAlertDialogBuilder(fragmentActivity)
                                         .setTitle(R.string.ConversationActivity_group_members)
                                         .setIcon(R.drawable.ic_group_24)
                                         .setCancelable(true)
@@ -35,6 +37,7 @@ public final class GroupMembersDialog {
                                         .show();
 
     GroupMemberListView memberListView = dialog.findViewById(R.id.list_members);
+    memberListView.initializeAdapter(fragmentActivity);
 
     LiveGroup                                   liveGroup   = new LiveGroup(groupRecipient.requireGroupId());
     LiveData<List<GroupMemberEntry.FullMember>> fullMembers = liveGroup.getFullMembers();
@@ -51,7 +54,6 @@ public final class GroupMembersDialog {
   }
 
   private void contactClick(@NonNull Recipient recipient) {
-    RecipientBottomSheetDialogFragment.create(recipient.getId(), groupRecipient.requireGroupId())
-                                      .show(fragmentActivity.getSupportFragmentManager(), "BOTTOM");
+    RecipientBottomSheetDialogFragment.show(fragmentActivity.getSupportFragmentManager(), recipient.getId(), groupRecipient.requireGroupId());
   }
 }

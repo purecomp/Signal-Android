@@ -1,6 +1,5 @@
 package org.thoughtcrime.securesms.profiles.spoofing;
 
-import android.app.AlertDialog;
 import android.content.Intent;
 import android.os.Bundle;
 import android.provider.ContactsContract;
@@ -12,8 +11,10 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.annotation.PluralsRes;
 import androidx.annotation.StringRes;
-import androidx.lifecycle.ViewModelProviders;
+import androidx.lifecycle.ViewModelProvider;
 import androidx.recyclerview.widget.RecyclerView;
+
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.components.FullScreenDialogFragment;
@@ -21,6 +22,8 @@ import org.thoughtcrime.securesms.groups.BadGroupIdException;
 import org.thoughtcrime.securesms.groups.GroupId;
 import org.thoughtcrime.securesms.recipients.RecipientId;
 import org.thoughtcrime.securesms.recipients.ui.bottomsheet.RecipientBottomSheetDialogFragment;
+import org.thoughtcrime.securesms.stories.settings.my.SignalConnectionsBottomSheetDialogFragment;
+import org.thoughtcrime.securesms.util.BottomSheetUtil;
 
 public class ReviewCardDialogFragment extends FullScreenDialogFragment {
 
@@ -35,7 +38,7 @@ public class ReviewCardDialogFragment extends FullScreenDialogFragment {
 
   public static ReviewCardDialogFragment createForReviewRequest(@NonNull RecipientId recipientId) {
     return create(R.string.ReviewCardDialogFragment__review_request,
-                  R.string.ReviewCardDialogFragment__if_youre_not_sure,
+                  R.plurals.ReviewCardDialogFragment__if_youre_not_sure,
                   R.string.ReviewCardDialogFragment__no_groups_in_common,
                   R.plurals.ReviewCardDialogFragment__d_groups_in_common,
                   recipientId,
@@ -44,7 +47,7 @@ public class ReviewCardDialogFragment extends FullScreenDialogFragment {
 
   public static ReviewCardDialogFragment createForReviewMembers(@NonNull GroupId.V2 groupId) {
     return create(R.string.ReviewCardDialogFragment__review_members,
-                  R.string.ReviewCardDialogFragment__d_group_members_have_the_same_name,
+                  R.plurals.ReviewCardDialogFragment__d_group_members_have_the_same_name,
                   R.string.ReviewCardDialogFragment__no_other_groups_in_common,
                   R.plurals.ReviewCardDialogFragment__d_other_groups_in_common,
                   null,
@@ -52,7 +55,7 @@ public class ReviewCardDialogFragment extends FullScreenDialogFragment {
   }
 
   private static ReviewCardDialogFragment create(@StringRes int titleResId,
-                                                 @StringRes int descriptionResId,
+                                                 @PluralsRes int descriptionResId,
                                                  @StringRes int noGroupsInCommonResId,
                                                  @PluralsRes int groupsInCommonResId,
                                                  @Nullable RecipientId recipientId,
@@ -89,7 +92,7 @@ public class ReviewCardDialogFragment extends FullScreenDialogFragment {
 
     viewModel.getReviewCards().observe(getViewLifecycleOwner(), cards -> {
       adapter.submitList(cards);
-      description.setText(getString(getDescriptionResId(), cards.size()));
+      description.setText(getResources().getQuantityString(getDescriptionResId(), cards.size(), cards.size()));
     });
 
     viewModel.getReviewEvents().observe(getViewLifecycleOwner(), this::onReviewEvent);
@@ -99,10 +102,10 @@ public class ReviewCardDialogFragment extends FullScreenDialogFragment {
     ReviewCardRepository        repository = getRepository();
     ReviewCardViewModel.Factory factory    = new ReviewCardViewModel.Factory(repository, getGroupId());
 
-    viewModel = ViewModelProviders.of(this, factory).get(ReviewCardViewModel.class);
+    viewModel = new ViewModelProvider(this, factory).get(ReviewCardViewModel.class);
   }
 
-  private @StringRes int getDescriptionResId() {
+  private @PluralsRes int getDescriptionResId() {
     return requireArguments().getInt(EXTRA_DESCRIPTION_RES_ID);
   }
 
@@ -172,8 +175,7 @@ public class ReviewCardDialogFragment extends FullScreenDialogFragment {
 
     @Override
     public void onCardClicked(@NonNull ReviewCard card) {
-      RecipientBottomSheetDialogFragment.create(card.getReviewRecipient().getId(), null)
-                                        .show(requireFragmentManager(), null);
+      RecipientBottomSheetDialogFragment.show(getParentFragmentManager(), card.getReviewRecipient().getId(), null);
     }
 
     @Override
@@ -185,7 +187,7 @@ public class ReviewCardDialogFragment extends FullScreenDialogFragment {
           startActivity(contactEditIntent);
           break;
         case REMOVE_FROM_GROUP:
-          new AlertDialog.Builder(requireContext())
+          new MaterialAlertDialogBuilder(requireContext())
                          .setMessage(getString(R.string.ReviewCardDialogFragment__remove_s_from_group,
                                                card.getReviewRecipient().getDisplayName(requireContext())))
                          .setPositiveButton(R.string.ReviewCardDialogFragment__remove, (dialog, which) -> {
@@ -200,6 +202,11 @@ public class ReviewCardDialogFragment extends FullScreenDialogFragment {
         default:
           viewModel.act(card, action);
       }
+    }
+
+    @Override
+    public void onSignalConnectionClicked() {
+      new SignalConnectionsBottomSheetDialogFragment().show(getParentFragmentManager(), BottomSheetUtil.STANDARD_BOTTOM_SHEET_FRAGMENT_TAG);
     }
   }
 }

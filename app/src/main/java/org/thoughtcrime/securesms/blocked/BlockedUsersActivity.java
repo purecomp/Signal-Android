@@ -10,7 +10,7 @@ import androidx.annotation.StringRes;
 import androidx.appcompat.app.AlertDialog;
 import androidx.appcompat.widget.Toolbar;
 import androidx.fragment.app.Fragment;
-import androidx.lifecycle.ViewModelProviders;
+import androidx.lifecycle.ViewModelProvider;
 
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 import com.google.android.material.snackbar.Snackbar;
@@ -19,13 +19,15 @@ import org.thoughtcrime.securesms.ContactSelectionListFragment;
 import org.thoughtcrime.securesms.PassphraseRequiredActivity;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.components.ContactFilterView;
-import org.thoughtcrime.securesms.contacts.ContactsCursorLoader;
+import org.thoughtcrime.securesms.contacts.ContactSelectionDisplayMode;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.recipients.RecipientId;
 import org.thoughtcrime.securesms.util.DynamicNoActionBarTheme;
 import org.thoughtcrime.securesms.util.DynamicTheme;
-import org.whispersystems.libsignal.util.guava.Optional;
+import org.signal.core.util.concurrent.LifecycleDisposable;
+import org.thoughtcrime.securesms.util.ViewUtil;
 
+import java.util.Optional;
 import java.util.function.Consumer;
 
 public class BlockedUsersActivity extends PassphraseRequiredActivity implements BlockedUsersFragment.Listener, ContactSelectionListFragment.OnContactSelectedListener {
@@ -36,10 +38,13 @@ public class BlockedUsersActivity extends PassphraseRequiredActivity implements 
 
   private BlockedUsersViewModel viewModel;
 
+  private final LifecycleDisposable lifecycleDisposable = new LifecycleDisposable();
+
   @Override
   protected void onCreate(Bundle savedInstanceState, boolean ready) {
     super.onCreate(savedInstanceState, ready);
 
+    lifecycleDisposable.bindTo(this);
     dynamicTheme.onCreate(this);
 
     setContentView(R.layout.blocked_users_activity);
@@ -47,7 +52,7 @@ public class BlockedUsersActivity extends PassphraseRequiredActivity implements 
     BlockedUsersRepository        repository = new BlockedUsersRepository(this);
     BlockedUsersViewModel.Factory factory    = new BlockedUsersViewModel.Factory(repository);
 
-    viewModel = ViewModelProviders.of(this, factory).get(BlockedUsersViewModel.class);
+    viewModel = new ViewModelProvider(this, factory).get(BlockedUsersViewModel.class);
 
     Toolbar           toolbar           = findViewById(R.id.toolbar);
     ContactFilterView contactFilterView = findViewById(R.id.contact_filter_edit_text);
@@ -69,6 +74,7 @@ public class BlockedUsersActivity extends PassphraseRequiredActivity implements 
         contactFilterView.focusAndShowKeyboard();
       } else {
         contactFilterView.setVisibility(View.GONE);
+        ViewUtil.hideKeyboard(this, contactFilterView);
       }
     });
 
@@ -76,7 +82,11 @@ public class BlockedUsersActivity extends PassphraseRequiredActivity implements 
                                .add(R.id.fragment_container, new BlockedUsersFragment())
                                .commit();
 
-    viewModel.getEvents().observe(this, event -> handleEvent(container, event));
+    lifecycleDisposable.add(
+        viewModel
+            .getEvents()
+            .subscribe(event -> handleEvent(container, event))
+    );
   }
 
   @Override
@@ -87,8 +97,8 @@ public class BlockedUsersActivity extends PassphraseRequiredActivity implements 
   }
 
   @Override
-  public void onBeforeContactSelected(Optional<RecipientId> recipientId, String number, Consumer<Boolean> callback) {
-    final String displayName = recipientId.transform(id -> Recipient.resolved(id).getDisplayName(this)).or(number);
+  public void onBeforeContactSelected(boolean isFromUnknownSearchKey, @NonNull Optional<RecipientId> recipientId, String number, @NonNull Consumer<Boolean> callback) {
+    final String displayName = recipientId.map(id -> Recipient.resolved(id).getDisplayName(this)).orElse(number);
 
     AlertDialog confirmationDialog = new MaterialAlertDialogBuilder(this)
         .setTitle(R.string.BlockedUsersActivity__block_user)
@@ -116,7 +126,7 @@ public class BlockedUsersActivity extends PassphraseRequiredActivity implements 
   }
 
   @Override
-  public void onContactDeselected(Optional<RecipientId> recipientId, String number) {
+  public void onContactDeselected(@NonNull Optional<RecipientId> recipientId, String number) {
 
   }
 
@@ -133,11 +143,11 @@ public class BlockedUsersActivity extends PassphraseRequiredActivity implements 
     intent.putExtra(ContactSelectionListFragment.SELECTION_LIMITS, 1);
     intent.putExtra(ContactSelectionListFragment.HIDE_COUNT, true);
     intent.putExtra(ContactSelectionListFragment.DISPLAY_MODE,
-                    ContactsCursorLoader.DisplayMode.FLAG_PUSH            |
-                    ContactsCursorLoader.DisplayMode.FLAG_SMS             |
-                    ContactsCursorLoader.DisplayMode.FLAG_ACTIVE_GROUPS   |
-                    ContactsCursorLoader.DisplayMode.FLAG_INACTIVE_GROUPS |
-                    ContactsCursorLoader.DisplayMode.FLAG_BLOCK);
+                    ContactSelectionDisplayMode.FLAG_PUSH |
+                    ContactSelectionDisplayMode.FLAG_SMS |
+                    ContactSelectionDisplayMode.FLAG_ACTIVE_GROUPS |
+                    ContactSelectionDisplayMode.FLAG_INACTIVE_GROUPS |
+                    ContactSelectionDisplayMode.FLAG_BLOCK);
 
     getSupportFragmentManager().beginTransaction()
                                .replace(R.id.fragment_container, fragment, CONTACT_SELECTION_FRAGMENT)
@@ -169,6 +179,6 @@ public class BlockedUsersActivity extends PassphraseRequiredActivity implements 
         throw new IllegalArgumentException("Unsupported event type " + event);
     }
 
-    Snackbar.make(view, getString(messageResId, displayName), Snackbar.LENGTH_SHORT).setTextColor(Color.WHITE).show();
+    Snackbar.make(view, getString(messageResId, displayName), Snackbar.LENGTH_SHORT).show();
   }
 }

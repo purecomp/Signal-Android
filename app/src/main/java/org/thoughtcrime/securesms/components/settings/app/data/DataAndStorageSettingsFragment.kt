@@ -5,13 +5,14 @@ import androidx.navigation.Navigation
 import androidx.preference.PreferenceManager
 import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.components.settings.DSLConfiguration
-import org.thoughtcrime.securesms.components.settings.DSLSettingsAdapter
 import org.thoughtcrime.securesms.components.settings.DSLSettingsFragment
 import org.thoughtcrime.securesms.components.settings.DSLSettingsText
 import org.thoughtcrime.securesms.components.settings.configure
 import org.thoughtcrime.securesms.mms.SentMediaQuality
 import org.thoughtcrime.securesms.util.Util
-import org.thoughtcrime.securesms.webrtc.CallBandwidthMode
+import org.thoughtcrime.securesms.util.adapter.mapping.MappingAdapter
+import org.thoughtcrime.securesms.util.navigation.safeNavigate
+import org.thoughtcrime.securesms.webrtc.CallDataMode
 import kotlin.math.abs
 
 class DataAndStorageSettingsFragment : DSLSettingsFragment(R.string.preferences__data_and_storage) {
@@ -21,7 +22,7 @@ class DataAndStorageSettingsFragment : DSLSettingsFragment(R.string.preferences_
 
   private val sentMediaQualityLabels by lazy { SentMediaQuality.getLabels(requireContext()) }
 
-  private val callBandwidthLabels by lazy { resources.getStringArray(R.array.pref_data_and_storage_call_bandwidth_values) }
+  private val callDataModeLabels by lazy { resources.getStringArray(R.array.pref_data_and_storage_call_data_mode_values) }
 
   private lateinit var viewModel: DataAndStorageSettingsViewModel
 
@@ -30,7 +31,7 @@ class DataAndStorageSettingsFragment : DSLSettingsFragment(R.string.preferences_
     viewModel.refresh()
   }
 
-  override fun bindAdapter(adapter: DSLSettingsAdapter) {
+  override fun bindAdapter(adapter: MappingAdapter) {
     val preferences = PreferenceManager.getDefaultSharedPreferences(requireContext())
     val repository = DataAndStorageSettingsRepository()
     val factory = DataAndStorageSettingsViewModel.Factory(preferences, repository)
@@ -47,7 +48,7 @@ class DataAndStorageSettingsFragment : DSLSettingsFragment(R.string.preferences_
         title = DSLSettingsText.from(R.string.preferences_data_and_storage__manage_storage),
         summary = DSLSettingsText.from(Util.getPrettyFileSize(state.totalStorageUse)),
         onClick = {
-          Navigation.findNavController(requireView()).navigate(R.id.action_dataAndStorageSettingsFragment_to_storagePreferenceFragment)
+          Navigation.findNavController(requireView()).safeNavigate(R.id.action_dataAndStorageSettingsFragment_to_storagePreferenceFragment)
         }
       )
 
@@ -106,10 +107,10 @@ class DataAndStorageSettingsFragment : DSLSettingsFragment(R.string.preferences_
 
       radioListPref(
         title = DSLSettingsText.from(R.string.preferences_data_and_storage__use_less_data_for_calls),
-        listItems = callBandwidthLabels,
-        selected = abs(state.callBandwidthMode.code - 2),
+        listItems = callDataModeLabels,
+        selected = abs(state.callDataMode.code - 2),
         onSelected = {
-          viewModel.setCallBandwidthMode(CallBandwidthMode.fromCode(abs(it - 2)))
+          viewModel.setCallDataMode(CallDataMode.fromCode(abs(it - 2)))
         }
       )
 
@@ -125,7 +126,7 @@ class DataAndStorageSettingsFragment : DSLSettingsFragment(R.string.preferences_
         title = DSLSettingsText.from(R.string.preferences_use_proxy),
         summary = DSLSettingsText.from(if (state.isProxyEnabled) R.string.preferences_on else R.string.preferences_off),
         onClick = {
-          Navigation.findNavController(requireView()).navigate(R.id.action_dataAndStorageSettingsFragment_to_editProxyFragment)
+          Navigation.findNavController(requireView()).safeNavigate(R.id.action_dataAndStorageSettingsFragment_to_editProxyFragment)
         }
       )
     }

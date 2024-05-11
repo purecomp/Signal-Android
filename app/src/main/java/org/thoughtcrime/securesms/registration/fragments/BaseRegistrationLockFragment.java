@@ -1,9 +1,5 @@
 package org.thoughtcrime.securesms.registration.fragments;
 
-import static org.thoughtcrime.securesms.registration.fragments.RegistrationViewDelegate.setDebugLogSubmitMultiTapView;
-import static org.thoughtcrime.securesms.util.CircularProgressButtonUtil.cancelSpinning;
-import static org.thoughtcrime.securesms.util.CircularProgressButtonUtil.setSpinning;
-
 import android.content.res.Resources;
 import android.os.Bundle;
 import android.text.InputType;
@@ -16,25 +12,26 @@ import android.widget.Toast;
 import androidx.annotation.CallSuper;
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.annotation.StringRes;
 
-import com.dd.CircularProgressButton;
+import com.google.android.material.button.MaterialButton;
 import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.LoggingFragment;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.lock.v2.PinKeyboardType;
-import org.thoughtcrime.securesms.pin.TokenData;
 import org.thoughtcrime.securesms.registration.viewmodel.BaseRegistrationViewModel;
-import org.thoughtcrime.securesms.util.LifecycleDisposable;
-import org.thoughtcrime.securesms.util.ServiceUtil;
+import org.signal.core.util.concurrent.LifecycleDisposable;
 import org.thoughtcrime.securesms.util.ViewUtil;
+import org.thoughtcrime.securesms.util.views.CircularProgressMaterialButton;
 
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
 import io.reactivex.rxjava3.disposables.Disposable;
+
+import static org.thoughtcrime.securesms.registration.fragments.RegistrationViewDelegate.setDebugLogSubmitMultiTapView;
 
 /**
  * Base fragment used by registration and change number flow to deal with a registration locked account.
@@ -46,14 +43,14 @@ public abstract class BaseRegistrationLockFragment extends LoggingFragment {
   /**
    * Applies to both V1 and V2 pins, because some V2 pins may have been migrated from V1.
    */
-  private static final int MINIMUM_PIN_LENGTH = 4;
+  public static final int MINIMUM_PIN_LENGTH = 4;
 
-  private   EditText               pinEntry;
-  private   View                   forgotPin;
-  protected CircularProgressButton pinButton;
-  private   TextView               errorLabel;
-  private   TextView               keyboardToggle;
-  private   long                   timeRemaining;
+  private   EditText                       pinEntry;
+  private   View                           forgotPin;
+  protected CircularProgressMaterialButton pinButton;
+  private   TextView                       errorLabel;
+  private   MaterialButton                 keyboardToggle;
+  private   long                           timeRemaining;
 
   private BaseRegistrationViewModel viewModel;
 
@@ -104,11 +101,11 @@ public abstract class BaseRegistrationLockFragment extends LoggingFragment {
       PinKeyboardType keyboardType = getPinEntryKeyboardType();
 
       updateKeyboard(keyboardType.getOther());
-      keyboardToggle.setText(resolveKeyboardToggleText(keyboardType));
+      keyboardToggle.setIconResource(keyboardType.getIconResource());
     });
 
     PinKeyboardType keyboardType = getPinEntryKeyboardType().getOther();
-    keyboardToggle.setText(resolveKeyboardToggleText(keyboardType));
+    keyboardToggle.setIconResource(keyboardType.getIconResource());
 
     disposables.bindTo(getViewLifecycleOwner().getLifecycle());
     viewModel = getViewModel();
@@ -116,10 +113,9 @@ public abstract class BaseRegistrationLockFragment extends LoggingFragment {
     viewModel.getLockedTimeRemaining()
              .observe(getViewLifecycleOwner(), t -> timeRemaining = t);
 
-    TokenData keyBackupCurrentToken = viewModel.getKeyBackupCurrentToken();
+    Integer triesRemaining = viewModel.getSvrTriesRemaining();
 
-    if (keyBackupCurrentToken != null) {
-      int triesRemaining = keyBackupCurrentToken.getTriesRemaining();
+    if (triesRemaining != null) {
       if (triesRemaining <= 3) {
         int daysRemaining = getLockoutDays(timeRemaining);
 
@@ -171,7 +167,7 @@ public abstract class BaseRegistrationLockFragment extends LoggingFragment {
       return;
     }
 
-    setSpinning(pinButton);
+    pinButton.setSpinning();
 
     Disposable verify = viewModel.verifyCodeAndRegisterAccountWithRegistrationLock(pin)
                                  .observeOn(AndroidSchedulers.mainThread())
@@ -179,8 +175,8 @@ public abstract class BaseRegistrationLockFragment extends LoggingFragment {
                                    if (processor.hasResult()) {
                                      handleSuccessfulPinEntry(pin);
                                    } else if (processor.wrongPin()) {
-                                     onIncorrectKbsRegistrationLockPin(processor.getToken());
-                                   } else if (processor.isKbsLocked()) {
+                                     onIncorrectKbsRegistrationLockPin(Objects.requireNonNull(processor.getSvrTriesRemaining()));
+                                   } else if (processor.isRegistrationLockPresentAndSvrExhausted() || processor.registrationLock()) {
                                      onKbsAccountLocked();
                                    } else if (processor.rateLimit()) {
                                      onRateLimited();
@@ -193,41 +189,39 @@ public abstract class BaseRegistrationLockFragment extends LoggingFragment {
     disposables.add(verify);
   }
 
-  public void onIncorrectKbsRegistrationLockPin(@NonNull TokenData tokenData) {
-    cancelSpinning(pinButton);
+  public void onIncorrectKbsRegistrationLockPin(int svrTriesRemaining) {
+    pinButton.cancelSpinning();
     pinEntry.getText().clear();
     enableAndFocusPinEntry();
 
-    viewModel.setKeyBackupTokenData(tokenData);
+    viewModel.setSvrTriesRemaining(svrTriesRemaining);
 
-    int triesRemaining = tokenData.getTriesRemaining();
-
-    if (triesRemaining == 0) {
+    if (svrTriesRemaining == 0) {
       Log.w(TAG, "Account locked. User out of attempts on KBS.");
       onAccountLocked();
       return;
     }
 
-    if (triesRemaining == 3) {
+    if (svrTriesRemaining == 3) {
       int daysRemaining = getLockoutDays(timeRemaining);
 
       new MaterialAlertDialogBuilder(requireContext())
           .setTitle(R.string.RegistrationLockFragment__incorrect_pin)
-          .setMessage(getTriesRemainingDialogMessage(triesRemaining, daysRemaining))
+          .setMessage(getTriesRemainingDialogMessage(svrTriesRemaining, daysRemaining))
           .setPositiveButton(android.R.string.ok, null)
           .show();
     }
 
-    if (triesRemaining > 5) {
+    if (svrTriesRemaining > 5) {
       errorLabel.setText(R.string.RegistrationLockFragment__incorrect_pin_try_again);
     } else {
-      errorLabel.setText(requireContext().getResources().getQuantityString(R.plurals.RegistrationLockFragment__incorrect_pin_d_attempts_remaining, triesRemaining, triesRemaining));
+      errorLabel.setText(requireContext().getResources().getQuantityString(R.plurals.RegistrationLockFragment__incorrect_pin_d_attempts_remaining, svrTriesRemaining, svrTriesRemaining));
       forgotPin.setVisibility(View.VISIBLE);
     }
   }
 
   public void onRateLimited() {
-    cancelSpinning(pinButton);
+    pinButton.cancelSpinning();
     enableAndFocusPinEntry();
 
     new MaterialAlertDialogBuilder(requireContext())
@@ -242,7 +236,7 @@ public abstract class BaseRegistrationLockFragment extends LoggingFragment {
   }
 
   public void onError() {
-    cancelSpinning(pinButton);
+    pinButton.cancelSpinning();
     enableAndFocusPinEntry();
 
     Toast.makeText(requireContext(), R.string.RegistrationActivity_error_connecting_to_service, Toast.LENGTH_LONG).show();
@@ -277,21 +271,10 @@ public abstract class BaseRegistrationLockFragment extends LoggingFragment {
     pinEntry.getText().clear();
   }
 
-  private @StringRes static int resolveKeyboardToggleText(@NonNull PinKeyboardType keyboard) {
-    if (keyboard == PinKeyboardType.ALPHA_NUMERIC) {
-      return R.string.RegistrationLockFragment__enter_alphanumeric_pin;
-    } else {
-      return R.string.RegistrationLockFragment__enter_numeric_pin;
-    }
-  }
-
   private void enableAndFocusPinEntry() {
     pinEntry.setEnabled(true);
     pinEntry.setFocusable(true);
-
-    if (pinEntry.requestFocus()) {
-      ServiceUtil.getInputMethodManager(pinEntry.getContext()).showSoftInput(pinEntry, 0);
-    }
+    ViewUtil.focusAndShowKeyboard(pinEntry);
   }
 
   protected abstract void handleSuccessfulPinEntry(@NonNull String pin);

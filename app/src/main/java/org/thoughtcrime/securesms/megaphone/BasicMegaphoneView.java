@@ -4,7 +4,6 @@ import android.content.Context;
 import android.util.AttributeSet;
 import android.widget.Button;
 import android.widget.FrameLayout;
-import android.widget.ImageView;
 import android.widget.TextView;
 
 import androidx.annotation.NonNull;
@@ -61,9 +60,9 @@ public class BasicMegaphoneView extends FrameLayout {
     if (megaphone.getImageRes() != 0) {
       image.setVisibility(VISIBLE);
       image.setImageResource(megaphone.getImageRes());
-    } else if (megaphone.getImageRequest() != null) {
+    } else if (megaphone.getImageRequestBuilder() != null) {
       image.setVisibility(VISIBLE);
-      megaphone.getImageRequest().into(image);
+      megaphone.getImageRequestBuilder().into(image);
     } else if (megaphone.getLottieRes() != 0) {
       image.setVisibility(VISIBLE);
       image.setAnimation(megaphone.getLottieRes());
@@ -72,23 +71,23 @@ public class BasicMegaphoneView extends FrameLayout {
       image.setVisibility(GONE);
     }
 
-    if (megaphone.getTitle() != 0) {
+    if (megaphone.getTitle().hasText()) {
       titleText.setVisibility(VISIBLE);
-      titleText.setText(megaphone.getTitle());
+      titleText.setText(megaphone.getTitle().resolve(getContext()));
     } else {
       titleText.setVisibility(GONE);
     }
 
-    if (megaphone.getBody() != 0) {
+    if (megaphone.getBody().hasText()) {
       bodyText.setVisibility(VISIBLE);
-      bodyText.setText(megaphone.getBody());
+      bodyText.setText(megaphone.getBody().resolve(getContext()));
     } else {
       bodyText.setVisibility(GONE);
     }
 
     if (megaphone.hasButton()) {
       actionButton.setVisibility(VISIBLE);
-      actionButton.setText(megaphone.getButtonText());
+      actionButton.setText(megaphone.getButtonText().resolve(getContext()));
       actionButton.setOnClickListener(v -> {
         if (megaphone.getButtonClickListener() != null) {
           megaphone.getButtonClickListener().onEvent(megaphone, megaphoneListener);
@@ -110,7 +109,7 @@ public class BasicMegaphoneView extends FrameLayout {
           }
         });
       } else {
-        secondaryButton.setText(megaphone.getSecondaryButtonText());
+        secondaryButton.setText(megaphone.getSecondaryButtonText().resolve(getContext()));
         secondaryButton.setOnClickListener(v -> {
           if (megaphone.getSecondaryButtonClickListener() != null) {
             megaphone.getSecondaryButtonClickListener().onEvent(megaphone, megaphoneListener);

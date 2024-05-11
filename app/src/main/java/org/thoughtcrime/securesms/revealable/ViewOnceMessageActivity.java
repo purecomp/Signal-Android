@@ -14,13 +14,14 @@ import android.widget.TextView;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatDelegate;
-import androidx.lifecycle.ViewModelProviders;
+import androidx.lifecycle.ViewModelProvider;
+
+import com.bumptech.glide.Glide;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.PassphraseRequiredActivity;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.mms.DecryptableStreamUriLoader.DecryptableUri;
-import org.thoughtcrime.securesms.mms.GlideApp;
 import org.thoughtcrime.securesms.mms.PartAuthority;
 import org.thoughtcrime.securesms.mms.VideoSlide;
 import org.thoughtcrime.securesms.providers.BlobProvider;
@@ -99,8 +100,7 @@ public class ViewOnceMessageActivity extends PassphraseRequiredActivity implemen
   private void initViewModel(long messageId, @NonNull Uri uri) {
     ViewOnceMessageRepository repository = new ViewOnceMessageRepository(this);
 
-    viewModel = ViewModelProviders.of(this, new ViewOnceMessageViewModel.Factory(getApplication(), messageId, repository))
-                                  .get(ViewOnceMessageViewModel.class);
+    viewModel = new ViewModelProvider(this, new ViewOnceMessageViewModel.Factory(messageId, repository)).get(ViewOnceMessageViewModel.class);
 
     viewModel.getMessage().observe(this, (message) -> {
       if (message == null) return;
@@ -131,7 +131,7 @@ public class ViewOnceMessageActivity extends PassphraseRequiredActivity implemen
 
     video.setWindow(getWindow());
     video.setPlayerStateCallbacks(this);
-    video.setVideoSource(videoSlide, true);
+    video.setVideoSource(videoSlide, true, TAG);
 
     video.hideControls();
     video.loopForever();
@@ -142,8 +142,9 @@ public class ViewOnceMessageActivity extends PassphraseRequiredActivity implemen
     image.setVisibility(View.VISIBLE);
     duration.setVisibility(View.GONE);
 
-    GlideApp.with(this)
+    Glide.with(this)
             .load(new DecryptableUri(uri))
+            .fitCenter()
             .into(image);
   }
 

@@ -1,10 +1,10 @@
 package org.thoughtcrime.securesms.groups;
 
 import org.junit.Test;
-import org.signal.zkgroup.InvalidInputException;
-import org.signal.zkgroup.groups.GroupIdentifier;
-import org.signal.zkgroup.groups.GroupMasterKey;
-import org.thoughtcrime.securesms.util.Hex;
+import org.signal.core.util.Hex;
+import org.signal.libsignal.zkgroup.InvalidInputException;
+import org.signal.libsignal.zkgroup.groups.GroupIdentifier;
+import org.signal.libsignal.zkgroup.groups.GroupMasterKey;
 
 import java.io.IOException;
 
@@ -17,7 +17,7 @@ import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertSame;
 import static org.junit.Assert.assertTrue;
 import static org.thoughtcrime.securesms.testutil.SecureRandomTestUtil.mockRandom;
-import static org.thoughtcrime.securesms.testutil.ZkGroupLibraryUtil.assumeZkGroupSupportedOnOS;
+import static org.whispersystems.signalservice.test.LibSignalLibraryUtil.assumeLibSignalSupportedOnOS;
 
 public final class GroupIdTest {
 
@@ -54,7 +54,7 @@ public final class GroupIdTest {
 
   @Test
   public void can_create_for_gv2_from_GroupMasterKey() throws IOException, InvalidInputException {
-    assumeZkGroupSupportedOnOS();
+    assumeLibSignalSupportedOnOS();
 
     GroupId.V2 groupId = GroupId.v2(new GroupMasterKey(Hex.fromStringCondensed("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef")));
 

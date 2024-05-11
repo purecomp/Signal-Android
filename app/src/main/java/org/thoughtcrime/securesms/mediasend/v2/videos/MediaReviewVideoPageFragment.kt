@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.view.View
 import androidx.fragment.app.Fragment
 import androidx.fragment.app.viewModels
+import org.signal.core.util.getParcelableCompat
 import org.thoughtcrime.securesms.R
 import org.thoughtcrime.securesms.mediasend.VideoEditorFragment
 import org.thoughtcrime.securesms.mediasend.v2.HudCommand
@@ -31,18 +32,6 @@ class MediaReviewVideoPageFragment : Fragment(R.layout.fragment_container), Vide
     restoreVideoEditorState()
   }
 
-  override fun onSaveInstanceState(outState: Bundle) {
-    super.onSaveInstanceState(outState)
-    saveEditorState()
-  }
-
-  private fun saveEditorState() {
-    val saveState = videoEditorFragment.saveState()
-    if (saveState != null) {
-      sharedViewModel.setEditorState(requireUri(), saveState)
-    }
-  }
-
   override fun onPlayerReady() {
     sharedViewModel.sendCommand(HudCommand.ResumeEntryTransition)
   }
@@ -54,17 +43,8 @@ class MediaReviewVideoPageFragment : Fragment(R.layout.fragment_container), Vide
   override fun onTouchEventsNeeded(needed: Boolean) {
     sharedViewModel.setTouchEnabled(!needed)
   }
-
-  override fun onVideoBeginEdit(uri: Uri) {
-    sharedViewModel.onVideoBeginEdit(uri)
-  }
-
-  override fun onVideoEndEdit(uri: Uri) {
-    saveEditorState()
-  }
-
   private fun restoreVideoEditorState() {
-    val data = sharedViewModel.getEditorState(requireUri()) as? VideoEditorFragment.Data
+    val data = sharedViewModel.getEditorState(requireUri()) as? VideoTrimData
 
     if (data != null) {
       videoEditorFragment.restoreState(data)
@@ -79,7 +59,6 @@ class MediaReviewVideoPageFragment : Fragment(R.layout.fragment_container), Vide
     } else {
       val videoEditorFragment = VideoEditorFragment.newInstance(
         requireUri(),
-        requireMaxCompressedVideoSize(),
         requireMaxAttachmentSize(),
         requireIsVideoGif()
       )
@@ -96,9 +75,8 @@ class MediaReviewVideoPageFragment : Fragment(R.layout.fragment_container), Vide
     }
   }
 
-  private fun requireUri(): Uri = requireNotNull(requireArguments().getParcelable(ARG_URI))
-  private fun requireMaxCompressedVideoSize(): Long = sharedViewModel.getMediaConstraints().getCompressedVideoMaxSize(requireContext()).toLong()
-  private fun requireMaxAttachmentSize(): Long = sharedViewModel.getMediaConstraints().getVideoMaxSize(requireContext()).toLong()
+  private fun requireUri(): Uri = requireNotNull(requireArguments().getParcelableCompat(ARG_URI, Uri::class.java))
+  private fun requireMaxAttachmentSize(): Long = sharedViewModel.getMediaConstraints().getVideoMaxSize(requireContext())
   private fun requireIsVideoGif(): Boolean = requireNotNull(requireArguments().getBoolean(ARG_IS_VIDEO_GIF))
 
   companion object {

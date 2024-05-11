@@ -20,37 +20,36 @@ import com.google.i18n.phonenumbers.PhoneNumberUtil;
 import com.google.i18n.phonenumbers.Phonenumber;
 import com.google.i18n.phonenumbers.ShortNumberInfo;
 
+import org.signal.core.util.Hex;
 import org.signal.core.util.StreamUtil;
 import org.signal.core.util.logging.Log;
+import org.signal.libsignal.protocol.IdentityKey;
+import org.signal.libsignal.protocol.InvalidMessageException;
 import org.thoughtcrime.securesms.crypto.AttachmentSecret;
 import org.thoughtcrime.securesms.crypto.ClassicDecryptingPartInputStream;
 import org.thoughtcrime.securesms.crypto.MasterCipher;
 import org.thoughtcrime.securesms.crypto.MasterSecret;
 import org.thoughtcrime.securesms.crypto.MasterSecretUtil;
-import org.thoughtcrime.securesms.database.AttachmentDatabase;
-import org.thoughtcrime.securesms.database.DraftDatabase;
-import org.thoughtcrime.securesms.database.GroupDatabase;
-import org.thoughtcrime.securesms.database.GroupReceiptDatabase;
-import org.thoughtcrime.securesms.database.IdentityDatabase;
-import org.thoughtcrime.securesms.database.MmsDatabase;
-import org.thoughtcrime.securesms.database.PushDatabase;
-import org.thoughtcrime.securesms.database.RecipientDatabase;
-import org.thoughtcrime.securesms.database.SmsDatabase;
-import org.thoughtcrime.securesms.database.ThreadDatabase;
+import org.thoughtcrime.securesms.database.AttachmentTable;
+import org.thoughtcrime.securesms.database.DraftTable;
+import org.thoughtcrime.securesms.database.GroupReceiptTable;
+import org.thoughtcrime.securesms.database.GroupTable;
+import org.thoughtcrime.securesms.database.IdentityTable;
+import org.thoughtcrime.securesms.database.MessageTable;
+import org.thoughtcrime.securesms.database.MessageTypes;
+import org.thoughtcrime.securesms.database.RecipientTable;
+import org.thoughtcrime.securesms.database.ThreadTable;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.groups.GroupId;
 import org.thoughtcrime.securesms.migrations.LegacyMigrationJob;
 import org.thoughtcrime.securesms.permissions.Permissions;
 import org.thoughtcrime.securesms.phonenumbers.NumberUtil;
-import org.thoughtcrime.securesms.util.Base64;
+import org.signal.core.util.Base64;
 import org.thoughtcrime.securesms.util.DelimiterUtil;
-import org.thoughtcrime.securesms.util.Hex;
 import org.thoughtcrime.securesms.util.JsonUtils;
 import org.thoughtcrime.securesms.util.MediaUtil;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
 import org.thoughtcrime.securesms.util.Util;
-import org.whispersystems.libsignal.IdentityKey;
-import org.whispersystems.libsignal.InvalidMessageException;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -67,7 +66,7 @@ import java.util.regex.Pattern;
 
 public class ClassicOpenHelper extends SQLiteOpenHelper {
 
-  static final String NAME = "messages.db";
+  public static final String NAME = "messages.db";
 
   private static final int INTRODUCED_IDENTITIES_VERSION                   = 2;
   private static final int INTRODUCED_INDEXES_VERSION                      = 3;
@@ -128,24 +127,21 @@ public class ClassicOpenHelper extends SQLiteOpenHelper {
 
   @Override
   public void onCreate(SQLiteDatabase db) {
-    db.execSQL(SmsDatabase.CREATE_TABLE);
-    db.execSQL(MmsDatabase.CREATE_TABLE);
-    db.execSQL(AttachmentDatabase.CREATE_TABLE);
-    db.execSQL(ThreadDatabase.CREATE_TABLE);
-    db.execSQL(IdentityDatabase.CREATE_TABLE);
-    db.execSQL(DraftDatabase.CREATE_TABLE);
-    db.execSQL(PushDatabase.CREATE_TABLE);
-    db.execSQL(GroupDatabase.CREATE_TABLE);
-    db.execSQL(RecipientDatabase.CREATE_TABLE);
-    db.execSQL(GroupReceiptDatabase.CREATE_TABLE);
+    db.execSQL(MessageTable.CREATE_TABLE);
+    db.execSQL(AttachmentTable.CREATE_TABLE);
+    db.execSQL(ThreadTable.CREATE_TABLE);
+    db.execSQL(IdentityTable.CREATE_TABLE);
+    db.execSQL(DraftTable.CREATE_TABLE);
+    db.execSQL(GroupTable.CREATE_TABLE);
+    db.execSQL(RecipientTable.CREATE_TABLE);
+    db.execSQL(GroupReceiptTable.CREATE_TABLE);
 
-    executeStatements(db, SmsDatabase.CREATE_INDEXS);
-    executeStatements(db, MmsDatabase.CREATE_INDEXS);
-    executeStatements(db, AttachmentDatabase.CREATE_INDEXS);
-    executeStatements(db, ThreadDatabase.CREATE_INDEXS);
-    executeStatements(db, DraftDatabase.CREATE_INDEXS);
-    executeStatements(db, GroupDatabase.CREATE_INDEXS);
-    executeStatements(db, GroupReceiptDatabase.CREATE_INDEXES);
+    executeStatements(db, MessageTable.CREATE_INDEXS);
+    executeStatements(db, AttachmentTable.CREATE_INDEXS);
+    executeStatements(db, ThreadTable.CREATE_INDEXS);
+    executeStatements(db, DraftTable.CREATE_INDEXS);
+    executeStatements(db, GroupTable.CREATE_INDEXS);
+    executeStatements(db, GroupReceiptTable.CREATE_INDEXES);
   }
 
   public void onApplicationLevelUpgrade(Context context, MasterSecret masterSecret, int fromVersion,
@@ -383,8 +379,8 @@ public class ClassicOpenHelper extends SQLiteOpenHelper {
 
               if (identityKey != null) {
                 MasterCipher masterCipher = new MasterCipher(masterSecret);
-                String identityKeyString  = Base64.encodeBytes(identityKey.serialize());
-                String macString          = Base64.encodeBytes(masterCipher.getMacFor(recipientId +
+                String identityKeyString  = Base64.encodeWithPadding(identityKey.serialize());
+                String macString          = Base64.encodeWithPadding(masterCipher.getMacFor(recipientId +
                                                                                           identityKeyString));
 
                 db.execSQL("REPLACE INTO identities (recipient, key, mac) VALUES (?, ?, ?)",
@@ -404,10 +400,10 @@ public class ClassicOpenHelper extends SQLiteOpenHelper {
         Cursor       cursor       = null;
 
         try {
-          cursor = db.query(SmsDatabase.TABLE_NAME,
-                            new String[] {SmsDatabase.ID, SmsDatabase.BODY, SmsDatabase.TYPE},
-                            SmsDatabase.TYPE + " & ? == 0",
-                            new String[] {String.valueOf(SmsDatabase.Types.ENCRYPTION_MASK)},
+          cursor = db.query("sms",
+                            new String[] { "_id", "body", "type"},
+                            "type & ? == 0",
+                            new String[] {String.valueOf(MessageTypes.ENCRYPTION_MASK)},
                             null, null, null);
 
           while (cursor.moveToNext()) {
@@ -418,10 +414,10 @@ public class ClassicOpenHelper extends SQLiteOpenHelper {
             String encryptedBody = masterCipher.encryptBody(body);
 
             ContentValues update = new ContentValues();
-            update.put(SmsDatabase.BODY, encryptedBody);
-            update.put(SmsDatabase.TYPE, type | 0x80000000); // Inline now deprecated symmetric encryption type
+            update.put("body", encryptedBody);
+            update.put("type", type | 0x80000000); // Inline now deprecated symmetric encryption type
 
-            db.update(SmsDatabase.TABLE_NAME, update, SmsDatabase.ID  + " = ?",
+            db.update("sms", update, "_id = ?",
                       new String[] {String.valueOf(id)});
           }
         } finally {
@@ -791,7 +787,7 @@ public class ClassicOpenHelper extends SQLiteOpenHelper {
       db.execSQL("UPDATE part SET pending_push = '2' WHERE pending_push = '1'");
     }
 
-    if (oldVersion < NO_MORE_CANONICAL_ADDRESS_DATABASE && isValidNumber(TextSecurePreferences.getLocalNumber(context))) {
+    if (oldVersion < NO_MORE_CANONICAL_ADDRESS_DATABASE && isValidNumber(TextSecurePreferences.getStringPreference(context, "pref_local_number", null))) {
       SQLiteOpenHelper canonicalAddressDatabaseHelper = new SQLiteOpenHelper(context, "canonical_address.db", null, 1) {
         @Override
         public void onCreate(SQLiteDatabase db) {
@@ -803,7 +799,7 @@ public class ClassicOpenHelper extends SQLiteOpenHelper {
       };
       
       SQLiteDatabase    canonicalAddressDatabase       = canonicalAddressDatabaseHelper.getReadableDatabase();
-      NumberMigrator    numberMigrator                 = new NumberMigrator(TextSecurePreferences.getLocalNumber(context));
+      NumberMigrator    numberMigrator                 = new NumberMigrator(TextSecurePreferences.getStringPreference(context, "pref_local_number", null));
 
       // Migrate Thread Database
       Cursor cursor = db.query("thread", new String[] {"_id", "recipient_ids"}, null, null, null, null, null);
@@ -1131,7 +1127,7 @@ public class ClassicOpenHelper extends SQLiteOpenHelper {
             members.add(DelimiterUtil.escape(DelimiterUtil.unescape(address, ' '), ','));
           }
 
-          members.add(DelimiterUtil.escape(TextSecurePreferences.getLocalNumber(context), ','));
+          members.add(DelimiterUtil.escape(TextSecurePreferences.getStringPreference(context, "pref_local_number", null), ','));
 
           Collections.sort(members);
 
@@ -1188,14 +1184,14 @@ public class ClassicOpenHelper extends SQLiteOpenHelper {
     if (oldVersion < INTERNAL_DIRECTORY) {
       db.execSQL("ALTER TABLE recipient_preferences ADD COLUMN registered INTEGER DEFAULT 0");
 
-      if (isValidNumber(TextSecurePreferences.getLocalNumber(context))) {
+      if (isValidNumber(TextSecurePreferences.getStringPreference(context, "pref_local_number", null))) {
         OldDirectoryDatabaseHelper directoryDatabaseHelper = new OldDirectoryDatabaseHelper(context);
         SQLiteDatabase             directoryDatabase       = directoryDatabaseHelper.getWritableDatabase();
 
         Cursor cursor = directoryDatabase.query("directory", new String[] {"number", "registered"}, null, null, null, null, null);
 
         while (cursor != null && cursor.moveToNext()) {
-          String        address       = new NumberMigrator(TextSecurePreferences.getLocalNumber(context)).migrate(cursor.getString(0));
+          String        address       = new NumberMigrator(TextSecurePreferences.getStringPreference(context, "pref_local_number", null)).migrate(cursor.getString(0));
           ContentValues contentValues = new ContentValues(1);
 
           contentValues.put("registered", cursor.getInt(1) == 1 ? 1 : 2);

@@ -14,7 +14,7 @@ import org.thoughtcrime.securesms.avatar.AvatarPickerStorage
 import org.thoughtcrime.securesms.avatar.AvatarRenderer
 import org.thoughtcrime.securesms.avatar.Avatars
 import org.thoughtcrime.securesms.conversation.colors.AvatarColor
-import org.thoughtcrime.securesms.database.DatabaseFactory
+import org.thoughtcrime.securesms.database.SignalDatabase
 import org.thoughtcrime.securesms.groups.GroupId
 import org.thoughtcrime.securesms.mediasend.Media
 import org.thoughtcrime.securesms.profiles.AvatarHelper
@@ -50,7 +50,7 @@ class AvatarPickerRepository(context: Context) {
   }
 
   fun getAvatarForGroup(groupId: GroupId): Single<Avatar> = Single.fromCallable {
-    val recipient = Recipient.externalGroupExact(applicationContext, groupId)
+    val recipient = Recipient.externalGroupExact(groupId)
 
     if (AvatarHelper.hasAvatar(applicationContext, recipient.id)) {
       try {
@@ -70,11 +70,11 @@ class AvatarPickerRepository(context: Context) {
   }
 
   fun getPersistedAvatarsForSelf(): Single<List<Avatar>> = Single.fromCallable {
-    DatabaseFactory.getAvatarPickerDatabase(applicationContext).getAvatarsForSelf()
+    SignalDatabase.avatarPicker.getAvatarsForSelf()
   }
 
   fun getPersistedAvatarsForGroup(groupId: GroupId): Single<List<Avatar>> = Single.fromCallable {
-    DatabaseFactory.getAvatarPickerDatabase(applicationContext).getAvatarsForGroup(groupId)
+    SignalDatabase.avatarPicker.getAvatarsForGroup(groupId)
   }
 
   fun getDefaultAvatarsForSelf(): Single<List<Avatar>> = Single.fromCallable {
@@ -97,7 +97,7 @@ class AvatarPickerRepository(context: Context) {
 
   fun persistAvatarForSelf(avatar: Avatar, onPersisted: (Avatar) -> Unit) {
     SignalExecutors.BOUNDED.execute {
-      val avatarDatabase = DatabaseFactory.getAvatarPickerDatabase(applicationContext)
+      val avatarDatabase = SignalDatabase.avatarPicker
       val savedAvatar = avatarDatabase.saveAvatarForSelf(avatar)
       avatarDatabase.markUsage(savedAvatar)
       onPersisted(savedAvatar)
@@ -106,7 +106,7 @@ class AvatarPickerRepository(context: Context) {
 
   fun persistAvatarForGroup(avatar: Avatar, groupId: GroupId, onPersisted: (Avatar) -> Unit) {
     SignalExecutors.BOUNDED.execute {
-      val avatarDatabase = DatabaseFactory.getAvatarPickerDatabase(applicationContext)
+      val avatarDatabase = SignalDatabase.avatarPicker
       val savedAvatar = avatarDatabase.saveAvatarForGroup(avatar, groupId)
       avatarDatabase.markUsage(savedAvatar)
       onPersisted(savedAvatar)
@@ -161,7 +161,7 @@ class AvatarPickerRepository(context: Context) {
   }
 
   fun getDefaultAvatarForGroup(groupId: GroupId): Avatar {
-    val recipient = Recipient.externalGroupExact(applicationContext, groupId)
+    val recipient = Recipient.externalGroupExact(groupId)
 
     return getDefaultAvatarForGroup(recipient.avatarColor)
   }
@@ -180,7 +180,7 @@ class AvatarPickerRepository(context: Context) {
   fun delete(avatar: Avatar, onDelete: () -> Unit) {
     SignalExecutors.BOUNDED.execute {
       if (avatar.databaseId is Avatar.DatabaseId.Saved) {
-        val avatarDatabase = DatabaseFactory.getAvatarPickerDatabase(applicationContext)
+        val avatarDatabase = SignalDatabase.avatarPicker
         avatarDatabase.deleteAvatar(avatar)
       }
       onDelete()

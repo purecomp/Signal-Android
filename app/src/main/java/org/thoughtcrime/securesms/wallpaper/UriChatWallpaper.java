@@ -1,31 +1,40 @@
 package org.thoughtcrime.securesms.wallpaper;
 
-import android.graphics.drawable.Drawable;
+import android.content.Context;
+import android.graphics.Bitmap;
 import android.net.Uri;
 import android.os.Parcel;
 import android.os.Parcelable;
+import android.util.LruCache;
 import android.widget.ImageView;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 
+import com.bumptech.glide.Glide;
 import com.bumptech.glide.load.DataSource;
 import com.bumptech.glide.load.engine.DiskCacheStrategy;
 import com.bumptech.glide.load.engine.GlideException;
 import com.bumptech.glide.request.RequestListener;
 import com.bumptech.glide.request.target.Target;
 
-import org.jetbrains.annotations.NotNull;
 import org.signal.core.util.logging.Log;
-import org.thoughtcrime.securesms.conversation.colors.ChatColors;
-import org.thoughtcrime.securesms.conversation.colors.ChatColorsPalette;
 import org.thoughtcrime.securesms.database.model.databaseprotos.Wallpaper;
 import org.thoughtcrime.securesms.mms.DecryptableStreamUriLoader;
-import org.thoughtcrime.securesms.mms.GlideApp;
 
 import java.util.Objects;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 final class UriChatWallpaper implements ChatWallpaper, Parcelable {
+
+  private static final LruCache<Uri, Bitmap> CACHE = new LruCache<Uri, Bitmap>((int) Runtime.getRuntime().maxMemory() / 8) {
+    @Override
+    protected int sizeOf(Uri key, Bitmap value) {
+      return value.getByteCount();
+    }
+  };
 
   private static final String TAG = Log.tag(UriChatWallpaper.class);
 
@@ -49,30 +58,72 @@ final class UriChatWallpaper implements ChatWallpaper, Parcelable {
 
   @Override
   public void loadInto(@NonNull ImageView imageView) {
-    GlideApp.with(imageView)
-            .load(new DecryptableStreamUriLoader.DecryptableUri(uri))
-            .addListener(new RequestListener<Drawable>() {
-              @Override
-              public boolean onLoadFailed(@Nullable GlideException e, Object model, Target<Drawable> target, boolean isFirstResource) {
-                Log.w(TAG, "Failed to load wallpaper " + uri);
-                return false;
-              }
+    Bitmap cached = CACHE.get(uri);
+    if (cached != null && !cached.isRecycled()) {
+      Log.d(TAG, "Using cached value.");
+      imageView.setImageBitmap(cached);
+    } else {
+      Log.d(TAG, "Not in cache or recycled. Fetching using Glide.");
+      Glide.with(imageView.getContext().getApplicationContext())
+              .asBitmap()
+              .load(new DecryptableStreamUriLoader.DecryptableUri(uri))
+              .skipMemoryCache(true)
+              .diskCacheStrategy(DiskCacheStrategy.NONE)
+              .addListener(new RequestListener<>() {
+                @Override
+                public boolean onLoadFailed(@Nullable GlideException e, Object model, Target<Bitmap> target, boolean isFirstResource) {
+                  Log.w(TAG, "Failed to load wallpaper " + uri);
+                  return false;
+                }
 
-              @Override
-              public boolean onResourceReady(Drawable resource, Object model, Target<Drawable> target, DataSource dataSource, boolean isFirstResource) {
-                Log.i(TAG, "Loaded wallpaper " + uri);
-                return false;
-              }
-            })
-            .into(imageView);
+                @Override
+                public boolean onResourceReady(Bitmap resource, Object model, Target<Bitmap> target, DataSource dataSource, boolean isFirstResource) {
+                  Log.i(TAG, "Loaded wallpaper " + uri + " on " + Thread.currentThread().getName());
+                  CACHE.put(uri, resource);
+                  return false;
+                }
+              })
+              .into(imageView);
+    }
+  }
+
+  @Override
+  public boolean prefetch(@NonNull Context context, long maxWaitTime) {
+    Bitmap cached = CACHE.get(uri);
+    if (cached != null && !cached.isRecycled()) {
+      Log.d(TAG, "Already cached, skipping prefetch.");
+      return true;
+    }
+
+    long startTime = System.currentTimeMillis();
+    try {
+      Bitmap bitmap = Glide.with(context.getApplicationContext())
+                              .asBitmap()
+                              .load(new DecryptableStreamUriLoader.DecryptableUri(uri))
+                              .skipMemoryCache(true)
+                              .diskCacheStrategy(DiskCacheStrategy.NONE)
+                              .submit()
+                              .get(maxWaitTime, TimeUnit.MILLISECONDS);
+
+      CACHE.put(uri, bitmap);
+      Log.d(TAG, "Prefetched wallpaper in " + (System.currentTimeMillis() - startTime) + " ms.");
+
+      return true;
+    } catch (ExecutionException | InterruptedException e) {
+      Log.w(TAG, "Failed to prefetch wallpaper.", e);
+    } catch (TimeoutException e) {
+      Log.w(TAG, "Timed out waiting for prefetch.");
+    }
+
+    return false;
   }
 
   @Override
   public @NonNull Wallpaper serialize() {
-    return Wallpaper.newBuilder()
-                    .setFile(Wallpaper.File.newBuilder().setUri(uri.toString()))
-                    .setDimLevelInDarkTheme(dimLevelInDarkTheme)
-                    .build();
+    return new Wallpaper.Builder()
+                        .file_(new Wallpaper.File.Builder().uri(uri.toString()).build())
+                        .dimLevelInDarkTheme(dimLevelInDarkTheme)
+                        .build();
   }
 
   @Override

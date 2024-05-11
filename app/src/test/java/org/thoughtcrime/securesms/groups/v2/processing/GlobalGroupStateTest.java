@@ -4,9 +4,9 @@ import org.junit.Test;
 import org.signal.storageservice.protos.groups.local.DecryptedGroup;
 import org.signal.storageservice.protos.groups.local.DecryptedGroupChange;
 
+import static org.junit.Assert.assertEquals;
 import static java.util.Arrays.asList;
 import static java.util.Collections.emptyList;
-import static org.junit.Assert.assertEquals;
 
 public final class GlobalGroupStateTest {
 
@@ -36,10 +36,10 @@ public final class GlobalGroupStateTest {
   }
 
   private static DecryptedGroup state(int revision) {
-    return DecryptedGroup.newBuilder().setRevision(revision).build();
+    return new DecryptedGroup.Builder().revision(revision).build();
   }
 
   private static DecryptedGroupChange change(int revision) {
-    return DecryptedGroupChange.newBuilder().setRevision(revision).build();
+    return new DecryptedGroupChange.Builder().revision(revision).build();
   }
 }

@@ -1,42 +1,33 @@
 package org.thoughtcrime.securesms.migrations;
 
 import android.content.Context;
-import android.database.Cursor;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.preference.PreferenceManager;
+
+import com.bumptech.glide.Glide;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.attachments.DatabaseAttachment;
-import org.thoughtcrime.securesms.color.MaterialColor;
-import org.thoughtcrime.securesms.contacts.avatars.ContactColorsLegacy;
-import org.thoughtcrime.securesms.conversation.colors.ChatColorsMapper;
-import org.thoughtcrime.securesms.conversation.colors.ChatColorsPalette;
-import org.thoughtcrime.securesms.crypto.IdentityKeyUtil;
 import org.thoughtcrime.securesms.crypto.MasterSecret;
-import org.thoughtcrime.securesms.database.AttachmentDatabase;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.MessageDatabase;
-import org.thoughtcrime.securesms.database.MmsDatabase;
-import org.thoughtcrime.securesms.database.MmsDatabase.Reader;
-import org.thoughtcrime.securesms.database.PushDatabase;
+import org.thoughtcrime.securesms.database.AttachmentTable;
+import org.thoughtcrime.securesms.database.MessageTable;
+import org.thoughtcrime.securesms.database.MessageTable.MmsReader;
+import org.thoughtcrime.securesms.database.SignalDatabase;
 import org.thoughtcrime.securesms.database.model.MessageRecord;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.jobmanager.Data;
 import org.thoughtcrime.securesms.jobmanager.Job;
-import org.thoughtcrime.securesms.jobmanager.JobManager;
 import org.thoughtcrime.securesms.jobs.AttachmentDownloadJob;
-import org.thoughtcrime.securesms.jobs.CreateSignedPreKeyJob;
 import org.thoughtcrime.securesms.jobs.DirectoryRefreshJob;
-import org.thoughtcrime.securesms.jobs.PushDecryptMessageJob;
+import org.thoughtcrime.securesms.jobs.PreKeysSyncJob;
 import org.thoughtcrime.securesms.jobs.RefreshAttributesJob;
-import org.thoughtcrime.securesms.mms.GlideApp;
+import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.service.KeyCachingService;
 import org.thoughtcrime.securesms.transport.RetryLaterException;
 import org.thoughtcrime.securesms.util.FileUtils;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
 import org.thoughtcrime.securesms.util.VersionTracker;
-import org.whispersystems.signalservice.api.messages.SignalServiceEnvelope;
 
 import java.io.File;
 import java.util.List;
@@ -110,15 +101,11 @@ public class LegacyMigrationJob extends MigrationJob {
     MasterSecret masterSecret    = KeyCachingService.getMasterSecret(context);
     
     if (lastSeenVersion < SQLCIPHER && masterSecret != null) {
-      DatabaseFactory.getInstance(context).onApplicationLevelUpgrade(context, masterSecret, lastSeenVersion, (progress, total) -> {
+      SignalDatabase.onApplicationLevelUpgrade(context, masterSecret, lastSeenVersion, (progress, total) -> {
         Log.i(TAG, "onApplicationLevelUpgrade: " + progress + "/" + total);
       });
     } else if (lastSeenVersion < SQLCIPHER) {
       throw new RetryLaterException();
-    }
-
-    if (lastSeenVersion < CURVE25519_VERSION) {
-      IdentityKeyUtil.migrateIdentityKeys(context, masterSecret);
     }
 
     if (lastSeenVersion < NO_V1_VERSION) {
@@ -138,24 +125,23 @@ public class LegacyMigrationJob extends MigrationJob {
     }
 
     if (lastSeenVersion < SIGNED_PREKEY_VERSION) {
-      ApplicationDependencies.getJobManager().add(new CreateSignedPreKeyJob(context));
+      PreKeysSyncJob.enqueueIfNeeded();
     }
 
-    if (lastSeenVersion < NO_DECRYPT_QUEUE_VERSION) {
-      scheduleMessagesInPushDatabase(context);
-    }
+//    if (lastSeenVersion < NO_DECRYPT_QUEUE_VERSION) {
+//      scheduleMessagesInPushDatabase(context);
+//    }
 
-    if (lastSeenVersion < PUSH_DECRYPT_SERIAL_ID_VERSION) {
-      scheduleMessagesInPushDatabase(context);
-    }
+//    if (lastSeenVersion < PUSH_DECRYPT_SERIAL_ID_VERSION) {
+//      scheduleMessagesInPushDatabase(context);
+//    }
 
-    if (lastSeenVersion < MIGRATE_SESSION_PLAINTEXT) {
-//        new TextSecureSessionStore(context, masterSecret).migrateSessions();
-//        new TextSecurePreKeyStore(context, masterSecret).migrateRecords();
-
-      IdentityKeyUtil.migrateIdentityKeys(context, masterSecret);
-      scheduleMessagesInPushDatabase(context);;
-    }
+//    if (lastSeenVersion < MIGRATE_SESSION_PLAINTEXT) {
+////        new TextSecureSessionStore(context, masterSecret).migrateSessions();
+////        new TextSecurePreKeyStore(context, masterSecret).migrateRecords();
+//
+//      scheduleMessagesInPushDatabase(context);;
+//    }
 
     if (lastSeenVersion < CONTACTS_ACCOUNT_VERSION) {
       ApplicationDependencies.getJobManager().add(new DirectoryRefreshJob(false));
@@ -190,14 +176,14 @@ public class LegacyMigrationJob extends MigrationJob {
     }
 
     if (lastSeenVersion < INTERNALIZE_CONTACTS) {
-      if (TextSecurePreferences.isPushRegistered(context)) {
+      if (SignalStore.account().isRegistered()) {
         TextSecurePreferences.setHasSuccessfullyRetrievedDirectory(context, true);
       }
     }
 
-    if (lastSeenVersion < SQLCIPHER) {
-      scheduleMessagesInPushDatabase(context);
-    }
+//    if (lastSeenVersion < SQLCIPHER) {
+//      scheduleMessagesInPushDatabase(context);
+//    }
 
     if (lastSeenVersion < SQLCIPHER_COMPLETE) {
       File file = context.getDatabasePath("messages.db");
@@ -215,7 +201,7 @@ public class LegacyMigrationJob extends MigrationJob {
 
     if (lastSeenVersion < IMAGE_CACHE_CLEANUP) {
       FileUtils.deleteDirectoryContents(context.getExternalCacheDir());
-      GlideApp.get(context).clearDiskCache();
+      Glide.get(context).clearDiskCache();
     }
 
     // This migration became unnecessary after switching away from WorkManager
@@ -234,16 +220,11 @@ public class LegacyMigrationJob extends MigrationJob {
     if (lastSeenVersion < COLOR_MIGRATION) {
       long startTime = System.currentTimeMillis();
       //noinspection deprecation
-      DatabaseFactory.getRecipientDatabase(context).updateSystemContactColors();
+      SignalDatabase.recipients().updateSystemContactColors();
       Log.i(TAG, "Color migration took " + (System.currentTimeMillis() - startTime) + " ms");
     }
 
     if (lastSeenVersion < UNIDENTIFIED_DELIVERY) {
-      if (TextSecurePreferences.isMultiDevice(context)) {
-        Log.i(TAG, "MultiDevice: Disabling UD (will be re-enabled if possible after pending refresh).");
-        TextSecurePreferences.setIsUnidentifiedDeliveryEnabled(context, false);
-      }
-
       Log.i(TAG, "Scheduling UD attributes refresh.");
       ApplicationDependencies.getJobManager().add(new RefreshAttributesJob());
     }
@@ -260,37 +241,37 @@ public class LegacyMigrationJob extends MigrationJob {
   }
 
   private void schedulePendingIncomingParts(Context context) {
-    final AttachmentDatabase       attachmentDb       = DatabaseFactory.getAttachmentDatabase(context);
-    final MessageDatabase          mmsDb              = DatabaseFactory.getMmsDatabase(context);
-    final List<DatabaseAttachment> pendingAttachments = DatabaseFactory.getAttachmentDatabase(context).getPendingAttachments();
+    final AttachmentTable          attachmentDb       = SignalDatabase.attachments();
+    final MessageTable             mmsDb              = SignalDatabase.messages();
+    final List<DatabaseAttachment> pendingAttachments = SignalDatabase.attachments().getPendingAttachments();
 
     Log.i(TAG, pendingAttachments.size() + " pending parts.");
     for (DatabaseAttachment attachment : pendingAttachments) {
-      final Reader        reader = MmsDatabase.readerFor(mmsDb.getMessageCursor(attachment.getMmsId()));
+      final MmsReader     reader = MessageTable.mmsReaderFor(mmsDb.getMessageCursor(attachment.mmsId));
       final MessageRecord record = reader.getNext();
 
-      if (attachment.hasData()) {
-        Log.i(TAG, "corrected a pending media part " + attachment.getAttachmentId() + "that already had data.");
-        attachmentDb.setTransferState(attachment.getMmsId(), attachment.getAttachmentId(), AttachmentDatabase.TRANSFER_PROGRESS_DONE);
+      if (attachment.hasData) {
+        Log.i(TAG, "corrected a pending media part " + attachment.attachmentId + "that already had data.");
+        attachmentDb.setTransferState(attachment.mmsId, attachment.attachmentId, AttachmentTable.TRANSFER_PROGRESS_DONE);
       } else if (record != null && !record.isOutgoing() && record.isPush()) {
-        Log.i(TAG, "queuing new attachment download job for incoming push part " + attachment.getAttachmentId() + ".");
-        ApplicationDependencies.getJobManager().add(new AttachmentDownloadJob(attachment.getMmsId(), attachment.getAttachmentId(), false));
+        Log.i(TAG, "queuing new attachment download job for incoming push part " + attachment.attachmentId + ".");
+        ApplicationDependencies.getJobManager().add(new AttachmentDownloadJob(attachment.mmsId, attachment.attachmentId, false, false));
       }
       reader.close();
     }
   }
 
-  private static void scheduleMessagesInPushDatabase(@NonNull Context context) {
-    PushDatabase pushDatabase = DatabaseFactory.getPushDatabase(context);
-    JobManager   jobManager   = ApplicationDependencies.getJobManager();
-
-    try (PushDatabase.Reader pushReader = pushDatabase.readerFor(pushDatabase.getPending())) {
-      SignalServiceEnvelope envelope;
-      while ((envelope = pushReader.getNext()) != null) {
-        jobManager.add(new PushDecryptMessageJob(context, envelope));
-      }
-    }
-  }
+//  private static void scheduleMessagesInPushDatabase(@NonNull Context context) {
+//    PushTable  pushDatabase = SignalDatabase.push();
+//    JobManager jobManager   = ApplicationDependencies.getJobManager();
+//
+//    try (PushTable.Reader pushReader = pushDatabase.readerFor(pushDatabase.getPending())) {
+//      SignalServiceEnvelope envelope;
+//      while ((envelope = pushReader.getNext()) != null) {
+//        jobManager.add(new PushDecryptMessageJob(envelope));
+//      }
+//    }
+//  }
 
   public interface DatabaseUpgradeListener {
     void setProgress(int progress, int total);
@@ -298,7 +279,7 @@ public class LegacyMigrationJob extends MigrationJob {
 
   public static final class Factory implements Job.Factory<LegacyMigrationJob> {
     @Override
-    public @NonNull LegacyMigrationJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    public @NonNull LegacyMigrationJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
       return new LegacyMigrationJob(parameters);
     }
   }

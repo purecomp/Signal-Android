@@ -1,7 +1,6 @@
 package org.thoughtcrime.securesms.phonenumbers;
 
 import android.content.Context;
-import android.text.TextUtils;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -12,17 +11,15 @@ import com.google.i18n.phonenumbers.Phonenumber;
 import com.google.i18n.phonenumbers.ShortNumberInfo;
 
 import org.signal.core.util.logging.Log;
+import org.signal.libsignal.protocol.util.Pair;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.groups.GroupId;
-import org.thoughtcrime.securesms.util.SetUtil;
-import org.thoughtcrime.securesms.util.StringUtil;
-import org.thoughtcrime.securesms.util.TextSecurePreferences;
+import org.thoughtcrime.securesms.keyvalue.SignalStore;
+import org.signal.core.util.SetUtil;
+import org.signal.core.util.StringUtil;
 import org.thoughtcrime.securesms.util.Util;
-import org.whispersystems.libsignal.util.Pair;
-import org.whispersystems.libsignal.util.guava.Optional;
 
-import java.util.Arrays;
-import java.util.HashSet;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.regex.Matcher;
@@ -48,9 +45,9 @@ public class PhoneNumberFormatter {
   private final Pattern         ALPHA_PATTERN   = Pattern.compile("[a-zA-Z]");
 
   public static @NonNull PhoneNumberFormatter get(Context context) {
-    String localNumber = TextSecurePreferences.getLocalNumber(context);
+    String localNumber = SignalStore.account().getE164();
 
-    if (!TextUtils.isEmpty(localNumber)) {
+    if (!Util.isEmpty(localNumber)) {
       Pair<String, PhoneNumberFormatter> cached = cachedFormatter.get();
 
       if (cached != null && cached.first().equals(localNumber)) return cached.second();
@@ -60,7 +57,7 @@ public class PhoneNumberFormatter {
 
       return formatter;
     } else {
-      return new PhoneNumberFormatter(Util.getSimCountryIso(context).or("US"), true);
+      return new PhoneNumberFormatter(Util.getSimCountryIso(context).orElse("US"), true);
     }
   }
 
@@ -77,12 +74,12 @@ public class PhoneNumberFormatter {
   }
 
   PhoneNumberFormatter(@NonNull String localCountryCode, boolean countryCode) {
-    this.localNumber      = Optional.absent();
+    this.localNumber      = Optional.empty();
     this.localCountryCode = localCountryCode;
   }
 
   public static @NonNull String prettyPrint(@NonNull String e164) {
-    return get(ApplicationDependencies.getApplication()).prettyPrintFormat(e164);
+    return StringUtil.forceLtr(get(ApplicationDependencies.getApplication()).prettyPrintFormat(e164));
   }
 
   public @NonNull String prettyPrintFormat(@NonNull String e164) {
@@ -98,7 +95,7 @@ public class PhoneNumberFormatter {
         return StringUtil.isolateBidi(phoneNumberUtil.format(parsedNumber, PhoneNumberUtil.PhoneNumberFormat.INTERNATIONAL));
       }
     } catch (NumberParseException e) {
-      Log.w(TAG, "Failed to format number.");
+      Log.w(TAG, "Failed to format number: " + e.toString());
       return StringUtil.isolateBidi(e164);
     }
   }
@@ -109,7 +106,7 @@ public class PhoneNumberFormatter {
   }
 
 
-  public String format(@Nullable String number) {
+  public @NonNull String format(@Nullable String number) {
     if (number == null)                       return "Unknown";
     if (GroupId.isEncodedGroup(number))       return number;
     if (ALPHA_PATTERN.matcher(number).find()) return number.trim();
@@ -130,6 +127,7 @@ public class PhoneNumberFormatter {
     }
 
     if (isShortCode(bareNumber, localCountryCode)) {
+      Log.i(TAG, "Recognized number as short code.");
       return bareNumber;
     }
 
@@ -137,30 +135,44 @@ public class PhoneNumberFormatter {
 
     try {
       Phonenumber.PhoneNumber parsedNumber = phoneNumberUtil.parse(processedNumber, localCountryCode);
-      return phoneNumberUtil.format(parsedNumber, PhoneNumberUtil.PhoneNumberFormat.E164);
+      String                  formatted    = phoneNumberUtil.format(parsedNumber, PhoneNumberUtil.PhoneNumberFormat.E164);
+
+      if (formatted.startsWith("+")) {
+        return formatted;
+      } else {
+        throw new NumberParseException(NumberParseException.ErrorType.NOT_A_NUMBER, "After formatting, the number did not start with +! hasRawInput: " + parsedNumber.hasRawInput());
+      }
     } catch (NumberParseException e) {
-      Log.w(TAG, e);
-      if (bareNumber.charAt(0) == '+')
+      Log.w(TAG, e.toString());
+      if (bareNumber.charAt(0) == '+') {
         return bareNumber;
+      }
 
-      String localNumberImprecise = localNumber.isPresent() ? localNumber.get().getE164Number() : "";
+      if (localNumber.isPresent()) {
+        String localNumberImprecise = localNumber.get().getE164Number();
 
-      if (localNumberImprecise.charAt(0) == '+')
-        localNumberImprecise = localNumberImprecise.substring(1);
+        if (localNumberImprecise.charAt(0) == '+') {
+          localNumberImprecise = localNumberImprecise.substring(1);
+        }
 
-      if (localNumberImprecise.length() == bareNumber.length() || bareNumber.length() > localNumberImprecise.length())
-        return "+" + number;
+        if (localNumberImprecise.length() == bareNumber.length() || bareNumber.length() > localNumberImprecise.length()) {
+          return "+" + number;
+        }
 
-      int difference = localNumberImprecise.length() - bareNumber.length();
+        int difference = localNumberImprecise.length() - bareNumber.length();
 
-      return "+" + localNumberImprecise.substring(0, difference) + bareNumber;
+        return "+" + localNumberImprecise.substring(0, difference) + bareNumber;
+      } else {
+        String countryCode = String.valueOf(phoneNumberUtil.getCountryCodeForRegion(localCountryCode));
+        return "+" + (bareNumber.startsWith(countryCode) ? bareNumber : countryCode + bareNumber);
+      }
     }
   }
 
   private boolean isShortCode(@NonNull String bareNumber, String localCountryCode) {
     try {
       Phonenumber.PhoneNumber parsedNumber = phoneNumberUtil.parse(bareNumber, localCountryCode);
-      return ShortNumberInfo.getInstance().isPossibleShortNumberForRegion(parsedNumber, localCountryCode);
+      return ShortNumberInfo.getInstance().isValidShortNumberForRegion(parsedNumber, localCountryCode);
     } catch (NumberParseException e) {
       return false;
     }
@@ -208,7 +220,7 @@ public class PhoneNumberFormatter {
     PhoneNumber(String e164Number, int countryCode, @Nullable String areaCode) {
       this.e164Number  = e164Number;
       this.countryCode = countryCode;
-      this.areaCode    = Optional.fromNullable(areaCode);
+      this.areaCode    = Optional.ofNullable(areaCode);
     }
 
     String getE164Number() {

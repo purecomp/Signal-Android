@@ -1,7 +1,6 @@
 package org.thoughtcrime.securesms.payments.preferences.transfer;
 
 import android.Manifest;
-import android.app.AlertDialog;
 import android.os.Bundle;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
@@ -15,6 +14,8 @@ import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.NavDirections;
 import androidx.navigation.Navigation;
 
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.LoggingFragment;
 import org.thoughtcrime.securesms.R;
@@ -22,6 +23,7 @@ import org.thoughtcrime.securesms.payments.MobileCoinPublicAddress;
 import org.thoughtcrime.securesms.payments.preferences.model.PayeeParcelable;
 import org.thoughtcrime.securesms.permissions.Permissions;
 import org.thoughtcrime.securesms.util.ViewUtil;
+import org.thoughtcrime.securesms.util.navigation.SafeNavigation;
 
 public final class PaymentsTransferFragment extends LoggingFragment {
 
@@ -66,7 +68,7 @@ public final class PaymentsTransferFragment extends LoggingFragment {
       MobileCoinPublicAddress publicAddress = MobileCoinPublicAddress.fromBase58(base58Address);
 
       if (ownAddress.equals(publicAddress)) {
-        new AlertDialog.Builder(requireContext())
+        new MaterialAlertDialogBuilder(requireContext())
                        .setTitle(R.string.PaymentsTransferFragment__invalid_address)
                        .setMessage(R.string.PaymentsTransferFragment__you_cant_transfer_to_your_own_signal_wallet_address)
                        .setPositiveButton(android.R.string.ok, null)
@@ -77,11 +79,11 @@ public final class PaymentsTransferFragment extends LoggingFragment {
       NavDirections action = PaymentsTransferFragmentDirections.actionPaymentsTransferToCreatePayment(new PayeeParcelable(publicAddress))
                                                                .setFinishOnConfirm(PaymentsTransferFragmentArgs.fromBundle(requireArguments()).getFinishOnConfirm());
 
-      Navigation.findNavController(requireView()).navigate(action);
+      SafeNavigation.safeNavigate(Navigation.findNavController(requireView()), action);
       return true;
     } catch (MobileCoinPublicAddress.AddressException e) {
       Log.w(TAG, "Address is not valid", e);
-      new AlertDialog.Builder(requireContext())
+      new MaterialAlertDialogBuilder(requireContext())
                      .setTitle(R.string.PaymentsTransferFragment__invalid_address)
                      .setMessage(R.string.PaymentsTransferFragment__check_the_wallet_address)
                      .setPositiveButton(android.R.string.ok, null)
@@ -91,22 +93,28 @@ public final class PaymentsTransferFragment extends LoggingFragment {
   }
 
   private void scanQrCode() {
-    Permissions.with(requireActivity())
+    Permissions.with(this)
                .request(Manifest.permission.CAMERA)
                .ifNecessary()
                .withRationaleDialog(getString(R.string.PaymentsTransferFragment__to_scan_a_qr_code_signal_needs), R.drawable.ic_camera_24)
                .onAnyPermanentlyDenied(this::onCameraPermissionPermanentlyDenied)
-               .onAllGranted(() -> Navigation.findNavController(requireView()).navigate(R.id.action_paymentsTransfer_to_paymentsScanQr))
+               .onAllGranted(() -> SafeNavigation.safeNavigate(Navigation.findNavController(requireView()), R.id.action_paymentsTransfer_to_paymentsScanQr))
                .onAnyDenied(() -> Toast.makeText(requireContext(), R.string.PaymentsTransferFragment__to_scan_a_qr_code_signal_needs_access_to_the_camera, Toast.LENGTH_LONG).show())
                .execute();
   }
 
   private void onCameraPermissionPermanentlyDenied() {
-    new AlertDialog.Builder(requireContext())
+    new MaterialAlertDialogBuilder(requireContext())
                    .setTitle(R.string.Permissions_permission_required)
                    .setMessage(R.string.PaymentsTransferFragment__signal_needs_the_camera_permission_to_capture_qr_code_go_to_settings)
                    .setPositiveButton(R.string.PaymentsTransferFragment__settings, (dialog, which) -> requireActivity().startActivity(Permissions.getApplicationSettingsIntent(requireContext())))
                    .setNegativeButton(android.R.string.cancel, null)
                    .show();
+  }
+
+  @Override
+  @SuppressWarnings("deprecation")
+  public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions, @NonNull int[] grantResults) {
+    Permissions.onRequestPermissionsResult(this, requestCode, permissions, grantResults);
   }
 }

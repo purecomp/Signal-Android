@@ -9,22 +9,26 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.appcompat.app.AlertDialog;
-import androidx.lifecycle.ViewModelProviders;
+import androidx.lifecycle.ViewModelProvider;
 
 import com.annimon.stream.Stream;
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
 
+import org.signal.core.util.concurrent.SimpleTask;
 import org.thoughtcrime.securesms.ContactSelectionActivity;
 import org.thoughtcrime.securesms.ContactSelectionListFragment;
 import org.thoughtcrime.securesms.R;
-import org.thoughtcrime.securesms.contacts.ContactsCursorLoader;
+import org.thoughtcrime.securesms.contacts.ContactSelectionDisplayMode;
 import org.thoughtcrime.securesms.groups.ui.addtogroup.AddToGroupViewModel.Event;
 import org.thoughtcrime.securesms.recipients.RecipientId;
-import org.whispersystems.libsignal.util.guava.Optional;
+import org.thoughtcrime.securesms.recipients.RecipientRepository;
+import org.thoughtcrime.securesms.util.views.SimpleProgressDialog;
 
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Consumer;
 
 /**
@@ -50,7 +54,7 @@ public final class AddToGroupsActivity extends ContactSelectionActivity {
     intent.putExtra(ContactSelectionActivity.EXTRA_LAYOUT_RES_ID, R.layout.add_to_group_activity);
     intent.putExtra(EXTRA_RECIPIENT_ID, recipientId);
 
-    intent.putExtra(ContactSelectionListFragment.DISPLAY_MODE, ContactsCursorLoader.DisplayMode.FLAG_ACTIVE_GROUPS);
+    intent.putExtra(ContactSelectionListFragment.DISPLAY_MODE, ContactSelectionDisplayMode.FLAG_ACTIVE_GROUPS | ContactSelectionDisplayMode.FLAG_GROUPS_AFTER_CONTACTS);
 
     intent.putParcelableArrayListExtra(ContactSelectionListFragment.CURRENT_SELECTION, new ArrayList<>(currentGroupsMemberOf));
 
@@ -73,8 +77,7 @@ public final class AddToGroupsActivity extends ContactSelectionActivity {
     next.setOnClickListener(v -> handleNextPressed());
 
     AddToGroupViewModel.Factory factory = new AddToGroupViewModel.Factory(getRecipientId());
-    viewModel = ViewModelProviders.of(this, factory)
-                                  .get(AddToGroupViewModel.class);
+    viewModel = new ViewModelProvider(this, factory).get(AddToGroupViewModel.class);
 
 
     viewModel.getEvents().observe(this, event -> {
@@ -84,12 +87,12 @@ public final class AddToGroupsActivity extends ContactSelectionActivity {
         Toast.makeText(this, ((Event.ToastEvent) event).getMessage(), Toast.LENGTH_SHORT).show();
       } else if (event instanceof Event.AddToSingleGroupConfirmationEvent) {
         Event.AddToSingleGroupConfirmationEvent addEvent = (Event.AddToSingleGroupConfirmationEvent) event;
-        new AlertDialog.Builder(this)
-                       .setTitle(addEvent.getTitle())
-                       .setMessage(addEvent.getMessage())
-                       .setPositiveButton(R.string.AddToGroupActivity_add, (dialog, which) -> viewModel.onAddToGroupsConfirmed(addEvent))
-                       .setNegativeButton(android.R.string.cancel, null)
-                       .show();
+        new MaterialAlertDialogBuilder(this)
+           .setTitle(addEvent.getTitle())
+           .setMessage(addEvent.getMessage())
+           .setPositiveButton(R.string.AddToGroupActivity_add, (dialog, which) -> viewModel.onAddToGroupsConfirmed(addEvent))
+           .setNegativeButton(android.R.string.cancel, null)
+           .show();
       } else if (event instanceof Event.LegacyGroupDenialEvent) {
         Toast.makeText(this, R.string.AddToGroupActivity_this_person_cant_be_added_to_legacy_groups, Toast.LENGTH_SHORT).show();
       } else {
@@ -113,7 +116,7 @@ public final class AddToGroupsActivity extends ContactSelectionActivity {
   }
 
   @Override
-  public void onBeforeContactSelected(Optional<RecipientId> recipientId, String number, Consumer<Boolean> callback) {
+  public void onBeforeContactSelected(boolean isFromUnknownSearchKey, @NonNull Optional<RecipientId> recipientId, String number, @NonNull Consumer<Boolean> callback) {
     if (contactsFragment.isMulti()) {
       throw new UnsupportedOperationException("Not yet built to handle multi-select.");
 //      if (contactsFragment.hasQueryFilter()) {
@@ -133,7 +136,7 @@ public final class AddToGroupsActivity extends ContactSelectionActivity {
   }
 
   @Override
-  public void onContactDeselected(Optional<RecipientId> recipientId, String number) {
+  public void onContactDeselected(@NonNull Optional<RecipientId> recipientId, String number) {
     if (contactsFragment.hasQueryFilter()) {
       getContactFilterView().clear();
     }

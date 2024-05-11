@@ -20,37 +20,71 @@ import android.content.Intent;
 import android.os.Bundle;
 import android.view.Menu;
 import android.view.MenuItem;
+import android.view.View;
+import android.view.ViewGroup;
 
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.annotation.StringRes;
 import androidx.appcompat.app.AlertDialog;
+import androidx.lifecycle.ViewModelProvider;
+import androidx.recyclerview.widget.RecyclerView;
 
+import com.google.android.material.dialog.MaterialAlertDialogBuilder;
+import com.google.android.material.snackbar.Snackbar;
+
+import org.signal.core.util.DimensionUnit;
+import org.signal.core.util.concurrent.LifecycleDisposable;
+import org.signal.core.util.concurrent.SimpleTask;
 import org.signal.core.util.logging.Log;
-import org.thoughtcrime.securesms.contacts.sync.DirectoryHelper;
+import org.thoughtcrime.securesms.components.menu.ActionItem;
+import org.thoughtcrime.securesms.components.menu.SignalContextMenu;
+import org.thoughtcrime.securesms.contacts.management.ContactsManagementRepository;
+import org.thoughtcrime.securesms.contacts.management.ContactsManagementViewModel;
+import org.thoughtcrime.securesms.contacts.paged.ContactSearchKey;
+import org.thoughtcrime.securesms.contacts.sync.ContactDiscovery;
 import org.thoughtcrime.securesms.conversation.ConversationIntents;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
 import org.thoughtcrime.securesms.groups.ui.creategroup.CreateGroupActivity;
-import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint;
+import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.recipients.RecipientId;
-import org.thoughtcrime.securesms.util.TextSecurePreferences;
-import org.thoughtcrime.securesms.util.concurrent.SimpleTask;
+import org.thoughtcrime.securesms.recipients.RecipientRepository;
+import org.thoughtcrime.securesms.recipients.ui.findby.FindByActivity;
+import org.thoughtcrime.securesms.recipients.ui.findby.FindByMode;
+import org.thoughtcrime.securesms.util.CommunicationActions;
 import org.thoughtcrime.securesms.util.views.SimpleProgressDialog;
-import org.whispersystems.libsignal.util.guava.Optional;
 
 import java.io.IOException;
+import java.util.List;
+import java.util.Objects;
+import java.util.Optional;
+import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
+
+import io.reactivex.rxjava3.disposables.Disposable;
 
 /**
  * Activity container for starting a new conversation.
  *
  * @author Moxie Marlinspike
- *
  */
 public class NewConversationActivity extends ContactSelectionActivity
-                                    implements ContactSelectionListFragment.ListCallback
+    implements ContactSelectionListFragment.NewConversationCallback, ContactSelectionListFragment.OnItemLongClickListener, ContactSelectionListFragment.FindByCallback
 {
 
   @SuppressWarnings("unused")
   private static final String TAG = Log.tag(NewConversationActivity.class);
+
+  private ContactsManagementViewModel        viewModel;
+  private ActivityResultLauncher<Intent>     contactLauncher;
+  private ActivityResultLauncher<Intent>     createGroupLauncher;
+  private ActivityResultLauncher<FindByMode> findByLauncher;
+
+  private final LifecycleDisposable disposables = new LifecycleDisposable();
 
   @Override
   public void onCreate(Bundle bundle, boolean ready) {
@@ -58,40 +92,65 @@ public class NewConversationActivity extends ContactSelectionActivity
     assert getSupportActionBar() != null;
     getSupportActionBar().setDisplayHomeAsUpEnabled(true);
     getSupportActionBar().setTitle(R.string.NewConversationActivity__new_message);
+
+    disposables.bindTo(this);
+
+    ContactsManagementRepository        repository = new ContactsManagementRepository(this);
+    ContactsManagementViewModel.Factory factory    = new ContactsManagementViewModel.Factory(repository);
+
+    contactLauncher = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), activityResult -> {
+      if (activityResult.getResultCode() != RESULT_CANCELED) {
+        handleManualRefresh();
+      }
+    });
+
+    findByLauncher = registerForActivityResult(new FindByActivity.Contract(), result -> {
+      if (result != null) {
+        launch(result);
+      }
+    });
+
+    createGroupLauncher = registerForActivityResult(new ActivityResultContracts.StartActivityForResult(), result -> {
+      if (result.getResultCode() == RESULT_OK) {
+        finish();
+      }
+    });
+
+    viewModel = new ViewModelProvider(this, factory).get(ContactsManagementViewModel.class);
   }
 
   @Override
-  public void onBeforeContactSelected(Optional<RecipientId> recipientId, String number, Consumer<Boolean> callback) {
+  public void onBeforeContactSelected(boolean isFromUnknownSearchKey, @NonNull Optional<RecipientId> recipientId, String number, @NonNull Consumer<Boolean> callback) {
     if (recipientId.isPresent()) {
       launch(Recipient.resolved(recipientId.get()));
     } else {
       Log.i(TAG, "[onContactSelected] Maybe creating a new recipient.");
 
-      if (TextSecurePreferences.isPushRegistered(this) && NetworkConstraint.isMet(this)) {
+      if (SignalStore.account().isRegistered()) {
         Log.i(TAG, "[onContactSelected] Doing contact refresh.");
 
         AlertDialog progress = SimpleProgressDialog.show(this);
 
-        SimpleTask.run(getLifecycle(), () -> {
-          Recipient resolved = Recipient.external(this, number);
-
-          if (!resolved.isRegistered() || !resolved.hasAci()) {
-            Log.i(TAG, "[onContactSelected] Not registered or no UUID. Doing a directory refresh.");
-            try {
-              DirectoryHelper.refreshDirectoryFor(this, resolved, false);
-              resolved = Recipient.resolved(resolved.getId());
-            } catch (IOException e) {
-              Log.w(TAG, "[onContactSelected] Failed to refresh directory for new contact.");
-            }
-          }
-
-          return resolved;
-        }, resolved -> {
+        SimpleTask.run(getLifecycle(), () -> RecipientRepository.lookupNewE164(this, number), result -> {
           progress.dismiss();
-          launch(resolved);
+
+          if (result instanceof RecipientRepository.LookupResult.Success) {
+            Recipient resolved = Recipient.resolved(((RecipientRepository.LookupResult.Success) result).getRecipientId());
+            if (resolved.isRegistered() && resolved.getHasServiceId()) {
+              launch(resolved);
+            }
+          } else if (result instanceof RecipientRepository.LookupResult.NotFound || result instanceof RecipientRepository.LookupResult.InvalidEntry) {
+            new MaterialAlertDialogBuilder(this)
+                .setMessage(getString(R.string.NewConversationActivity__s_is_not_a_signal_user, number))
+                .setPositiveButton(android.R.string.ok, null)
+                .show();
+          } else {
+            new MaterialAlertDialogBuilder(this)
+                .setMessage(R.string.NetworkFailure__network_error_check_your_connection_and_try_again)
+                .setPositiveButton(android.R.string.ok, null)
+                .show();
+          }
         });
-      } else {
-        launch(Recipient.external(this, number));
       }
     }
 
@@ -103,29 +162,46 @@ public class NewConversationActivity extends ContactSelectionActivity
   }
 
   private void launch(Recipient recipient) {
-    long   existingThread = DatabaseFactory.getThreadDatabase(this).getThreadIdIfExistsFor(recipient.getId());
-    Intent intent         = ConversationIntents.createBuilder(this, recipient.getId(), existingThread)
-                                               .withDraftText(getIntent().getStringExtra(Intent.EXTRA_TEXT))
-                                               .withDataUri(getIntent().getData())
-                                               .withDataType(getIntent().getType())
-                                               .build();
+    launch(recipient.getId());
+  }
 
-    startActivity(intent);
-    finish();
+
+  private void launch(RecipientId recipientId) {
+    Disposable disposable = ConversationIntents.createBuilder(this, recipientId, -1L)
+                                               .map(builder -> builder
+                                                   .withDraftText(getIntent().getStringExtra(Intent.EXTRA_TEXT))
+                                                   .withDataUri(getIntent().getData())
+                                                   .withDataType(getIntent().getType())
+                                                   .build())
+                                               .subscribe(intent -> {
+                                                 startActivity(intent);
+                                                 finish();
+                                               });
+
+    disposables.add(disposable);
   }
 
   @Override
   public boolean onOptionsItemSelected(MenuItem item) {
     super.onOptionsItemSelected(item);
 
-    switch (item.getItemId()) {
-    case android.R.id.home:   super.onBackPressed(); return true;
-    case R.id.menu_refresh:   handleManualRefresh(); return true;
-    case R.id.menu_new_group: handleCreateGroup();   return true;
-    case R.id.menu_invite:    handleInvite();        return true;
-    }
+    int itemId = item.getItemId();
 
-    return false;
+    if (itemId == android.R.id.home) {
+      super.onBackPressed();
+      return true;
+    } else if (itemId == R.id.menu_refresh) {
+      handleManualRefresh();
+      return true;
+    } else if (itemId == R.id.menu_new_group) {
+      handleCreateGroup();
+      return true;
+    } else if (itemId == R.id.menu_invite) {
+      handleInvite();
+      return true;
+    } else {
+      return false;
+    }
   }
 
   private void handleManualRefresh() {
@@ -134,7 +210,7 @@ public class NewConversationActivity extends ContactSelectionActivity
   }
 
   private void handleCreateGroup() {
-    startActivity(CreateGroupActivity.newIntent(this));
+    createGroupLauncher.launch(CreateGroupActivity.newIntent(this));
   }
 
   private void handleInvite() {
@@ -159,6 +235,159 @@ public class NewConversationActivity extends ContactSelectionActivity
   @Override
   public void onNewGroup(boolean forceV1) {
     handleCreateGroup();
-    finish();
+//    finish();
+  }
+
+  @Override
+  public void onFindByUsername() {
+    findByLauncher.launch(FindByMode.USERNAME);
+  }
+
+  @Override
+  public void onFindByPhoneNumber() {
+    findByLauncher.launch(FindByMode.PHONE_NUMBER);
+  }
+
+  @Override
+  public boolean onLongClick(View anchorView, ContactSearchKey contactSearchKey, RecyclerView recyclerView) {
+    RecipientId      recipientId = contactSearchKey.requireRecipientSearchKey().getRecipientId();
+    List<ActionItem> actions     = generateContextualActionsForRecipient(recipientId);
+    if (actions.isEmpty()) {
+      return false;
+    }
+
+    new SignalContextMenu.Builder(anchorView, (ViewGroup) anchorView.getRootView())
+        .preferredVerticalPosition(SignalContextMenu.VerticalPosition.BELOW)
+        .preferredHorizontalPosition(SignalContextMenu.HorizontalPosition.START)
+        .offsetX((int) DimensionUnit.DP.toPixels(12))
+        .offsetY((int) DimensionUnit.DP.toPixels(12))
+        .onDismiss(() -> recyclerView.suppressLayout(false))
+        .show(actions);
+
+    recyclerView.suppressLayout(true);
+
+    return true;
+  }
+
+  private @NonNull List<ActionItem> generateContextualActionsForRecipient(@NonNull RecipientId recipientId) {
+    Recipient recipient = Recipient.resolved(recipientId);
+
+    return Stream.of(
+        createMessageActionItem(recipient),
+        createAudioCallActionItem(recipient),
+        createVideoCallActionItem(recipient),
+        createRemoveActionItem(recipient),
+        createBlockActionItem(recipient)
+    ).filter(Objects::nonNull).collect(Collectors.toList());
+  }
+
+  private @NonNull ActionItem createMessageActionItem(@NonNull Recipient recipient) {
+    return new ActionItem(
+        R.drawable.ic_chat_message_24,
+        getString(R.string.NewConversationActivity__message),
+        R.color.signal_colorOnSurface,
+        () -> {
+          Disposable disposable = ConversationIntents.createBuilder(this, recipient.getId(), -1L)
+                                                     .subscribe(builder -> startActivity(builder.build()));
+
+          disposables.add(disposable);
+        }
+    );
+  }
+
+  private @Nullable ActionItem createAudioCallActionItem(@NonNull Recipient recipient) {
+    if (recipient.isSelf() || recipient.isGroup()) {
+      return null;
+    }
+
+    if (recipient.isRegistered()) {
+      return new ActionItem(
+          R.drawable.ic_phone_right_24,
+          getString(R.string.NewConversationActivity__audio_call),
+          R.color.signal_colorOnSurface,
+          () -> CommunicationActions.startVoiceCall(this, recipient)
+      );
+    } else {
+      return null;
+    }
+  }
+
+  private @Nullable ActionItem createVideoCallActionItem(@NonNull Recipient recipient) {
+    if (recipient.isSelf() || recipient.isMmsGroup() || !recipient.isRegistered()) {
+      return null;
+    }
+
+    return new ActionItem(
+        R.drawable.ic_video_call_24,
+        getString(R.string.NewConversationActivity__video_call),
+        R.color.signal_colorOnSurface,
+        () -> CommunicationActions.startVideoCall(this, recipient)
+    );
+  }
+
+  private @Nullable ActionItem createRemoveActionItem(@NonNull Recipient recipient) {
+    if (recipient.isSelf() || recipient.isGroup()) {
+      return null;
+    }
+
+    return new ActionItem(
+        R.drawable.ic_minus_circle_20, // TODO [alex] -- correct asset
+        getString(R.string.NewConversationActivity__remove),
+        R.color.signal_colorOnSurface,
+        () -> displayRemovalDialog(recipient)
+    );
+  }
+
+  @SuppressWarnings("CodeBlock2Expr")
+  private @Nullable ActionItem createBlockActionItem(@NonNull Recipient recipient) {
+    if (recipient.isSelf()) {
+      return null;
+    }
+
+    return new ActionItem(
+        R.drawable.ic_block_tinted_24,
+        getString(R.string.NewConversationActivity__block),
+        R.color.signal_colorError,
+        () -> BlockUnblockDialog.showBlockFor(this,
+                                              this.getLifecycle(),
+                                              recipient,
+                                              () -> {
+                                                disposables.add(viewModel.blockContact(recipient).subscribe(() -> {
+                                                  displaySnackbar(R.string.NewConversationActivity__s_has_been_blocked, recipient.getDisplayName(this));
+                                                  contactsFragment.reset();
+                                                }));
+                                              })
+    );
+  }
+
+  private void displayIsInSystemContactsDialog(@NonNull Recipient recipient) {
+    new MaterialAlertDialogBuilder(this)
+        .setTitle(getString(R.string.NewConversationActivity__unable_to_remove_s, recipient.getShortDisplayName(this)))
+        .setMessage(R.string.NewConversationActivity__this_person_is_saved_to_your)
+        .setPositiveButton(R.string.NewConversationActivity__view_contact,
+                           (dialog, which) -> contactLauncher.launch(new Intent(Intent.ACTION_VIEW, recipient.getContactUri()))
+        )
+        .setNegativeButton(android.R.string.cancel, null)
+        .show();
+  }
+
+  private void displayRemovalDialog(@NonNull Recipient recipient) {
+    new MaterialAlertDialogBuilder(this)
+        .setTitle(getString(R.string.NewConversationActivity__remove_s, recipient.getShortDisplayName(this)))
+        .setMessage(R.string.NewConversationActivity__you_wont_see_this_person)
+        .setPositiveButton(R.string.NewConversationActivity__remove,
+                           (dialog, which) -> {
+                             disposables.add(viewModel.hideContact(recipient).subscribe(() -> {
+                               onRefresh();
+                               displaySnackbar(R.string.NewConversationActivity__s_has_been_removed, recipient.getDisplayName(this));
+                             }));
+                           }
+        )
+        .setNegativeButton(android.R.string.cancel, null)
+        .show();
+  }
+
+  private void displaySnackbar(@StringRes int message, Object... formatArgs) {
+    Snackbar.make(findViewById(android.R.id.content), getString(message, formatArgs), Snackbar.LENGTH_SHORT).show();
   }
 }

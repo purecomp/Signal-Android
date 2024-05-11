@@ -30,18 +30,18 @@ class TextAvatarDrawable(
     setBounds(0, 0, size, size)
   }
 
+  @Suppress("DEPRECATION")
   override fun draw(canvas: Canvas) {
-    val textSize = Avatars.getTextSizeForLength(context, avatar.text, size * 0.8f, size * 0.45f)
     val width = bounds.width()
+    val textSize = Avatars.getTextSizeForLength(context, avatar.text, width * 0.8f, width * 0.45f)
     val candidates = EmojiProvider.getCandidates(avatar.text)
-    var hasEmoji = false
 
     textPaint.textSize = textSize
 
     val newText = if (candidates == null || candidates.size() == 0) {
       SpannableString(avatar.text)
     } else {
-      EmojiProvider.emojify(context, candidates, avatar.text, textPaint, synchronous)
+      EmojiProvider.emojify(context, candidates, avatar.text, textPaint, synchronous, true)
     }
 
     if (newText == null) return

@@ -13,21 +13,17 @@ import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
 import androidx.appcompat.widget.Toolbar;
 import androidx.fragment.app.Fragment;
-import androidx.lifecycle.ViewModelProviders;
+import androidx.lifecycle.ViewModelProvider;
 import androidx.navigation.Navigation;
-
-import com.dd.CircularProgressButton;
 
 import org.signal.core.util.EditTextUtil;
 import org.thoughtcrime.securesms.R;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.jobs.ProfileUploadJob;
 import org.thoughtcrime.securesms.profiles.ProfileName;
 import org.thoughtcrime.securesms.recipients.Recipient;
-import org.thoughtcrime.securesms.util.StringUtil;
-import org.thoughtcrime.securesms.util.concurrent.SimpleTask;
+import org.signal.core.util.StringUtil;
+import org.thoughtcrime.securesms.util.ViewUtil;
 import org.thoughtcrime.securesms.util.text.AfterTextChanged;
+import org.thoughtcrime.securesms.util.views.CircularProgressMaterialButton;
 
 /**
  * Simple fragment to edit your profile name.
@@ -36,10 +32,10 @@ public class EditProfileNameFragment extends Fragment {
 
   public static final int NAME_MAX_GLYPHS = 26;
 
-  private EditText                 givenName;
-  private EditText                 familyName;
-  private CircularProgressButton   saveButton;
-  private EditProfileNameViewModel viewModel;
+  private EditText                       givenName;
+  private EditText                       familyName;
+  private CircularProgressMaterialButton saveButton;
+  private EditProfileNameViewModel       viewModel;
 
   @Override
   public @NonNull View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container, @Nullable Bundle savedInstanceState) {
@@ -57,7 +53,7 @@ public class EditProfileNameFragment extends Fragment {
     this.givenName.setText(Recipient.self().getProfileName().getGivenName());
     this.familyName.setText(Recipient.self().getProfileName().getFamilyName());
 
-    viewModel.onGivenNameLengthChanged(this.givenName.getText().length());
+    viewModel.onGivenNameChanged(this.givenName.getText().toString());
 
     view.<Toolbar>findViewById(R.id.toolbar)
         .setNavigationOnClickListener(v -> Navigation.findNavController(view)
@@ -68,17 +64,19 @@ public class EditProfileNameFragment extends Fragment {
 
     this.givenName.addTextChangedListener(new AfterTextChanged(s -> {
       trimFieldToMaxByteLength(s);
-      viewModel.onGivenNameLengthChanged(s.length());
+      viewModel.onGivenNameChanged(s.toString());
     }));
     this.familyName.addTextChangedListener(new AfterTextChanged(EditProfileNameFragment::trimFieldToMaxByteLength));
 
     saveButton.setOnClickListener(v -> viewModel.onSaveClicked(requireContext(),
                                                                givenName.getText().toString(),
                                                                familyName.getText().toString()));
+
+    ViewUtil.focusAndMoveCursorToEndAndOpenKeyboard(this.givenName);
   }
 
   private void initializeViewModel() {
-    this.viewModel = ViewModelProviders.of(this).get(EditProfileNameViewModel.class);
+    this.viewModel = new ViewModelProvider(this).get(EditProfileNameViewModel.class);
 
     viewModel.getSaveState().observe(getViewLifecycleOwner(), this::presentSaveState);
     viewModel.getEvents().observe(getViewLifecycleOwner(), this::presentEvent);
@@ -94,16 +92,14 @@ public class EditProfileNameFragment extends Fragment {
         break;
       case IDLE:
         saveButton.setClickable(true);
-        saveButton.setIndeterminateProgressMode(false);
-        saveButton.setProgress(0);
+        saveButton.cancelSpinning();
         saveButton.setAlpha(1);
         setEditTextEnabled(givenName, true);
         setEditTextEnabled(familyName, true);
         break;
       case IN_PROGRESS:
         saveButton.setClickable(false);
-        saveButton.setIndeterminateProgressMode(true);
-        saveButton.setProgress(50);
+        saveButton.setSpinning();
         saveButton.setAlpha(1);
         setEditTextEnabled(givenName, false);
         setEditTextEnabled(familyName, false);

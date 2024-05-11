@@ -1,19 +1,19 @@
 package org.thoughtcrime.securesms.jobs;
 
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.crypto.UnidentifiedAccessUtil;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.StickerDatabase.StickerPackRecordReader;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.database.StickerTable.StickerPackRecordReader;
 import org.thoughtcrime.securesms.database.model.StickerPackRecord;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
-import org.thoughtcrime.securesms.jobmanager.Data;
 import org.thoughtcrime.securesms.jobmanager.Job;
 import org.thoughtcrime.securesms.jobmanager.impl.NetworkConstraint;
 import org.thoughtcrime.securesms.net.NotPushRegisteredException;
 import org.thoughtcrime.securesms.recipients.Recipient;
-import org.thoughtcrime.securesms.util.Hex;
+import org.signal.core.util.Hex;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
 import org.whispersystems.signalservice.api.SignalServiceMessageSender;
 import org.whispersystems.signalservice.api.messages.multidevice.SignalServiceSyncMessage;
@@ -47,8 +47,8 @@ public class MultiDeviceStickerPackSyncJob extends BaseJob {
   }
 
   @Override
-  public @NonNull Data serialize() {
-    return Data.EMPTY;
+  public @Nullable byte[] serialize() {
+    return null;
   }
 
   @Override
@@ -69,7 +69,7 @@ public class MultiDeviceStickerPackSyncJob extends BaseJob {
 
     List<StickerPackOperationMessage> operations = new LinkedList<>();
 
-    try (StickerPackRecordReader reader = new StickerPackRecordReader(DatabaseFactory.getStickerDatabase(context).getInstalledStickerPacks())) {
+    try (StickerPackRecordReader reader = new StickerPackRecordReader(SignalDatabase.stickers().getInstalledStickerPacks())) {
       StickerPackRecord pack;
       while ((pack = reader.getNext()) != null) {
         byte[] packIdBytes  = Hex.fromStringCondensed(pack.getPackId());
@@ -99,7 +99,7 @@ public class MultiDeviceStickerPackSyncJob extends BaseJob {
 
     @Override
     public @NonNull
-    MultiDeviceStickerPackSyncJob create(@NonNull Parameters parameters, @NonNull Data data) {
+    MultiDeviceStickerPackSyncJob create(@NonNull Parameters parameters, @Nullable byte[] serializedData) {
       return new MultiDeviceStickerPackSyncJob(parameters);
     }
   }

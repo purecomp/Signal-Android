@@ -1,12 +1,20 @@
 package org.thoughtcrime.securesms.util;
 
+import android.database.sqlite.SQLiteDatabaseCorruptException;
+
 import androidx.annotation.NonNull;
 
+import org.signal.core.util.ExceptionUtil;
 import org.signal.core.util.logging.Log;
+import org.thoughtcrime.securesms.database.LogDatabase;
+import org.thoughtcrime.securesms.database.SearchTable;
+import org.thoughtcrime.securesms.database.SignalDatabase;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
 
-import java.util.concurrent.TimeUnit;
+import java.io.IOException;
+
+import javax.net.ssl.SSLException;
 
 import io.reactivex.rxjava3.exceptions.OnErrorNotImplementedException;
 
@@ -22,14 +30,39 @@ public class SignalUncaughtExceptionHandler implements Thread.UncaughtExceptionH
 
   @Override
   public void uncaughtException(@NonNull Thread t, @NonNull Throwable e) {
-    if (e instanceof OnErrorNotImplementedException) {
+    // Seeing weird situations where SSLExceptions aren't being caught as IOExceptions
+    if (e instanceof SSLException) {
+      if (e instanceof IOException) {
+        Log.w(TAG, "Uncaught SSLException! It *is* an IOException!", e);
+      } else {
+        Log.w(TAG, "Uncaught SSLException! It is *not* an IOException!", e);
+      }
+      return;
+    }
+
+    if (e instanceof SQLiteDatabaseCorruptException) {
+      if (e.getMessage().indexOf("message_fts") >= 0) {
+        Log.w(TAG, "FTS corrupted! Resetting FTS index.");
+        SignalDatabase.messageSearch().fullyResetTables();
+      } else {
+        Log.w(TAG, "Some non-FTS related corruption?");
+      }
+    }
+
+    if (e instanceof OnErrorNotImplementedException && e.getCause() != null) {
       e = e.getCause();
     }
 
+    String exceptionName = e.getClass().getCanonicalName();
+    if (exceptionName == null) {
+      exceptionName = e.getClass().getName();
+    }
+
     Log.e(TAG, "", e, true);
+    LogDatabase.getInstance(ApplicationDependencies.getApplication()).crashes().saveCrash(System.currentTimeMillis(), exceptionName, e.getMessage(), ExceptionUtil.convertThrowableToString(e));
     SignalStore.blockUntilAllWritesFinished();
     Log.blockUntilAllWritesFinished();
     ApplicationDependencies.getJobManager().flush();
-    originalHandler.uncaughtException(t, e);
+    originalHandler.uncaughtException(t, ExceptionUtil.joinStackTraceAndMessage(e));
   }
 }

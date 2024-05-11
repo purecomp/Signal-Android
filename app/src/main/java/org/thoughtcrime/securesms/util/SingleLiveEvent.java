@@ -36,7 +36,10 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * explicit call to setValue() or call().
  * <p>
  * Note that only one observer is going to be notified of changes.
+ *
+ * @deprecated Use a PublishSubject or PublishProcessor instead.
  */
+@Deprecated
 public class SingleLiveEvent<T> extends MutableLiveData<T> {
 
   private static final String TAG = Log.tag(SingleLiveEvent.class);

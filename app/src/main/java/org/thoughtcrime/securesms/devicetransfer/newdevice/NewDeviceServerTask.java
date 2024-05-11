@@ -12,11 +12,12 @@ import org.greenrobot.eventbus.ThreadMode;
 import org.signal.core.util.logging.Log;
 import org.signal.devicetransfer.ServerTask;
 import org.thoughtcrime.securesms.AppInitialization;
+import org.thoughtcrime.securesms.backup.BackupEvent;
 import org.thoughtcrime.securesms.backup.BackupPassphrase;
-import org.thoughtcrime.securesms.backup.FullBackupBase;
 import org.thoughtcrime.securesms.backup.FullBackupImporter;
 import org.thoughtcrime.securesms.crypto.AttachmentSecretProvider;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.jobmanager.impl.DataRestoreConstraint;
 import org.thoughtcrime.securesms.notifications.NotificationChannels;
 
 import java.io.IOException;
@@ -38,7 +39,8 @@ final class NewDeviceServerTask implements ServerTask {
 
     EventBus.getDefault().register(this);
     try {
-      SQLiteDatabase database = DatabaseFactory.getBackupDatabase(context);
+      DataRestoreConstraint.setRestoringData(true);
+      SQLiteDatabase database = SignalDatabase.getBackupDatabase();
 
       String passphrase = "deadbeef";
 
@@ -49,8 +51,8 @@ final class NewDeviceServerTask implements ServerTask {
                                     inputStream,
                                     passphrase);
 
-      DatabaseFactory.upgradeRestored(context, database);
-      NotificationChannels.restoreContactNotificationChannels(context);
+      SignalDatabase.runPostBackupRestoreTasks(database);
+      NotificationChannels.getInstance().restoreContactNotificationChannels();
 
       AppInitialization.onPostBackupRestore(context);
 
@@ -58,11 +60,15 @@ final class NewDeviceServerTask implements ServerTask {
     } catch (FullBackupImporter.DatabaseDowngradeException e) {
       Log.w(TAG, "Failed due to the backup being from a newer version of Signal.", e);
       EventBus.getDefault().post(new Status(0, Status.State.FAILURE_VERSION_DOWNGRADE));
+    } catch (FullBackupImporter.ForeignKeyViolationException e) {
+      Log.w(TAG, "Failed due to foreign key constraint violations.", e);
+      EventBus.getDefault().post(new Status(0, Status.State.FAILURE_FOREIGN_KEY));
     } catch (IOException e) {
       Log.w(TAG, e);
       EventBus.getDefault().post(new Status(0, Status.State.FAILURE_UNKNOWN));
     } finally {
       EventBus.getDefault().unregister(this);
+      DataRestoreConstraint.setRestoringData(false);
     }
 
     long end = System.currentTimeMillis();
@@ -70,10 +76,10 @@ final class NewDeviceServerTask implements ServerTask {
   }
 
   @Subscribe(threadMode = ThreadMode.POSTING)
-  public void onEvent(FullBackupBase.BackupEvent event) {
-    if (event.getType() == FullBackupBase.BackupEvent.Type.PROGRESS) {
+  public void onEvent(BackupEvent event) {
+    if (event.getType() == BackupEvent.Type.PROGRESS) {
       EventBus.getDefault().post(new Status(event.getCount(), Status.State.IN_PROGRESS));
-    } else if (event.getType() == FullBackupBase.BackupEvent.Type.FINISHED) {
+    } else if (event.getType() == BackupEvent.Type.FINISHED) {
       EventBus.getDefault().post(new Status(event.getCount(), Status.State.SUCCESS));
     }
   }
@@ -99,6 +105,7 @@ final class NewDeviceServerTask implements ServerTask {
       IN_PROGRESS,
       SUCCESS,
       FAILURE_VERSION_DOWNGRADE,
+      FAILURE_FOREIGN_KEY,
       FAILURE_UNKNOWN
     }
   }

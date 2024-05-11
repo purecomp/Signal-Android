@@ -15,22 +15,22 @@ import androidx.fragment.app.FragmentManager;
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment;
 
 import org.thoughtcrime.securesms.R;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
-import org.thoughtcrime.securesms.database.GroupDatabase;
+import org.thoughtcrime.securesms.database.SignalDatabase;
+import org.thoughtcrime.securesms.database.model.GroupRecord;
 import org.thoughtcrime.securesms.groups.GroupId;
 import org.thoughtcrime.securesms.groups.ParcelableGroupId;
 import org.thoughtcrime.securesms.groups.ui.GroupMemberListView;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.util.BottomSheetUtil;
 import org.thoughtcrime.securesms.util.CommunicationActions;
-import org.thoughtcrime.securesms.util.LifecycleDisposable;
+import org.signal.core.util.concurrent.LifecycleDisposable;
+import org.thoughtcrime.securesms.util.WindowUtil;
 
 import java.util.Collections;
 import java.util.List;
 
 import io.reactivex.rxjava3.android.schedulers.AndroidSchedulers;
 import io.reactivex.rxjava3.core.Single;
-import io.reactivex.rxjava3.disposables.Disposable;
 import io.reactivex.rxjava3.schedulers.Schedulers;
 
 /**
@@ -68,6 +68,7 @@ public final class ShowAdminsBottomSheetDialog extends BottomSheetDialogFragment
     disposables.bindTo(getViewLifecycleOwner().getLifecycle());
 
     GroupMemberListView list = view.findViewById(R.id.show_admin_list);
+    list.initializeAdapter(getViewLifecycleOwner());
     list.setDisplayOnlyMembers(Collections.emptyList());
 
     list.setRecipientClickListener(recipient -> {
@@ -82,6 +83,12 @@ public final class ShowAdminsBottomSheetDialog extends BottomSheetDialogFragment
   }
 
   @Override
+  public void onResume() {
+    super.onResume();
+    WindowUtil.initializeScreenshotSecurity(requireContext(), requireDialog().getWindow());
+  }
+
+  @Override
   public void show(@NonNull FragmentManager manager, @Nullable String tag) {
     BottomSheetUtil.show(manager, tag, this);
   }
@@ -92,9 +99,9 @@ public final class ShowAdminsBottomSheetDialog extends BottomSheetDialogFragment
 
   @WorkerThread
   private static @NonNull List<Recipient> getAdmins(@NonNull Context context, @NonNull GroupId groupId) {
-    return DatabaseFactory.getGroupDatabase(context)
-                          .getGroup(groupId)
-                          .transform(GroupDatabase.GroupRecord::getAdmins)
-                          .or(Collections.emptyList());
+    return SignalDatabase.groups()
+                         .getGroup(groupId)
+                         .map(GroupRecord::getAdmins)
+                         .orElse(Collections.emptyList());
   }
 }

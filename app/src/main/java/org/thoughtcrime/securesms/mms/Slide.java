@@ -29,26 +29,24 @@ import org.thoughtcrime.securesms.attachments.Attachment;
 import org.thoughtcrime.securesms.attachments.UriAttachment;
 import org.thoughtcrime.securesms.audio.AudioHash;
 import org.thoughtcrime.securesms.blurhash.BlurHash;
-import org.thoughtcrime.securesms.database.AttachmentDatabase;
+import org.thoughtcrime.securesms.database.AttachmentTable;
 import org.thoughtcrime.securesms.stickers.StickerLocator;
 import org.thoughtcrime.securesms.util.MediaUtil;
 import org.thoughtcrime.securesms.util.Util;
-import org.whispersystems.libsignal.util.guava.Optional;
 
 import java.security.SecureRandom;
+import java.util.Optional;
 
 public abstract class Slide {
 
   protected final Attachment attachment;
-  protected final Context    context;
 
-  public Slide(@NonNull Context context, @NonNull Attachment attachment) {
-    this.context    = context;
+  public Slide(@NonNull Attachment attachment) {
     this.attachment = attachment;
   }
 
   public String getContentType() {
-    return attachment.getContentType();
+    return attachment.contentType;
   }
 
   @Nullable
@@ -66,26 +64,26 @@ public abstract class Slide {
 
   @NonNull
   public Optional<String> getBody() {
-    return Optional.absent();
+    return Optional.empty();
   }
 
   @NonNull
   public Optional<String> getCaption() {
-    return Optional.fromNullable(attachment.getCaption());
+    return Optional.ofNullable(attachment.caption);
   }
 
   @NonNull
   public Optional<String> getFileName() {
-    return Optional.fromNullable(attachment.getFileName());
+    return Optional.ofNullable(attachment.fileName);
   }
 
   @Nullable
   public String getFastPreflightId() {
-    return attachment.getFastPreflightId();
+    return attachment.fastPreflightId;
   }
 
   public long getFileSize() {
-    return attachment.getSize();
+    return attachment.size;
   }
 
   public boolean hasImage() {
@@ -119,10 +117,10 @@ public abstract class Slide {
   }
 
   public boolean isVideoGif() {
-    return hasVideo() && attachment.isVideoGif();
+    return hasVideo() && attachment.videoGif;
   }
 
-  public @NonNull String getContentDescription() { return ""; }
+  public @NonNull String getContentDescription(@NonNull Context context) { return ""; }
 
   public @NonNull Attachment asAttachment() {
     return attachment;
@@ -133,12 +131,12 @@ public abstract class Slide {
   }
 
   public boolean isPendingDownload() {
-    return getTransferState() == AttachmentDatabase.TRANSFER_PROGRESS_FAILED ||
-           getTransferState() == AttachmentDatabase.TRANSFER_PROGRESS_PENDING;
+    return getTransferState() == AttachmentTable.TRANSFER_PROGRESS_FAILED ||
+           getTransferState() == AttachmentTable.TRANSFER_PROGRESS_PENDING;
   }
 
   public int getTransferState() {
-    return attachment.getTransferState();
+    return attachment.transferState;
   }
 
   public @DrawableRes int getPlaceholderRes(Theme theme) {
@@ -146,7 +144,7 @@ public abstract class Slide {
   }
 
   public @Nullable BlurHash getPlaceholderBlur() {
-    return attachment.getBlurHash();
+    return attachment.blurHash;
   }
 
   public boolean hasPlaceholder() {
@@ -193,13 +191,13 @@ public abstract class Slide {
                                                                    boolean        borderless,
                                                                    boolean        gif,
                                                                    boolean        quote,
-                                                         @Nullable AttachmentDatabase.TransformProperties transformProperties)
+                                                         @Nullable AttachmentTable.TransformProperties transformProperties)
   {
-    String                 resolvedType    = Optional.fromNullable(MediaUtil.getMimeType(context, uri)).or(defaultMime);
+    String                 resolvedType    = Optional.ofNullable(MediaUtil.getMimeType(context, uri)).orElse(defaultMime);
     String                 fastPreflightId = String.valueOf(new SecureRandom().nextLong());
     return new UriAttachment(uri,
                              resolvedType,
-                             AttachmentDatabase.TRANSFER_PROGRESS_STARTED,
+                             AttachmentTable.TRANSFER_PROGRESS_STARTED,
                              size,
                              width,
                              height,
@@ -226,7 +224,7 @@ public abstract class Slide {
       }
     }
 
-    return Optional.fromNullable(MediaUtil.getExtension(context, getUri()));
+    return Optional.ofNullable(MediaUtil.getExtension(context, getUri()));
   }
 
   private static @NonNull String getFileType(Optional<String> fileName) {

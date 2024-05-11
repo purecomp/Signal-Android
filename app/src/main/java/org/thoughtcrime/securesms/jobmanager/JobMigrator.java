@@ -46,7 +46,7 @@ public class JobMigrator {
   /**
    * @return The version that has been migrated to.
    */
-  int migrate(@NonNull JobStorage jobStorage, @NonNull Data.Serializer dataSerializer) {
+  int migrate(@NonNull JobStorage jobStorage) {
     List<JobSpec> jobSpecs = jobStorage.getAllJobSpecs();
 
     for (int i = lastSeenVersion; i < currentVersion; i++) {
@@ -58,22 +58,23 @@ public class JobMigrator {
       assert migration != null;
 
       while (iter.hasNext()) {
-        JobSpec jobSpec         = iter.next();
-        Data    data            = dataSerializer.deserialize(jobSpec.getSerializedData());
-        JobData originalJobData = new JobData(jobSpec.getFactoryKey(), jobSpec.getQueueKey(), data);
-        JobData updatedJobData  = migration.migrate(originalJobData);
-        JobSpec updatedJobSpec  = new JobSpec(jobSpec.getId(),
-                                              updatedJobData.getFactoryKey(),
-                                              updatedJobData.getQueueKey(),
-                                              jobSpec.getCreateTime(),
-                                              jobSpec.getNextRunAttemptTime(),
-                                              jobSpec.getRunAttempt(),
-                                              jobSpec.getMaxAttempts(),
-                                              jobSpec.getLifespan(),
-                                              dataSerializer.serialize(updatedJobData.getData()),
-                                              jobSpec.getSerializedInputData(),
-                                              jobSpec.isRunning(),
-                                              jobSpec.isMemoryOnly());
+        JobSpec     jobSpec         = iter.next();
+        JobData     originalJobData = new JobData(jobSpec.getFactoryKey(), jobSpec.getQueueKey(), jobSpec.getMaxAttempts(), jobSpec.getLifespan(), jobSpec.getSerializedData());
+        JobData     updatedJobData  = migration.migrate(originalJobData);
+        JobSpec     updatedJobSpec  = new JobSpec(jobSpec.getId(),
+                                                  updatedJobData.getFactoryKey(),
+                                                  updatedJobData.getQueueKey(),
+                                                  jobSpec.getCreateTime(),
+                                                  jobSpec.getLastRunAttemptTime(),
+                                                  jobSpec.getNextBackoffInterval(),
+                                                  jobSpec.getRunAttempt(),
+                                                  updatedJobData.getMaxAttempts(),
+                                                  updatedJobData.getLifespan(),
+                                                  updatedJobData.getData(),
+                                                  jobSpec.getSerializedInputData(),
+                                                  jobSpec.isRunning(),
+                                                  jobSpec.isMemoryOnly(),
+                                                  jobSpec.getPriority());
 
         iter.set(updatedJobSpec);
       }

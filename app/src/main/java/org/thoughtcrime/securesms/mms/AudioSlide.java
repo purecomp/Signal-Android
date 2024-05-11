@@ -27,48 +27,45 @@ import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.attachments.Attachment;
 import org.thoughtcrime.securesms.attachments.UriAttachment;
 import org.thoughtcrime.securesms.components.voice.VoiceNoteDraft;
-import org.thoughtcrime.securesms.database.AttachmentDatabase;
-import org.thoughtcrime.securesms.database.DraftDatabase;
-import org.thoughtcrime.securesms.providers.BlobProvider;
+import org.thoughtcrime.securesms.database.AttachmentTable;
+import org.thoughtcrime.securesms.database.DraftTable;
 import org.thoughtcrime.securesms.util.MediaUtil;
-
-import java.util.Objects;
 
 
 public class AudioSlide extends Slide {
 
-  public static @NonNull AudioSlide createFromVoiceNoteDraft(@NonNull Context context, @NonNull DraftDatabase.Draft draft) {
+  public static @NonNull AudioSlide createFromVoiceNoteDraft(@NonNull DraftTable.Draft draft) {
     VoiceNoteDraft voiceNoteDraft = VoiceNoteDraft.fromDraft(draft);
 
-    return new AudioSlide(context, new UriAttachment(voiceNoteDraft.getUri(),
-                                                     MediaUtil.AUDIO_AAC,
-                                                     AttachmentDatabase.TRANSFER_PROGRESS_DONE,
-                                                     voiceNoteDraft.getSize(),
-                                                     0,
-                                                     0,
-                                                     null,
-                                                     null,
-                                                     true,
-                                                     false,
-                                                     false,
-                                                     false,
-                                                     null,
-                                                     null,
-                                                     null,
-                                                     null,
-                                                     null));
+    return new AudioSlide(new UriAttachment(voiceNoteDraft.getUri(),
+                                            MediaUtil.AUDIO_AAC,
+                                            AttachmentTable.TRANSFER_PROGRESS_DONE,
+                                            voiceNoteDraft.getSize(),
+                                            0,
+                                            0,
+                                            null,
+                                            null,
+                                            true,
+                                            false,
+                                            false,
+                                            false,
+                                            null,
+                                            null,
+                                            null,
+                                            null,
+                                            null));
   }
 
   public AudioSlide(Context context, Uri uri, long dataSize, boolean voiceNote) {
-    super(context, constructAttachmentFromUri(context, uri, MediaUtil.AUDIO_UNSPECIFIED, dataSize, 0, 0, false, null, null, null, null, null, voiceNote, false, false, false));
+    super(constructAttachmentFromUri(context, uri, MediaUtil.AUDIO_UNSPECIFIED, dataSize, 0, 0, false, null, null, null, null, null, voiceNote, false, false, false));
   }
 
-  public AudioSlide(Context context, Uri uri, long dataSize, String contentType, boolean voiceNote) {
-    super(context,  new UriAttachment(uri, contentType, AttachmentDatabase.TRANSFER_PROGRESS_STARTED, dataSize, 0, 0, null, null, voiceNote, false, false, false, null, null, null, null, null));
+  public AudioSlide(Uri uri, long dataSize, String contentType, boolean voiceNote) {
+    super(new UriAttachment(uri, contentType, AttachmentTable.TRANSFER_PROGRESS_STARTED, dataSize, 0, 0, null, null, voiceNote, false, false, false, null, null, null, null, null));
   }
 
-  public AudioSlide(Context context, Attachment attachment) {
-    super(context, attachment);
+  public AudioSlide(Attachment attachment) {
+    super(attachment);
   }
 
   @Override
@@ -88,12 +85,12 @@ public class AudioSlide extends Slide {
 
   @NonNull
   @Override
-  public String getContentDescription() {
+  public String getContentDescription(Context context) {
     return context.getString(R.string.Slide_audio);
   }
 
   @Override
   public @DrawableRes int getPlaceholderRes(Theme theme) {
-    return R.drawable.ic_audio;
+    return R.drawable.symbol_speaker_fill_24;
   }
 }

@@ -17,60 +17,82 @@
 package org.thoughtcrime.securesms;
 
 import android.content.Context;
-import android.os.Build;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.VisibleForTesting;
 import androidx.annotation.WorkerThread;
-import androidx.appcompat.app.AppCompatDelegate;
 import androidx.multidex.MultiDexApplication;
 
+import com.bumptech.glide.Glide;
 import com.google.android.gms.security.ProviderInstaller;
 
-import org.conscrypt.Conscrypt;
+import org.conscrypt.ConscryptSignal;
 import org.greenrobot.eventbus.EventBus;
 import org.signal.aesgcmprovider.AesGcmProvider;
+import org.signal.core.util.MemoryTracker;
+import org.signal.core.util.concurrent.AnrDetector;
 import org.signal.core.util.concurrent.SignalExecutors;
 import org.signal.core.util.logging.AndroidLogger;
 import org.signal.core.util.logging.Log;
+import org.signal.core.util.logging.Scrubber;
 import org.signal.core.util.tracing.Tracer;
 import org.signal.glide.SignalGlideCodecs;
+import org.signal.libsignal.protocol.logging.SignalProtocolLoggerProvider;
 import org.signal.ringrtc.CallManager;
+import org.thoughtcrime.securesms.apkupdate.ApkUpdateRefreshListener;
 import org.thoughtcrime.securesms.avatar.AvatarPickerStorage;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
+import org.thoughtcrime.securesms.crypto.AttachmentSecretProvider;
+import org.thoughtcrime.securesms.crypto.DatabaseSecretProvider;
 import org.thoughtcrime.securesms.database.LogDatabase;
+import org.thoughtcrime.securesms.database.SignalDatabase;
 import org.thoughtcrime.securesms.database.SqlCipherLibraryLoader;
-import org.thoughtcrime.securesms.database.helpers.SQLCipherOpenHelper;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencyProvider;
 import org.thoughtcrime.securesms.emoji.EmojiSource;
-import org.thoughtcrime.securesms.gcm.FcmJobService;
-import org.thoughtcrime.securesms.jobs.CreateSignedPreKeyJob;
+import org.thoughtcrime.securesms.emoji.JumboEmoji;
+import org.thoughtcrime.securesms.gcm.FcmFetchManager;
+import org.thoughtcrime.securesms.jobs.AccountConsistencyWorkerJob;
+import org.thoughtcrime.securesms.jobs.CheckServiceReachabilityJob;
 import org.thoughtcrime.securesms.jobs.DownloadLatestEmojiDataJob;
 import org.thoughtcrime.securesms.jobs.EmojiSearchIndexDownloadJob;
+import org.thoughtcrime.securesms.jobs.ExternalLaunchDonationJob;
 import org.thoughtcrime.securesms.jobs.FcmRefreshJob;
-import org.thoughtcrime.securesms.jobs.GroupV1MigrationJob;
+import org.thoughtcrime.securesms.jobs.FontDownloaderJob;
+import org.thoughtcrime.securesms.jobs.GroupRingCleanupJob;
+import org.thoughtcrime.securesms.jobs.GroupV2UpdateSelfProfileKeyJob;
+import org.thoughtcrime.securesms.jobs.LinkedDeviceInactiveCheckJob;
 import org.thoughtcrime.securesms.jobs.MultiDeviceContactUpdateJob;
-import org.thoughtcrime.securesms.jobs.PushNotificationReceiveJob;
-import org.thoughtcrime.securesms.jobs.RefreshPreKeysJob;
+import org.thoughtcrime.securesms.jobs.PnpInitializeDevicesJob;
+import org.thoughtcrime.securesms.jobs.PreKeysSyncJob;
+import org.thoughtcrime.securesms.jobs.ProfileUploadJob;
+import org.thoughtcrime.securesms.jobs.RefreshSvrCredentialsJob;
 import org.thoughtcrime.securesms.jobs.RetrieveProfileJob;
+import org.thoughtcrime.securesms.jobs.RetrieveRemoteAnnouncementsJob;
+import org.thoughtcrime.securesms.jobs.StoryOnboardingDownloadJob;
 import org.thoughtcrime.securesms.jobs.SubscriptionKeepAliveJob;
+import org.thoughtcrime.securesms.keyvalue.KeepMessagesDuration;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.logging.CustomSignalProtocolLogger;
 import org.thoughtcrime.securesms.logging.PersistentLogger;
-import org.thoughtcrime.securesms.messageprocessingalarm.MessageProcessReceiver;
+import org.thoughtcrime.securesms.messageprocessingalarm.RoutineMessageFetchReceiver;
 import org.thoughtcrime.securesms.migrations.ApplicationMigrations;
-import org.thoughtcrime.securesms.notifications.NotificationChannels;
+import org.thoughtcrime.securesms.mms.SignalGlideComponents;
+import org.thoughtcrime.securesms.mms.SignalGlideModule;
 import org.thoughtcrime.securesms.providers.BlobProvider;
 import org.thoughtcrime.securesms.ratelimit.RateLimitUtil;
+import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.registration.RegistrationUtil;
 import org.thoughtcrime.securesms.ringrtc.RingRtcLogger;
+import org.thoughtcrime.securesms.service.AnalyzeDatabaseAlarmListener;
 import org.thoughtcrime.securesms.service.DirectoryRefreshListener;
 import org.thoughtcrime.securesms.service.KeyCachingService;
 import org.thoughtcrime.securesms.service.LocalBackupListener;
+import org.thoughtcrime.securesms.service.MessageBackupListener;
 import org.thoughtcrime.securesms.service.RotateSenderCertificateListener;
 import org.thoughtcrime.securesms.service.RotateSignedPreKeyListener;
-import org.thoughtcrime.securesms.service.UpdateApkRefreshListener;
+import org.thoughtcrime.securesms.service.webrtc.ActiveCallManager;
+import org.thoughtcrime.securesms.service.webrtc.AndroidTelecomUtil;
 import org.thoughtcrime.securesms.storage.StorageSyncHelper;
 import org.thoughtcrime.securesms.util.AppForegroundObserver;
 import org.thoughtcrime.securesms.util.AppStartup;
@@ -82,13 +104,20 @@ import org.thoughtcrime.securesms.util.TextSecurePreferences;
 import org.thoughtcrime.securesms.util.Util;
 import org.thoughtcrime.securesms.util.VersionTracker;
 import org.thoughtcrime.securesms.util.dynamiclanguage.DynamicLanguageContextWrapper;
-import org.whispersystems.libsignal.logging.SignalProtocolLoggerProvider;
 
+import java.net.SocketException;
+import java.net.SocketTimeoutException;
 import java.security.Security;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
+import io.reactivex.rxjava3.exceptions.OnErrorNotImplementedException;
+import io.reactivex.rxjava3.exceptions.UndeliverableException;
 import io.reactivex.rxjava3.plugins.RxJavaPlugins;
 import io.reactivex.rxjava3.schedulers.Schedulers;
+import kotlin.Unit;
+import rxdogtag2.RxDogTag;
 
 /**
  * Will be called once when the TextSecure process is created.
@@ -101,8 +130,6 @@ import io.reactivex.rxjava3.schedulers.Schedulers;
 public class ApplicationContext extends MultiDexApplication implements AppForegroundObserver.Listener {
 
   private static final String TAG = Log.tag(ApplicationContext.class);
-
-  private PersistentLogger persistentLogger;
 
   public static ApplicationContext getInstance(Context context) {
     return (ApplicationContext)context.getApplicationContext();
@@ -122,61 +149,78 @@ public class ApplicationContext extends MultiDexApplication implements AppForegr
 
     super.onCreate();
 
-    AppStartup.getInstance().addBlocking("security-provider", this::initializeSecurityProvider)
-                            .addBlocking("sqlcipher-init", () -> SqlCipherLibraryLoader.load())
+    AppStartup.getInstance().addBlocking("sqlcipher-init", () -> {
+                              SqlCipherLibraryLoader.load();
+                              SignalDatabase.init(this,
+                                                  DatabaseSecretProvider.getOrCreateDatabaseSecret(this),
+                                                  AttachmentSecretProvider.getInstance(this).getOrCreateAttachmentSecret());
+                            })
                             .addBlocking("logging", () -> {
                               initializeLogging();
                               Log.i(TAG, "onCreate()");
                             })
+                            .addBlocking("anr-detector", this::startAnrDetector)
+                            .addBlocking("security-provider", this::initializeSecurityProvider)
                             .addBlocking("crash-handling", this::initializeCrashHandling)
-                            .addBlocking("rx-init", () -> {
-                              RxJavaPlugins.setInitIoSchedulerHandler(schedulerSupplier -> Schedulers.from(SignalExecutors.BOUNDED_IO, true, false));
-                              RxJavaPlugins.setInitComputationSchedulerHandler(schedulerSupplier -> Schedulers.from(SignalExecutors.BOUNDED, true, false));
-                            })
+                            .addBlocking("rx-init", this::initializeRx)
                             .addBlocking("event-bus", () -> EventBus.builder().logNoSubscriberMessages(false).installDefaultEventBus())
                             .addBlocking("app-dependencies", this::initializeAppDependencies)
-                            .addBlocking("notification-channels", () -> NotificationChannels.create(this))
+                            .addBlocking("scrubber", () -> Scrubber.setIdentifierHmacKeyProvider(() -> SignalStore.svr().getOrCreateMasterKey().deriveLoggingKey()))
                             .addBlocking("first-launch", this::initializeFirstEverAppLaunch)
                             .addBlocking("app-migrations", this::initializeApplicationMigrations)
-                            .addBlocking("ring-rtc", this::initializeRingRtc)
-                            .addBlocking("mark-registration", () -> RegistrationUtil.maybeMarkRegistrationComplete(this))
                             .addBlocking("lifecycle-observer", () -> ApplicationDependencies.getAppForegroundObserver().addListener(this))
                             .addBlocking("message-retriever", this::initializeMessageRetrieval)
                             .addBlocking("dynamic-theme", () -> DynamicTheme.setDefaultDayNightMode(this))
-                            .addBlocking("vector-compat", () -> {
-                              if (Build.VERSION.SDK_INT < 21) {
-                                AppCompatDelegate.setCompatVectorFromResourcesEnabled(true);
-                              }
-                            })
                             .addBlocking("proxy-init", () -> {
                               if (SignalStore.proxy().isProxyEnabled()) {
                                 Log.w(TAG, "Proxy detected. Enabling Conscrypt.setUseEngineSocketByDefault()");
-                                Conscrypt.setUseEngineSocketByDefault(true);
+                                ConscryptSignal.setUseEngineSocketByDefault(true);
                               }
                             })
                             .addBlocking("blob-provider", this::initializeBlobProvider)
                             .addBlocking("feature-flags", FeatureFlags::init)
+                            .addBlocking("ring-rtc", this::initializeRingRtc)
+                            .addBlocking("glide", () -> SignalGlideModule.setRegisterGlideComponents(new SignalGlideComponents()))
+                            .addNonBlocking(() -> RegistrationUtil.maybeMarkRegistrationComplete())
+                            .addNonBlocking(() -> Glide.get(this))
                             .addNonBlocking(this::cleanAvatarStorage)
                             .addNonBlocking(this::initializeRevealableMessageManager)
                             .addNonBlocking(this::initializePendingRetryReceiptManager)
-                            .addNonBlocking(this::initializeGcmCheck)
-                            .addNonBlocking(this::initializeSignedPreKeyCheck)
+                            .addNonBlocking(this::initializeScheduledMessageManager)
+                            .addNonBlocking(this::initializeFcmCheck)
+                            .addNonBlocking(PreKeysSyncJob::enqueueIfNeeded)
                             .addNonBlocking(this::initializePeriodicTasks)
                             .addNonBlocking(this::initializeCircumvention)
-                            .addNonBlocking(this::initializePendingMessages)
                             .addNonBlocking(this::initializeCleanup)
                             .addNonBlocking(this::initializeGlideCodecs)
-                            .addNonBlocking(RefreshPreKeysJob::scheduleIfNecessary)
                             .addNonBlocking(StorageSyncHelper::scheduleRoutineSync)
-                            .addNonBlocking(() -> ApplicationDependencies.getJobManager().beginJobLoop())
+                            .addNonBlocking(this::beginJobLoop)
                             .addNonBlocking(EmojiSource::refresh)
                             .addNonBlocking(() -> ApplicationDependencies.getGiphyMp4Cache().onAppStart(this))
+                            .addNonBlocking(this::ensureProfileUploaded)
+                            .addNonBlocking(() -> ApplicationDependencies.getExpireStoriesManager().scheduleIfNecessary())
+                            .addPostRender(() -> ApplicationDependencies.getDeletedCallEventManager().scheduleIfNecessary())
                             .addPostRender(() -> RateLimitUtil.retryAllRateLimitedMessages(this))
                             .addPostRender(this::initializeExpiringMessageManager)
-                            .addPostRender(() -> SignalStore.settings().setDefaultSms(Util.isDefaultSmsProvider(this)))
+                            .addPostRender(this::initializeTrimThreadsByDateManager)
+                            .addPostRender(RefreshSvrCredentialsJob::enqueueIfNecessary)
                             .addPostRender(() -> DownloadLatestEmojiDataJob.scheduleIfNecessary(this))
                             .addPostRender(EmojiSearchIndexDownloadJob::scheduleIfNecessary)
-                            .addPostRender(() -> DatabaseFactory.getMessageLogDatabase(this).trimOldMessages(System.currentTimeMillis(), FeatureFlags.retryRespondMaxAge()))
+                            .addPostRender(() -> SignalDatabase.messageLog().trimOldMessages(System.currentTimeMillis(), FeatureFlags.retryRespondMaxAge()))
+                            .addPostRender(() -> JumboEmoji.updateCurrentVersion(this))
+                            .addPostRender(RetrieveRemoteAnnouncementsJob::enqueue)
+                            .addPostRender(() -> AndroidTelecomUtil.registerPhoneAccount())
+                            .addPostRender(() -> ApplicationDependencies.getJobManager().add(new FontDownloaderJob()))
+                            .addPostRender(CheckServiceReachabilityJob::enqueueIfNecessary)
+                            .addPostRender(GroupV2UpdateSelfProfileKeyJob::enqueueForGroupsIfNecessary)
+                            .addPostRender(StoryOnboardingDownloadJob.Companion::enqueueIfNeeded)
+                            .addPostRender(PnpInitializeDevicesJob::enqueueIfNecessary)
+                            .addPostRender(() -> ApplicationDependencies.getExoPlayerPool().getPoolStats().getMaxUnreserved())
+                            .addPostRender(() -> ApplicationDependencies.getRecipientCache().warmUp())
+                            .addPostRender(AccountConsistencyWorkerJob::enqueueIfNecessary)
+                            .addPostRender(GroupRingCleanupJob::enqueue)
+                            .addPostRender(LinkedDeviceInactiveCheckJob::enqueueIfNecessary)
+                            .addPostRender(() -> ActiveCallManager.clearNotifications(this))
                             .execute();
 
     Log.d(TAG, "onCreate() took " + (System.currentTimeMillis() - startTime) + " ms");
@@ -192,17 +236,29 @@ public class ApplicationContext extends MultiDexApplication implements AppForegr
     ApplicationDependencies.getFrameRateTracker().start();
     ApplicationDependencies.getMegaphoneRepository().onAppForegrounded();
     ApplicationDependencies.getDeadlockDetector().start();
-    SubscriptionKeepAliveJob.launchSubscriberIdKeepAliveJobIfNecessary();
+    SubscriptionKeepAliveJob.enqueueAndTrackTimeIfNecessary();
+    ExternalLaunchDonationJob.enqueueIfNecessary();
+    FcmFetchManager.onForeground(this);
+    startAnrDetector();
 
     SignalExecutors.BOUNDED.execute(() -> {
       FeatureFlags.refreshIfNecessary();
-      ApplicationDependencies.getRecipientCache().warmUp();
-      RetrieveProfileJob.enqueueRoutineFetchIfNecessary(this);
-      GroupV1MigrationJob.enqueueRoutineMigrationsIfNecessary(this);
+      RetrieveProfileJob.enqueueRoutineFetchIfNecessary();
       executePendingContactSync();
       KeyCachingService.onAppForegrounded(this);
       ApplicationDependencies.getShakeToReport().enable();
       checkBuildExpiration();
+      MemoryTracker.start();
+
+      long lastForegroundTime = SignalStore.misc().getLastForegroundTime();
+      long currentTime        = System.currentTimeMillis();
+      long timeDiff           = currentTime - lastForegroundTime;
+
+      if (timeDiff < 0) {
+        Log.w(TAG, "Time travel! The system clock has moved backwards. (currentTime: " + currentTime + " ms, lastForegroundTime: " + lastForegroundTime + " ms, diff: " + timeDiff + " ms)");
+      }
+
+      SignalStore.misc().setLastForegroundTime(currentTime);
     });
 
     Log.d(TAG, "onStart() took " + (System.currentTimeMillis() - startTime) + " ms");
@@ -216,27 +272,29 @@ public class ApplicationContext extends MultiDexApplication implements AppForegr
     ApplicationDependencies.getFrameRateTracker().stop();
     ApplicationDependencies.getShakeToReport().disable();
     ApplicationDependencies.getDeadlockDetector().stop();
-  }
-
-  public PersistentLogger getPersistentLogger() {
-    return persistentLogger;
+    MemoryTracker.stop();
+    AnrDetector.stop();
   }
 
   public void checkBuildExpiration() {
     if (Util.getTimeUntilBuildExpiry() <= 0 && !SignalStore.misc().isClientDeprecated()) {
       Log.w(TAG, "Build expired!");
-      SignalStore.misc().markClientDeprecated();
+      SignalStore.misc().setClientDeprecated(true);
     }
   }
 
-  private void initializeSecurityProvider() {
-    try {
-      Class.forName("org.signal.aesgcmprovider.AesGcmCipher");
-    } catch (ClassNotFoundException e) {
-      Log.e(TAG, "Failed to find AesGcmCipher class");
-      throw new ProviderInitializationException();
-    }
+  /**
+   * Note: this is purposefully "started" twice -- once during application create, and once during foreground.
+   * This is so we can capture ANR's that happen on boot before the foreground event.
+   */
+  private void startAnrDetector() {
+    AnrDetector.start(TimeUnit.SECONDS.toMillis(5), FeatureFlags::internalUser, (dumps) -> {
+      LogDatabase.getInstance(this).anrs().save(System.currentTimeMillis(), dumps);
+      return Unit.INSTANCE;
+    });
+  }
 
+  private void initializeSecurityProvider() {
     int aesPosition = Security.insertProviderAt(new AesGcmProvider(), 1);
     Log.i(TAG, "Installed AesGcmProvider: " + aesPosition);
 
@@ -245,7 +303,7 @@ public class ApplicationContext extends MultiDexApplication implements AppForegr
       throw new ProviderInitializationException();
     }
 
-    int conscryptPosition = Security.insertProviderAt(Conscrypt.newProvider(), 2);
+    int conscryptPosition = Security.insertProviderAt(ConscryptSignal.newProvider(), 2);
     Log.i(TAG, "Installed Conscrypt provider: " + conscryptPosition);
 
     if (conscryptPosition < 0) {
@@ -253,21 +311,46 @@ public class ApplicationContext extends MultiDexApplication implements AppForegr
     }
   }
 
-  private void initializeLogging() {
-    persistentLogger = new PersistentLogger(this);
-    org.signal.core.util.logging.Log.initialize(FeatureFlags::internalUser, new AndroidLogger(), persistentLogger);
+  @VisibleForTesting
+  protected void initializeLogging() {
+    Log.initialize(FeatureFlags::internalUser, new AndroidLogger(), new PersistentLogger(this));
 
     SignalProtocolLoggerProvider.setProvider(new CustomSignalProtocolLogger());
 
     SignalExecutors.UNBOUNDED.execute(() -> {
       Log.blockUntilAllWritesFinished();
-      LogDatabase.getInstance(this).trimToSize();
+      LogDatabase.getInstance(this).logs().trimToSize();
+      LogDatabase.getInstance(this).crashes().trimToSize();
     });
   }
 
   private void initializeCrashHandling() {
     final Thread.UncaughtExceptionHandler originalHandler = Thread.getDefaultUncaughtExceptionHandler();
     Thread.setDefaultUncaughtExceptionHandler(new SignalUncaughtExceptionHandler(originalHandler));
+  }
+
+  private void initializeRx() {
+    RxDogTag.install();
+    RxJavaPlugins.setInitIoSchedulerHandler(schedulerSupplier -> Schedulers.from(SignalExecutors.BOUNDED_IO, true, false));
+    RxJavaPlugins.setInitComputationSchedulerHandler(schedulerSupplier -> Schedulers.from(SignalExecutors.BOUNDED, true, false));
+    RxJavaPlugins.setErrorHandler(e -> {
+      boolean wasWrapped = false;
+      while ((e instanceof UndeliverableException || e instanceof AssertionError || e instanceof OnErrorNotImplementedException) && e.getCause() != null) {
+        wasWrapped = true;
+        e = e.getCause();
+      }
+
+      if (wasWrapped && (e instanceof SocketException || e instanceof SocketTimeoutException || e instanceof InterruptedException)) {
+        return;
+      }
+
+      Thread.UncaughtExceptionHandler uncaughtExceptionHandler = Thread.currentThread().getUncaughtExceptionHandler();
+      if (uncaughtExceptionHandler == null) {
+        uncaughtExceptionHandler = Thread.getDefaultUncaughtExceptionHandler();
+      }
+
+      uncaughtExceptionHandler.uncaughtException(Thread.currentThread(), e);
+    });
   }
 
   private void initializeApplicationMigrations() {
@@ -278,13 +361,14 @@ public class ApplicationContext extends MultiDexApplication implements AppForegr
     ApplicationDependencies.getIncomingMessageObserver();
   }
 
-  private void initializeAppDependencies() {
+  @VisibleForTesting
+  void initializeAppDependencies() {
     ApplicationDependencies.init(this, new ApplicationDependencyProvider(this));
   }
 
   private void initializeFirstEverAppLaunch() {
     if (TextSecurePreferences.getFirstInstallVersion(this) == -1) {
-      if (!SQLCipherOpenHelper.databaseFileExists(this) || VersionTracker.getDaysSinceFirstInstalled(this) < 365) {
+      if (!SignalDatabase.databaseFileExists(this) || VersionTracker.getDaysSinceFirstInstalled(this) < 365) {
         Log.i(TAG, "First ever app launch!");
         AppInitialization.onFirstEverAppLaunch(this);
       }
@@ -300,19 +384,13 @@ public class ApplicationContext extends MultiDexApplication implements AppForegr
     }
   }
 
-  private void initializeGcmCheck() {
-    if (TextSecurePreferences.isPushRegistered(this)) {
-      long nextSetTime = TextSecurePreferences.getFcmTokenLastSetTime(this) + TimeUnit.HOURS.toMillis(6);
+  private void initializeFcmCheck() {
+    if (SignalStore.account().isRegistered()) {
+      long nextSetTime = SignalStore.account().getFcmTokenLastSetTime() + TimeUnit.HOURS.toMillis(6);
 
-      if (TextSecurePreferences.getFcmToken(this) == null || nextSetTime <= System.currentTimeMillis()) {
+      if (SignalStore.account().getFcmToken() == null || nextSetTime <= System.currentTimeMillis()) {
         ApplicationDependencies.getJobManager().add(new FcmRefreshJob());
       }
-    }
-  }
-
-  private void initializeSignedPreKeyCheck() {
-    if (!TextSecurePreferences.isSignedPreKeyRegistered(this)) {
-      ApplicationDependencies.getJobManager().add(new CreateSignedPreKeyJob(this));
     }
   }
 
@@ -328,21 +406,41 @@ public class ApplicationContext extends MultiDexApplication implements AppForegr
     ApplicationDependencies.getPendingRetryReceiptManager().scheduleIfNecessary();
   }
 
+  private void initializeScheduledMessageManager() {
+    ApplicationDependencies.getScheduledMessageManager().scheduleIfNecessary();
+  }
+
+  private void initializeTrimThreadsByDateManager() {
+    KeepMessagesDuration keepMessagesDuration = SignalStore.settings().getKeepMessagesDuration();
+    if (keepMessagesDuration != KeepMessagesDuration.FOREVER) {
+      ApplicationDependencies.getTrimThreadsByDateManager().scheduleIfNecessary();
+    }
+  }
+
   private void initializePeriodicTasks() {
     RotateSignedPreKeyListener.schedule(this);
     DirectoryRefreshListener.schedule(this);
     LocalBackupListener.schedule(this);
+    MessageBackupListener.schedule(this);
     RotateSenderCertificateListener.schedule(this);
-    MessageProcessReceiver.startOrUpdateAlarm(this);
+    RoutineMessageFetchReceiver.startOrUpdateAlarm(this);
+    AnalyzeDatabaseAlarmListener.schedule(this);
 
-    if (BuildConfig.PLAY_STORE_DISABLED) {
-      UpdateApkRefreshListener.schedule(this);
+    if (BuildConfig.MANAGES_APP_UPDATES) {
+      ApkUpdateRefreshListener.schedule(this);
     }
   }
 
   private void initializeRingRtc() {
     try {
-      CallManager.initialize(this, new RingRtcLogger());
+      Map<String, String> fieldTrials = new HashMap<>();
+      if (FeatureFlags.callingFieldTrialAnyAddressPortsKillSwitch()) {
+        fieldTrials.put("RingRTC-AnyAddressPortsKillSwitch", "Enabled");
+      }
+      if (!SignalStore.internalValues().callingDisableLBRed()) {
+        fieldTrials.put("RingRTC-Audio-LBRed-For-Opus", "Enabled,bitrate_pri:22000");
+      }
+      CallManager.initialize(this, new RingRtcLogger(), fieldTrials);
     } catch (UnsatisfiedLinkError e) {
       throw new AssertionError("Unable to load ringrtc library", e);
     }
@@ -350,12 +448,19 @@ public class ApplicationContext extends MultiDexApplication implements AppForegr
 
   @WorkerThread
   private void initializeCircumvention() {
-    if (ApplicationDependencies.getSignalServiceNetworkAccess().isCensored(ApplicationContext.this)) {
+    if (ApplicationDependencies.getSignalServiceNetworkAccess().isCensored()) {
       try {
         ProviderInstaller.installIfNeeded(ApplicationContext.this);
       } catch (Throwable t) {
         Log.w(TAG, t);
       }
+    }
+  }
+
+  private void ensureProfileUploaded() {
+    if (SignalStore.account().isRegistered() && !SignalStore.registrationValues().hasUploadedProfile() && !Recipient.self().getProfileName().isEmpty()) {
+      Log.w(TAG, "User has a profile, but has not uploaded one. Uploading now.");
+      ApplicationDependencies.getJobManager().add(new ProfileUploadJob());
     }
   }
 
@@ -365,16 +470,9 @@ public class ApplicationContext extends MultiDexApplication implements AppForegr
     }
   }
 
-  private void initializePendingMessages() {
-    if (TextSecurePreferences.getNeedsMessagePull(this)) {
-      Log.i(TAG, "Scheduling a message fetch.");
-      if (Build.VERSION.SDK_INT >= 26) {
-        FcmJobService.schedule(this);
-      } else {
-        ApplicationDependencies.getJobManager().add(new PushNotificationReceiveJob());
-      }
-      TextSecurePreferences.setNeedsMessagePull(this, false);
-    }
+  @VisibleForTesting
+  protected void beginJobLoop() {
+    ApplicationDependencies.getJobManager().beginJobLoop();
   }
 
   @WorkerThread
@@ -389,7 +487,7 @@ public class ApplicationContext extends MultiDexApplication implements AppForegr
 
   @WorkerThread
   private void initializeCleanup() {
-    int deleted = DatabaseFactory.getAttachmentDatabase(this).deleteAbandonedPreuploadedAttachments();
+    int deleted = SignalDatabase.attachments().deleteAbandonedPreuploadedAttachments();
     Log.i(TAG, "Deleted " + deleted + " abandoned attachments.");
   }
 

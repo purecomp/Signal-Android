@@ -12,13 +12,15 @@ import androidx.lifecycle.ViewModel;
 import androidx.lifecycle.ViewModelProvider;
 
 import org.signal.core.util.ThreadUtil;
+import org.thoughtcrime.securesms.attachments.AttachmentId;
+import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.keyvalue.SignalStore;
 import org.thoughtcrime.securesms.net.RequestController;
 import org.thoughtcrime.securesms.util.Debouncer;
-import org.whispersystems.libsignal.util.guava.Optional;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Optional;
 
 
 public class LinkPreviewViewModel extends ViewModel {
@@ -33,24 +35,19 @@ public class LinkPreviewViewModel extends ViewModel {
   private Debouncer         debouncer;
   private boolean           enabled;
 
-  private LinkPreviewViewModel(@NonNull LinkPreviewRepository repository) {
+  private final boolean enablePlaceholder;
+
+  private LinkPreviewViewModel(@NonNull LinkPreviewRepository repository, boolean enablePlaceholder) {
     this.repository           = repository;
+    this.enablePlaceholder    = enablePlaceholder;
     this.linkPreviewState     = new MutableLiveData<>();
     this.debouncer            = new Debouncer(250);
     this.enabled              = SignalStore.settings().isLinkPreviewsEnabled();
-    this.linkPreviewSafeState = Transformations.map(linkPreviewState, state -> enabled ? state : LinkPreviewState.forNoLinks());
+    this.linkPreviewSafeState = Transformations.map(linkPreviewState, state -> cleanseState(state));
   }
 
   public LiveData<LinkPreviewState> getLinkPreviewState() {
     return linkPreviewSafeState;
-  }
-
-  public boolean hasLinkPreview() {
-    return linkPreviewSafeState.getValue() != null && linkPreviewSafeState.getValue().getLinkPreview().isPresent();
-  }
-
-  public boolean hasLinkPreviewUi() {
-    return linkPreviewSafeState.getValue() != null && linkPreviewSafeState.getValue().hasContent();
   }
 
   /**
@@ -70,15 +67,50 @@ public class LinkPreviewViewModel extends ViewModel {
     debouncer.clear();
     linkPreviewState.setValue(LinkPreviewState.forNoLinks());
 
-    if (currentState == null || !currentState.getLinkPreview().isPresent()) {
+    if (currentState == null || !currentState.linkPreview.isPresent()) {
       return Collections.emptyList();
     } else {
-      return Collections.singletonList(currentState.getLinkPreview().get());
+      return Collections.singletonList(currentState.linkPreview.get());
+    }
+  }
+
+  /**
+   * Gets the current state for use in the UI, then resets local state to prepare for the next message send.
+   */
+  public @NonNull List<LinkPreview> onSendWithErrorUrl() {
+    final LinkPreviewState currentState = linkPreviewSafeState.getValue();
+
+    if (activeRequest != null) {
+      activeRequest.cancel();
+      activeRequest = null;
+    }
+
+    userCanceled = false;
+    activeUrl    = null;
+
+    debouncer.clear();
+    linkPreviewState.setValue(LinkPreviewState.forNoLinks());
+
+    if (currentState == null) {
+      return Collections.emptyList();
+    } else if (currentState.linkPreview.isPresent()) {
+      return Collections.singletonList(currentState.linkPreview.get());
+    } else if (currentState.activeUrlForError != null) {
+      String       topLevelDomain = LinkPreviewUtil.getTopLevelDomain(currentState.activeUrlForError);
+      AttachmentId attachmentId   = null;
+
+      return Collections.singletonList(new LinkPreview(currentState.activeUrlForError,
+                                                       topLevelDomain != null ? topLevelDomain : currentState.activeUrlForError,
+                                                       null,
+                                                       -1L,
+                                                       attachmentId));
+    } else {
+      return Collections.emptyList();
     }
   }
 
   public void onTextChanged(@NonNull Context context, @NonNull String text, int cursorStart, int cursorEnd) {
-    if (!enabled) return;
+    if (!enabled && !enablePlaceholder) return;
 
     debouncer.publish(() -> {
       if (TextUtils.isEmpty(text)) {
@@ -110,35 +142,7 @@ public class LinkPreviewViewModel extends ViewModel {
       linkPreviewState.setValue(LinkPreviewState.forLoading());
 
       activeUrl     = link.get().getUrl();
-      activeRequest = repository.getLinkPreview(context, link.get().getUrl(), new LinkPreviewRepository.Callback() {
-          @Override
-          public void onSuccess(@NonNull LinkPreview linkPreview) {
-            ThreadUtil.runOnMain(() -> {
-              if (!userCanceled) {
-                if (activeUrl != null && activeUrl.equals(linkPreview.getUrl())) {
-                  linkPreviewState.setValue(LinkPreviewState.forPreview(linkPreview));
-                } else {
-                  linkPreviewState.setValue(LinkPreviewState.forNoLinks());
-                }
-              }
-              activeRequest = null;
-            });
-          }
-
-        @Override
-        public void onError(@NonNull LinkPreviewRepository.Error error) {
-          ThreadUtil.runOnMain(() -> {
-            if (!userCanceled) {
-              if (activeUrl != null) {
-                linkPreviewState.setValue(LinkPreviewState.forLinksWithNoPreview(error));
-              } else {
-                linkPreviewState.setValue(LinkPreviewState.forNoLinks());
-              }
-            }
-            activeRequest = null;
-          });
-        }
-      });
+      activeRequest = enabled ? performRequest(activeUrl) : createPlaceholder(activeUrl);
     });
   }
 
@@ -189,71 +193,85 @@ public class LinkPreviewViewModel extends ViewModel {
     return cursorStart < link.getPosition() || cursorStart > link.getPosition() + link.getUrl().length();
   }
 
-  public static class LinkPreviewState {
-    private final boolean                     isLoading;
-    private final boolean                     hasLinks;
-    private final Optional<LinkPreview>       linkPreview;
-    private final LinkPreviewRepository.Error error;
+  private @Nullable RequestController createPlaceholder(String url) {
+    ThreadUtil.runOnMain(() -> {
+      if (!userCanceled) {
+        if (activeUrl != null && activeUrl.equals(url)) {
+          linkPreviewState.setValue(LinkPreviewState.forLinksWithNoPreview(url, LinkPreviewRepository.Error.PREVIEW_NOT_AVAILABLE));
+        } else {
+          linkPreviewState.setValue(LinkPreviewState.forNoLinks());
+        }
+      }
 
-    private LinkPreviewState(boolean isLoading,
-                             boolean hasLinks,
-                             Optional<LinkPreview> linkPreview,
-                             @Nullable LinkPreviewRepository.Error error)
-    {
-      this.isLoading   = isLoading;
-      this.hasLinks    = hasLinks;
-      this.linkPreview = linkPreview;
-      this.error       = error;
+      activeRequest = null;
+    });
+
+    return null;
+  }
+
+  private @Nullable RequestController performRequest(String url) {
+    return repository.getLinkPreview(ApplicationDependencies.getApplication(), url, new LinkPreviewRepository.Callback() {
+      @Override
+      public void onSuccess(@NonNull LinkPreview linkPreview) {
+        ThreadUtil.runOnMain(() -> {
+          if (!userCanceled) {
+            if (activeUrl != null && activeUrl.equals(linkPreview.getUrl())) {
+              linkPreviewState.setValue(LinkPreviewState.forPreview(linkPreview));
+            } else {
+              linkPreviewState.setValue(LinkPreviewState.forNoLinks());
+            }
+          }
+          activeRequest = null;
+        });
+      }
+
+      @Override
+      public void onError(@NonNull LinkPreviewRepository.Error error) {
+        ThreadUtil.runOnMain(() -> {
+          if (!userCanceled) {
+            if (activeUrl != null) {
+              linkPreviewState.setValue(LinkPreviewState.forLinksWithNoPreview(activeUrl, error));
+            } else {
+              linkPreviewState.setValue(LinkPreviewState.forNoLinks());
+            }
+          }
+          activeRequest = null;
+        });
+      }
+    });
+  }
+
+  private @NonNull LinkPreviewState cleanseState(@NonNull LinkPreviewState state) {
+    if (enabled) {
+      return state;
     }
 
-    private static LinkPreviewState forLoading() {
-      return new LinkPreviewState(true, false, Optional.absent(), null);
+    if (enablePlaceholder) {
+      return state.linkPreview
+          .map(linkPreview -> LinkPreviewState.forLinksWithNoPreview(linkPreview.getUrl(), LinkPreviewRepository.Error.PREVIEW_NOT_AVAILABLE))
+          .orElse(state);
     }
 
-    private static LinkPreviewState forPreview(@NonNull LinkPreview linkPreview) {
-      return new LinkPreviewState(false, true, Optional.of(linkPreview), null);
-    }
-
-    private static LinkPreviewState forLinksWithNoPreview(@NonNull LinkPreviewRepository.Error error) {
-      return new LinkPreviewState(false, true, Optional.absent(), error);
-    }
-
-    private static LinkPreviewState forNoLinks() {
-      return new LinkPreviewState(false, false, Optional.absent(), null);
-    }
-
-    public boolean isLoading() {
-      return isLoading;
-    }
-
-    public boolean hasLinks() {
-      return hasLinks;
-    }
-
-    public Optional<LinkPreview> getLinkPreview() {
-      return linkPreview;
-    }
-
-    public @Nullable LinkPreviewRepository.Error getError() {
-      return error;
-    }
-
-    boolean hasContent() {
-      return isLoading || hasLinks;
-    }
+    return LinkPreviewState.forNoLinks();
   }
 
   public static class Factory extends ViewModelProvider.NewInstanceFactory {
 
     private final LinkPreviewRepository repository;
+    private final boolean               enablePlaceholder;
 
     public Factory(@NonNull LinkPreviewRepository repository) {
-      this.repository = repository;
+      this(repository, false);
+    }
+
+    public Factory(@NonNull LinkPreviewRepository repository, boolean enablePlaceholder) {
+      this.repository        = repository;
+      this.enablePlaceholder = enablePlaceholder;
     }
 
     @Override
     public @NonNull <T extends ViewModel> T create(@NonNull Class<T> modelClass) {
-      return modelClass.cast(new LinkPreviewViewModel(repository));
+      return modelClass.cast(new LinkPreviewViewModel(repository, enablePlaceholder));
     }
   }
 }

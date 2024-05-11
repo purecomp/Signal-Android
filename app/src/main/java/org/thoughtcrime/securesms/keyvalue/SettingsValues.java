@@ -10,20 +10,21 @@ import androidx.annotation.Nullable;
 import androidx.lifecycle.LiveData;
 
 import org.signal.core.util.concurrent.SignalExecutors;
-import org.thoughtcrime.securesms.database.DatabaseFactory;
+import org.signal.core.util.logging.Log;
+import org.thoughtcrime.securesms.R;
+import org.thoughtcrime.securesms.database.SignalDatabase;
 import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.mms.SentMediaQuality;
 import org.thoughtcrime.securesms.preferences.widgets.NotificationPrivacyPreference;
 import org.thoughtcrime.securesms.recipients.Recipient;
 import org.thoughtcrime.securesms.storage.StorageSyncHelper;
-import org.thoughtcrime.securesms.util.FeatureFlags;
 import org.thoughtcrime.securesms.util.SingleLiveEvent;
 import org.thoughtcrime.securesms.util.TextSecurePreferences;
-import org.signal.core.util.logging.Log;
-import org.thoughtcrime.securesms.webrtc.CallBandwidthMode;
+import org.thoughtcrime.securesms.webrtc.CallDataMode;
 
 import java.util.Arrays;
 import java.util.List;
+import java.util.Random;
 
 @SuppressWarnings("deprecation")
 public final class SettingsValues extends SignalStoreValues {
@@ -37,8 +38,7 @@ public final class SettingsValues extends SignalStoreValues {
 
   private static final String SIGNAL_BACKUP_DIRECTORY        = "settings.signal.backup.directory";
   private static final String SIGNAL_LATEST_BACKUP_DIRECTORY = "settings.signal.backup.directory,latest";
-
-  private static final String CALL_BANDWIDTH_MODE = "settings.signal.call.bandwidth.mode";
+  private static final String CALL_DATA_MODE                 = "settings.signal.call.bandwidth.mode";
 
   public static final String THREAD_TRIM_LENGTH  = "pref_trim_length";
   public static final String THREAD_TRIM_ENABLED = "pref_trim_threads";
@@ -49,6 +49,8 @@ public final class SettingsValues extends SignalStoreValues {
   public static final  String PREFER_SYSTEM_EMOJI                     = "settings.use.system.emoji";
   public static final  String ENTER_KEY_SENDS                         = "settings.enter.key.sends";
   public static final  String BACKUPS_ENABLED                         = "settings.backups.enabled";
+  public static final  String BACKUPS_SCHEDULE_HOUR                   = "settings.backups.schedule.hour";
+  public static final  String BACKUPS_SCHEDULE_MINUTE                 = "settings.backups.schedule.minute";
   public static final  String SMS_DELIVERY_REPORTS_ENABLED            = "settings.sms.delivery.reports.enabled";
   public static final  String WIFI_CALLING_COMPATIBILITY_MODE_ENABLED = "settings.wifi.calling.compatibility.mode.enabled";
   public static final  String MESSAGE_NOTIFICATIONS_ENABLED           = "settings.message.notifications.enabled";
@@ -63,9 +65,14 @@ public final class SettingsValues extends SignalStoreValues {
   public static final  String CALL_RINGTONE                           = "settings.call.ringtone";
   public static final  String CALL_VIBRATE_ENABLED                    = "settings.call.vibrate.enabled";
   public static final  String NOTIFY_WHEN_CONTACT_JOINS_SIGNAL        = "settings.notify.when.contact.joins.signal";
-  private static final String DEFAULT_SMS                             = "settings.default_sms";
   private static final String UNIVERSAL_EXPIRE_TIMER                  = "settings.universal.expire.timer";
   private static final String SENT_MEDIA_QUALITY                      = "settings.sentMediaQuality";
+  private static final String CENSORSHIP_CIRCUMVENTION_ENABLED        = "settings.censorshipCircumventionEnabled";
+  private static final String KEEP_MUTED_CHATS_ARCHIVED               = "settings.keepMutedChatsArchived";
+  private static final String USE_COMPACT_NAVIGATION_BAR              = "settings.useCompactNavigationBar";
+
+  public static final int BACKUP_DEFAULT_HOUR   = 2;
+  public static final int BACKUP_DEFAULT_MINUTE = 0;
 
   private final SingleLiveEvent<String> onConfigurationSettingChanged = new SingleLiveEvent<>();
 
@@ -75,10 +82,15 @@ public final class SettingsValues extends SignalStoreValues {
 
   @Override
   void onFirstEverAppLaunch() {
-    if (!getStore().containsKey(LINK_PREVIEWS)) {
-      getStore().beginWrite()
-                .putBoolean(LINK_PREVIEWS, true)
-                .apply();
+    final KeyValueStore store = getStore();
+    if (!store.containsKey(LINK_PREVIEWS)) {
+      store.beginWrite()
+           .putBoolean(LINK_PREVIEWS, true)
+           .apply();
+    }
+    if (!store.containsKey(BACKUPS_SCHEDULE_HOUR)) {
+      // Initialize backup time to a 5min interval between 1-5am
+      setBackupSchedule(new Random().nextInt(5) + 1, new Random().nextInt(12) * 5);
     }
   }
 
@@ -87,7 +99,7 @@ public final class SettingsValues extends SignalStoreValues {
     return Arrays.asList(LINK_PREVIEWS,
                          KEEP_MESSAGES_DURATION,
                          PREFER_SYSTEM_CONTACT_PHOTOS,
-                         CALL_BANDWIDTH_MODE,
+                         CALL_DATA_MODE,
                          THREAD_TRIM_LENGTH,
                          THREAD_TRIM_ENABLED,
                          LANGUAGE,
@@ -109,7 +121,9 @@ public final class SettingsValues extends SignalStoreValues {
                          CALL_VIBRATE_ENABLED,
                          NOTIFY_WHEN_CONTACT_JOINS_SIGNAL,
                          UNIVERSAL_EXPIRE_TIMER,
-                         SENT_MEDIA_QUALITY);
+                         SENT_MEDIA_QUALITY,
+                         KEEP_MUTED_CHATS_ARCHIVED,
+                         USE_COMPACT_NAVIGATION_BAR);
   }
 
   public @NonNull LiveData<String> getOnConfigurationSettingChanged() {
@@ -173,25 +187,53 @@ public final class SettingsValues extends SignalStoreValues {
     putString(SIGNAL_BACKUP_DIRECTORY, null);
   }
 
-  public void setCallBandwidthMode(@NonNull CallBandwidthMode callBandwidthMode) {
-    putInteger(CALL_BANDWIDTH_MODE, callBandwidthMode.getCode());
+  public void setCallDataMode(@NonNull CallDataMode callDataMode) {
+    putInteger(CALL_DATA_MODE, callDataMode.getCode());
   }
 
-  public @NonNull CallBandwidthMode getCallBandwidthMode() {
-    return CallBandwidthMode.fromCode(getInteger(CALL_BANDWIDTH_MODE, CallBandwidthMode.HIGH_ALWAYS.getCode()));
+  public @NonNull CallDataMode getCallDataMode() {
+    return CallDataMode.fromCode(getInteger(CALL_DATA_MODE, CallDataMode.HIGH_ALWAYS.getCode()));
   }
 
-  public @NonNull String getTheme() {
-    return getString(THEME, TextSecurePreferences.getTheme(ApplicationDependencies.getApplication()));
+  public @NonNull Theme getTheme() {
+    return Theme.deserialize(getString(THEME, TextSecurePreferences.getTheme(ApplicationDependencies.getApplication())));
   }
 
-  public void setTheme(@NonNull String theme) {
-    putString(THEME, theme);
+  public void setTheme(@NonNull Theme theme) {
+    putString(THEME, theme.serialize());
     onConfigurationSettingChanged.postValue(THEME);
   }
 
   public int getMessageFontSize() {
     return getInteger(MESSAGE_FONT_SIZE, TextSecurePreferences.getMessageBodyTextSize(ApplicationDependencies.getApplication()));
+  }
+
+  public int getMessageQuoteFontSize(@NonNull Context context) {
+    int   currentMessageSize   = getMessageFontSize();
+    int[] possibleMessageSizes = context.getResources().getIntArray(R.array.pref_message_font_size_values);
+    int[] possibleQuoteSizes   = context.getResources().getIntArray(R.array.pref_message_font_quote_size_values);
+    int   sizeIndex            = Arrays.binarySearch(possibleMessageSizes, currentMessageSize);
+
+    if (sizeIndex < 0) {
+      int closestSizeIndex = 0;
+      int closestSizeDiff  = Integer.MAX_VALUE;
+
+      for (int i = 0; i < possibleMessageSizes.length; i++) {
+        int diff = Math.abs(possibleMessageSizes[i] - currentMessageSize);
+        if (diff < closestSizeDiff) {
+          closestSizeIndex = i;
+          closestSizeDiff  = diff;
+        }
+      }
+
+      int newSize = possibleMessageSizes[closestSizeIndex];
+      Log.w(TAG, "Using non-standard font size of " + currentMessageSize + ". Closest match was " + newSize + ". Updating.");
+
+      setMessageFontSize(newSize);
+      sizeIndex = Arrays.binarySearch(possibleMessageSizes, newSize);
+    }
+
+    return possibleQuoteSizes[sizeIndex];
   }
 
   public void setMessageFontSize(int messageFontSize) {
@@ -229,6 +271,19 @@ public final class SettingsValues extends SignalStoreValues {
 
   public void setBackupEnabled(boolean backupEnabled) {
     putBoolean(BACKUPS_ENABLED, backupEnabled);
+  }
+
+  public int getBackupHour() {
+    return getInteger(BACKUPS_SCHEDULE_HOUR, BACKUP_DEFAULT_HOUR);
+  }
+
+  public int getBackupMinute() {
+    return getInteger(BACKUPS_SCHEDULE_MINUTE, BACKUP_DEFAULT_MINUTE);
+  }
+
+  public void setBackupSchedule(int hour, int minute) {
+    putInteger(BACKUPS_SCHEDULE_HOUR, hour);
+    putInteger(BACKUPS_SCHEDULE_MINUTE, minute);
   }
 
   public boolean isSmsDeliveryReportsEnabled() {
@@ -355,32 +410,8 @@ public final class SettingsValues extends SignalStoreValues {
     putBoolean(NOTIFY_WHEN_CONTACT_JOINS_SIGNAL, notifyWhenContactJoinsSignal);
   }
 
-  /**
-   * We need to keep track of when the default status changes so we can sync to storage service.
-   * So call this when you think it might have changed, but *don't* rely on it for knowing if we
-   * *are* the default SMS. For that, continue to use
-   * {@link org.thoughtcrime.securesms.util.Util#isDefaultSmsProvider(Context)}.
-   */
-  public void setDefaultSms(boolean value) {
-    boolean lastKnown = getBoolean(DEFAULT_SMS, false);
-
-    if (value != lastKnown && SignalStore.registrationValues().isRegistrationComplete()) {
-      Log.i(TAG, "Default SMS state changed! Scheduling a storage sync.");
-      putBoolean(DEFAULT_SMS, value);
-
-      SignalExecutors.BOUNDED.execute(() -> {
-        DatabaseFactory.getRecipientDatabase(ApplicationDependencies.getApplication()).markNeedsSync(Recipient.self().getId());
-        StorageSyncHelper.scheduleSyncForDataChange();
-      });
-    }
-  }
-
   public void setUniversalExpireTimer(int seconds) {
     putInteger(UNIVERSAL_EXPIRE_TIMER, seconds);
-    SignalExecutors.BOUNDED.execute(() -> {
-      DatabaseFactory.getRecipientDatabase(ApplicationDependencies.getApplication()).markNeedsSync(Recipient.self().getId());
-      StorageSyncHelper.scheduleSyncForDataChange();
-    });
   }
 
   public int getUniversalExpireTimer() {
@@ -395,6 +426,31 @@ public final class SettingsValues extends SignalStoreValues {
     return SentMediaQuality.fromCode(getInteger(SENT_MEDIA_QUALITY, SentMediaQuality.STANDARD.getCode()));
   }
 
+  public @NonNull CensorshipCircumventionEnabled getCensorshipCircumventionEnabled() {
+    return CensorshipCircumventionEnabled.deserialize(getInteger(CENSORSHIP_CIRCUMVENTION_ENABLED, CensorshipCircumventionEnabled.DEFAULT.serialize()));
+  }
+
+  public void setCensorshipCircumventionEnabled(boolean enabled) {
+    Log.i(TAG, "Changing censorship circumvention state to: " + enabled, new Throwable());
+    putInteger(CENSORSHIP_CIRCUMVENTION_ENABLED, enabled ? CensorshipCircumventionEnabled.ENABLED.serialize() : CensorshipCircumventionEnabled.DISABLED.serialize());
+  }
+
+  public void setKeepMutedChatsArchived(boolean enabled) {
+    putBoolean(KEEP_MUTED_CHATS_ARCHIVED, enabled);
+  }
+
+  public boolean shouldKeepMutedChatsArchived() {
+    return getBoolean(KEEP_MUTED_CHATS_ARCHIVED, false);
+  }
+
+  public void setUseCompactNavigationBar(boolean enabled) {
+    putBoolean(USE_COMPACT_NAVIGATION_BAR, enabled);
+  }
+
+  public boolean getUseCompactNavigationBar() {
+    return getBoolean(USE_COMPACT_NAVIGATION_BAR, false);
+  }
+
   private @Nullable Uri getUri(@NonNull String key) {
     String uri = getString(key, "");
 
@@ -402,6 +458,60 @@ public final class SettingsValues extends SignalStoreValues {
       return null;
     } else {
       return Uri.parse(uri);
+    }
+  }
+
+  public enum CensorshipCircumventionEnabled {
+    DEFAULT(0), ENABLED(1), DISABLED(2);
+
+    private final int value;
+
+    CensorshipCircumventionEnabled(int value) {
+      this.value = value;
+    }
+
+    public static CensorshipCircumventionEnabled deserialize(int value) {
+      switch (value) {
+        case 0:
+          return DEFAULT;
+        case 1:
+          return ENABLED;
+        case 2:
+          return DISABLED;
+        default:
+          throw new IllegalArgumentException("Bad value: " + value);
+      }
+    }
+
+    public int serialize() {
+      return value;
+    }
+  }
+
+  public enum Theme {
+    SYSTEM("system"), LIGHT("light"), DARK("dark");
+
+    private final String value;
+
+    Theme(String value) {
+      this.value = value;
+    }
+
+    public @NonNull String serialize() {
+      return value;
+    }
+
+    public static @NonNull Theme deserialize(@NonNull String value) {
+      switch (value) {
+        case "system":
+          return SYSTEM;
+        case "light":
+          return LIGHT;
+        case "dark":
+          return DARK;
+        default:
+          throw new IllegalArgumentException("Unrecognized value " + value);
+      }
     }
   }
 }

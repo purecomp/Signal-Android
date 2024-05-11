@@ -3,17 +3,13 @@ package org.thoughtcrime.securesms.help;
 import androidx.annotation.NonNull;
 import androidx.lifecycle.LiveData;
 import androidx.lifecycle.MutableLiveData;
-import androidx.lifecycle.Transformations;
 import androidx.lifecycle.ViewModel;
 
-import org.thoughtcrime.securesms.logsubmit.LogLine;
 import org.thoughtcrime.securesms.logsubmit.SubmitDebugLogRepository;
-import org.thoughtcrime.securesms.util.livedata.LiveDataPair;
 import org.thoughtcrime.securesms.util.livedata.LiveDataUtil;
-import org.whispersystems.libsignal.util.Pair;
-import org.whispersystems.libsignal.util.guava.Optional;
 
-import java.util.List;
+import java.util.Optional;
+
 
 public class HelpViewModel extends ViewModel {
 
@@ -48,7 +44,7 @@ public class HelpViewModel extends ViewModel {
   }
 
   int getCategoryIndex() {
-    return Optional.fromNullable(this.categoryIndex.getValue()).or(0);
+    return Optional.ofNullable(this.categoryIndex.getValue()).orElse(0);
   }
 
   LiveData<SubmitResult> onSubmitClicked(boolean includeDebugLogs) {
@@ -57,7 +53,7 @@ public class HelpViewModel extends ViewModel {
     if (includeDebugLogs) {
       submitDebugLogRepository.buildAndSubmitLog(result -> resultLiveData.postValue(new SubmitResult(result, result.isPresent())));
     } else {
-      resultLiveData.postValue(new SubmitResult(Optional.absent(), false));
+      resultLiveData.postValue(new SubmitResult(Optional.empty(), false));
     }
 
     return resultLiveData;

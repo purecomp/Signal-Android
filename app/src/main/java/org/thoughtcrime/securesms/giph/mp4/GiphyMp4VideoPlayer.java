@@ -1,41 +1,42 @@
 package org.thoughtcrime.securesms.giph.mp4;
 
 import android.content.Context;
+import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.util.AttributeSet;
+import android.view.TextureView;
+import android.view.View;
 import android.widget.FrameLayout;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+import androidx.annotation.OptIn;
 import androidx.lifecycle.DefaultLifecycleObserver;
-import androidx.lifecycle.LifecycleOwner;
 
-import com.google.android.exoplayer2.C;
-import com.google.android.exoplayer2.ExoPlayer;
-import com.google.android.exoplayer2.MediaItem;
-import com.google.android.exoplayer2.SimpleExoPlayer;
-import com.google.android.exoplayer2.ui.AspectRatioFrameLayout;
-import com.google.android.exoplayer2.ui.PlayerView;
+import androidx.media3.common.C;
+import androidx.media3.common.MediaItem;
+import androidx.media3.common.util.UnstableApi;
+import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.ui.AspectRatioFrameLayout;
+import androidx.media3.ui.PlayerView;
 
 import org.signal.core.util.logging.Log;
 import org.thoughtcrime.securesms.R;
 import org.thoughtcrime.securesms.components.CornerMask;
-import org.thoughtcrime.securesms.dependencies.ApplicationDependencies;
 import org.thoughtcrime.securesms.util.Projection;
-import org.thoughtcrime.securesms.video.exo.ExoPlayerKt;
 
 /**
  * Video Player class specifically created for the GiphyMp4Fragment.
  */
+@OptIn(markerClass = UnstableApi.class)
 public final class GiphyMp4VideoPlayer extends FrameLayout implements DefaultLifecycleObserver {
 
   @SuppressWarnings("unused")
   private static final String TAG = Log.tag(GiphyMp4VideoPlayer.class);
 
-  private final PlayerView      exoView;
-  private       SimpleExoPlayer exoPlayer;
-  private       CornerMask      cornerMask;
-  private       MediaItem       mediaItem;
+  private final PlayerView exoView;
+  private       ExoPlayer  exoPlayer;
+  private       CornerMask cornerMask;
 
   public GiphyMp4VideoPlayer(Context context) {
     this(context, null);
@@ -54,12 +55,6 @@ public final class GiphyMp4VideoPlayer extends FrameLayout implements DefaultLif
   }
 
   @Override
-  protected void onDetachedFromWindow() {
-    Log.d(TAG, "onDetachedFromWindow");
-    super.onDetachedFromWindow();
-  }
-
-  @Override
   protected void dispatchDraw(Canvas canvas) {
     super.dispatchDraw(canvas);
 
@@ -68,11 +63,11 @@ public final class GiphyMp4VideoPlayer extends FrameLayout implements DefaultLif
     }
   }
 
-  @Nullable SimpleExoPlayer getExoPlayer() {
+  @Nullable ExoPlayer getExoPlayer() {
     return exoPlayer;
   }
 
-  void setExoPlayer(@Nullable SimpleExoPlayer exoPlayer) {
+  void setExoPlayer(@Nullable ExoPlayer exoPlayer) {
     exoView.setPlayer(exoPlayer);
     this.exoPlayer = exoPlayer;
   }
@@ -86,7 +81,6 @@ public final class GiphyMp4VideoPlayer extends FrameLayout implements DefaultLif
   }
 
   void setVideoItem(@NonNull MediaItem mediaItem) {
-    this.mediaItem = mediaItem;
     exoPlayer.setMediaItem(mediaItem);
     exoPlayer.prepare();
   }
@@ -107,11 +101,16 @@ public final class GiphyMp4VideoPlayer extends FrameLayout implements DefaultLif
     }
   }
 
+  void pause() {
+    if (exoPlayer != null) {
+      exoPlayer.pause();
+    }
+  }
+
   void stop() {
     if (exoPlayer != null) {
       exoPlayer.stop();
       exoPlayer.clearMediaItems();
-      mediaItem = null;
     }
   }
 
@@ -125,5 +124,14 @@ public final class GiphyMp4VideoPlayer extends FrameLayout implements DefaultLif
 
   void setResizeMode(@AspectRatioFrameLayout.ResizeMode int resizeMode) {
     exoView.setResizeMode(resizeMode);
+  }
+
+  @Nullable Bitmap getBitmap() {
+    final View view = exoView.getVideoSurfaceView();
+    if (view instanceof TextureView) {
+      return ((TextureView) view).getBitmap();
+    }
+
+    return null;
   }
 }
